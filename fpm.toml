@@ -1,0 +1,16 @@
+name = "LowFoldIn"
+version = "0.1.0"
+author = "Nathanael Nardoto Batsita"
+
+[build]
+auto-executables = true
+
+
+# ==============================================================================
+# CONFIGURAÇÃO MODERNA DE COMPILAÇÃO (FPM 0.13+)
+# ==============================================================================
+[features]
+meus_flags.flags = "-O3 -Wall -Wextra -fcheck=all"
+
+[profiles]
+default = ["meus_flags"]
