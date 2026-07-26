@@ -5,10 +5,10 @@
 ! 2. Número de vizinhos           (um inteiro)
 ! 3. Número de átomos por célula  (um inteiro)
 ! 4. Número de total de Orbitais  (um inteiro - Para teste de Sanidade)
-! 5. Lista de Degenerescência     (uma matriz de inteiros com dimensão [nAtoms] - Wannier Orbital Degeneracy)
+! 5. Lista de Degenerescência     (uma matriz de inteiros com dimensão [Neighbors] - Wannier Orbital Degeneracy)
 ! 6. Lista de Orbitais por Atomo  (uma matriz de inteiros com dimensão [nAtoms])
-! 7. Lista de índices             (uma matriz de inteiros com dimensões [Neighbors, 3]): hkl de cada vizinho
-! 8. Dados                        (uma matriz de números complexos com dimensões [Neighbors, NOrbs, NOrbs])
+! 7. Lista de índices             (uma matriz de inteiros com dimensões [3, Neighbors]): hkl de cada vizinho
+! 8. Dados                        (uma matriz de números complexos com dimensões [NOrbs, NOrbs, Neighbors])
 ! ----------------------------------------------------------------------------------------------------------
 ! 
 ! Nathanael N. Batista
@@ -51,7 +51,7 @@ subroutine ReadFile(this, filename)
         allocate(this%Degenerecency(this%Neighbors))
         allocate(this%Orbs(this%nAtoms))
         allocate(this%IndexList(3, this%Neighbors))
-        allocate(this%Data(this%Neighbors, this%NOrbs, this%NOrbs))
+        allocate(this%Data(this%NOrbs, this%NOrbs, this%Neighbors))
 
         read(File, iostat=ierr)     this%Degenerecency
         read(File, iostat=ierr)     this%Orbs
@@ -80,9 +80,10 @@ end subroutine WriteFile
 
 subroutine Clear(this)
     class(FileFormat), intent(inout)   :: this
-    if (allocated(this%Orbs))       deallocate(this%Orbs)
-    if (allocated(this%IndexList))  deallocate(this%IndexList)
-    if (allocated(this%Data))       deallocate(this%Data)
+    if (allocated(this%Orbs))           deallocate(this%Orbs)
+    if (allocated(this%IndexList))      deallocate(this%IndexList)
+    if (allocated(this%Data))           deallocate(this%Data)
+    if (allocated(this%Degenerecency))  deallocate(this%Degenerecency)
 
     this%Title     = ""
     this%Neighbors = 0
@@ -110,7 +111,7 @@ subroutine DisplayInfo(this)
     ! Lista de Orbitais por Átomo
     if (allocated(this%Orbs)) then
         print '(A)', "  Orbitais por Átomo:"
-        write(*, '("    ", 10(I0, X))') this%Orbs
+        write(*, '("    ", 10(I0, 1X))') this%Orbs
     end if
     
     print '(A)', "-----------------------------------------------------------------"
@@ -121,7 +122,7 @@ subroutine DisplayInfo(this)
         ! Mostra os primeiros 5 para não lotar a tela se houver muitos vizinhos
         do i = 1, min(this%Neighbors, 5)
             write(*, '("    Vizinho ", I3, ": [", I4, ",", I4, ",", I4, " ]")') &
-                i, this%IndexList(i, 1), this%IndexList(i, 2), this%IndexList(i, 3)
+                i, this%IndexList(1, i), this%IndexList(2, i), this%IndexList(3, i)
         end do
         if (this%Neighbors > 5) then
             print '(A, I0, A)', "    ... e mais ", this%Neighbors - 5, " vizinhos."
@@ -139,12 +140,12 @@ subroutine DisplayInfo(this)
             write(*, '("    ")', advance='no')
             do j = 1, min(this%NOrbs, 3)
                 ! Formata números complexos como: ( 1.23 + 4.56i )
-                if (aimag(this%Data(1, i, j)) >= 0.0_8) then
+                if (aimag(this%Data(i, j, 1)) >= 0.0_8) then
                     write(*, '("(", F7.3, "+", F7.3, "i) ")', advance='no') &
-                        real(this%Data(1, i, j)), aimag(this%Data(1, i, j))
+                        real(this%Data(i, j, 1)), aimag(this%Data(i, j, 1))
                 else
                     write(*, '("(", F7.3, "-", F7.3, "i) ")', advance='no') &
-                        real(this%Data(1, i, j)), abs(aimag(this%Data(1, i, j)))
+                        real(this%Data(i, j, 1)), abs(aimag(this%Data(i, j, 1)))
                 end if
             end do
             print * ! Nova linha

@@ -1,0 +1,10 @@
+{
+  "source_dirs": [
+    "src/**"
+  ],
+  "excl_paths": [
+    "build/**"
+  ],
+  "lowercase_intrinsics": true,
+  "incremental_sync": true
+}
