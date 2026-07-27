@@ -3,7 +3,7 @@ module config
     implicit none
     private
 
-    public :: AppConfig, ReadConfigFromStdin, DisplayConfig
+    public :: AppConfig, ReadConfigFromStdin, DisplayConfig, BandsConfig
 
     ! npaths: Número de caminhos de k-points
     ! total_kpoints: Número total de k-points ao longo de todos os caminhos
