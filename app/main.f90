@@ -1,4 +1,5 @@
-program test_graphene
+program LowFoldIn
+    use core
     use types
     use config
     implicit none
@@ -6,5 +7,4 @@ program test_graphene
     type(AppConfig) :: cfg
 
     call ReadConfigFromStdin(cfg)
-
-end program test_graphene
+end program LowFoldIn

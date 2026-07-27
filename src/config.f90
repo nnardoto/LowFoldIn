@@ -1,5 +1,5 @@
 module config
-    use iso_fortran_env, only: dp => real64
+    use types
     implicit none
     private
 
@@ -28,7 +28,6 @@ module config
 
         ! Configuração específica para cálculo de bandas
         type(BandsConfig)                  :: Bands
-
     end type AppConfig
 
  

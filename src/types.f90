@@ -15,6 +15,7 @@
 ! Agosto de 2026
 
 module types
+    use, intrinsic :: iso_fortran_env, only: dp => real64
     implicit none
 
     type :: FileFormat
@@ -25,7 +26,7 @@ module types
         integer,     allocatable   :: Degenerecency(:)
         integer,     allocatable   :: Orbs(:)
         integer,     allocatable   :: IndexList(:, :)
-        complex(16), allocatable   :: Data(:, :, :)
+        complex(dp), allocatable   :: Data(:, :, :)
 
         contains
             procedure :: ReadFile

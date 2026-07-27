@@ -10,7 +10,7 @@ auto-executables = true
 # CONFIGURAÇÃO MODERNA DE COMPILAÇÃO (FPM 0.13+)
 # ==============================================================================
 [features]
-meus_flags.flags = "-std=f2023 -O3 -Wall -Wextra -fcheck=all"
+meus_flags.flags = "-std=f2023 -O3 -Wall -Wextra -fcheck=all -fopenmp"
 
 [profiles]
 default = ["meus_flags"]

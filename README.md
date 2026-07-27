@@ -1,3 +1,3 @@
-# LowFoldIn: A Modern Fortran Implementation of Unfolding Bands
+# LowFoldIn: A Modern Fortran Implementation for pos-DFT methods
 
-Method Paper: PHYSICAL REVIEW B 113, 085112 (2026)
+Unfolding: PHYSICAL REVIEW B 113, 085112 (2026)
