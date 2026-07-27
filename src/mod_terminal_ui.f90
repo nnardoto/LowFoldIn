@@ -20,9 +20,9 @@ contains
 
     ! 3. Desenha o TOPO de uma caixa com texto centralizado
     subroutine print_box(text)
-        character(len=*), intent(in) :: text
+        character(len=*), intent(in)  :: text
         character(len=:), allocatable :: clean_text
-        integer                      :: text_len, total_spaces, left_spaces, right_spaces
+        integer                       :: text_len, total_spaces, left_spaces, right_spaces
 
         clean_text = trim(adjustl(text))
         text_len   = len_trim(clean_text)
@@ -112,6 +112,4 @@ contains
         print '(A, A, A, A, A, A, A)', "|  ", clean_label, &
             repeat(" ", middle_spaces), clean_value, "  |"
     end subroutine print_row_split
-
-
 end module terminal_ui

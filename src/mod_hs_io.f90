@@ -63,7 +63,7 @@ end subroutine ReadFile
 
 ! Subrotina para Escrita de Arquivo no Formato Especificado
 subroutine WriteFile(this, filename)
-    class(HSDataFormat), intent(in)       :: this
+    class(HSDataFormat), intent(in)     :: this
     character(len=*), intent(in)        :: Filename
     integer                             :: ierr, File
 
