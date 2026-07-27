@@ -14,11 +14,11 @@
 ! Nathanael N. Batista
 ! Agosto de 2026
 
-module types
-    use, intrinsic :: iso_fortran_env, only: dp => real64
+module HS_io
+    use types, only: sp, dp, qp
     implicit none
 
-    type :: FileFormat
+    type :: HSDataFormat
         character(len=256)         :: Title                 = ""
         integer                    :: Neighbors             = 0
         integer                    :: nAtoms                = 0
@@ -33,15 +33,15 @@ module types
             procedure :: WriteFile
             procedure :: DisplayInfo
             procedure :: Clear
-    end type FileFormat
+    end type HSDataFormat
 
 contains
 
 ! Subrotina para Leitura de Arquivo no Formato Especificado 
 subroutine ReadFile(this, filename)
-    class(FileFormat), intent(inout)        :: this
-    character(len=*),  intent(in)           :: Filename
-    integer                                 :: ierr, File
+    class(HSDataFormat), intent(inout)        :: this
+    character(len=*),  intent(in)             :: Filename
+    integer                                   :: ierr, File
 
     open(newunit=File, file=Filename, status='old', action='read', iostat=ierr, form='unformatted', access='stream')
         read(File, iostat=ierr)     this%Title
@@ -63,7 +63,7 @@ end subroutine ReadFile
 
 ! Subrotina para Escrita de Arquivo no Formato Especificado
 subroutine WriteFile(this, filename)
-    class(FileFormat), intent(in)       :: this
+    class(HSDataFormat), intent(in)       :: this
     character(len=*), intent(in)        :: Filename
     integer                             :: ierr, File
 
@@ -80,7 +80,7 @@ subroutine WriteFile(this, filename)
 end subroutine WriteFile
 
 subroutine Clear(this)
-    class(FileFormat), intent(inout)   :: this
+    class(HSDataFormat), intent(inout)   :: this
     if (allocated(this%Orbs))           deallocate(this%Orbs)
     if (allocated(this%IndexList))      deallocate(this%IndexList)
     if (allocated(this%Data))           deallocate(this%Data)
@@ -94,7 +94,7 @@ end subroutine Clear
 
 ! Sumário do conteúdo do arquivo (para depuração e verificação)
 subroutine DisplayInfo(this)
-    class(FileFormat), intent(in) :: this
+    class(HSDataFormat), intent(in) :: this
     integer :: i, j
 
     ! Cabeçalho Principal
@@ -160,4 +160,4 @@ subroutine DisplayInfo(this)
     print '(A)', "================================================================="
 end subroutine DisplayInfo
 
-end module types
+end module HS_io

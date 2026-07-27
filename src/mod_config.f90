@@ -30,8 +30,6 @@ module config
         type(BandsConfig)                  :: Bands
     end type AppConfig
 
- 
-
     contains
 
         subroutine ReadConfigFromStdin(config)
