@@ -4,7 +4,7 @@ author = "Nathanael Nardoto Batsita"
 
 [build]
 auto-executables = true
-
+link = ["lapack", "blas"]
 
 # ==============================================================================
 # CONFIGURAÇÃO MODERNA DE COMPILAÇÃO (FPM 0.13+)

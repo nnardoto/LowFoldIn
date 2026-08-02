@@ -22,7 +22,9 @@ module config
 
     type :: AppConfig
         character(len = 256)              :: ProjectName = ""
-        character(len = 256)              :: DataFile    = ""
+        logical                           :: nonOrtho    = .false.
+        character(len = 256)              :: HDataFile   = ""
+        character(len = 256)              :: SDataFile   = ""
         character(len = 256)              :: OutputDir   = "./"
         character(len = 256)              :: Calculation = ""
 
@@ -40,17 +42,21 @@ module config
             integer                         :: ierr
 
             character(len = 256)          :: ProjectName
-            character(len = 256)          :: DataFile
+            logical                       :: nonOrtho
+            character(len = 256)          :: HDataFile
+            character(len = 256)          :: SDataFile
             character(len = 256)          :: OutputDir
             character(len = 256)          :: Calculation
             character(len = 256)          :: ErrorMessage
 
-            namelist /SYSTEM/ ProjectName, Calculation, DataFile, OutputDir
+            namelist /SYSTEM/ ProjectName, Calculation, nonOrtho, HDataFile, SDataFile, OutputDir
 
             ! 1. Preenche Valores Padrão do Módulo
             ProjectName = config%ProjectName
             Calculation = config%Calculation
-            DataFile    = config%DataFile
+            nonOrtho    = config%nonOrtho
+            HDataFile   = config%HDataFile
+            SDataFile   = config%SDataFile
             OutputDir   = config%OutputDir
 
             ! 2. Lê o Input Fornecido
@@ -65,9 +71,11 @@ module config
             endif
 
             ! 3. Atualiza Valores a partir do Input
-            config%ProjectName     = ProjectName   
-            config%Calculation     = Calculation 
-            config%DataFile        = DataFile    
+            config%ProjectName     = ProjectName
+            config%Calculation     = Calculation
+            config%nonOrtho        = nonOrtho
+            config%HDataFile       = HDataFile
+            config%SDataFile       = SDataFile
             config%OutputDir       = OutputDir
             
             ! 4. Aqui deve vir um resumo do que foi lido, para o usuário ter certeza de que está correto
@@ -93,8 +101,10 @@ module config
 
             ! Agora usando o alinhamento dividido nas pontas
             call print_row_split("Project Name:", config%ProjectName)
+            !call print_row_split("nonOrtho Mode:",config%nonOrtho)
             call print_row_split("Calculation:",  config%Calculation)
-            call print_row_split("Data File:",    config%DataFile)
+            call print_row_split("HData File:",   config%HDataFile)
+            call print_row_split("SData File:",   config%SDataFile)
             call print_row_split("Output Dir:",   config%OutputDir)
 
             call print_box_close()
@@ -167,7 +177,7 @@ module config
             character(len=12)             :: npaths_str, ntotal_str
 
             ! 1. PAINEL DE METADADOS (Caixa Superior)
-            call print_box("Bands Configuration")
+            call print_box("Bands Configuration") 
 
             write(npaths_str, '(I0)') bands_cfg%npaths
             call print_row_split("Number of Paths:", npaths_str)

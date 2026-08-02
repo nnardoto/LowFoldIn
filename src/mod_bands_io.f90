@@ -14,6 +14,7 @@ module bands_io
         contains
             procedure :: SaveToBinary
             procedure :: SaveToText
+            procedure :: SaveToGnuplotBlocks
     end type BandsDataFormat
 
     contains
@@ -65,6 +66,60 @@ module bands_io
         print *, "Use o comando abaixo para plotar no Gnuplot:"
         print *, 'plot for [i=2:*] ', filename, ' using 1:i with lines notitle lw 1.5 lc rgb "blue"'
     end subroutine SaveToText
+
+    !> Salva as Bandas em Formato de Texto "por Blocos" (uma banda inteira por bloco)
+    !> Cada banda vira um bloco de linhas (x, energia), separado das demais por uma
+    !> linha em branco. Esse é o formato clássico esperado pelo Gnuplot para desenhar
+    !> várias curvas com um único comando `plot`, sem precisar do `for [i=2:*]`.
+    subroutine SaveToGnuplotBlocks(this, filename, b_cfg)
+        class(BandsDataFormat), intent(in)  :: this
+        character(len=*),       intent(in)  :: filename
+        type(BandsConfig),      intent(in)  :: b_cfg
+
+        integer :: iunit, ios, nOrbs, nkPoints, ib, ik
+
+        if (.not. allocated(this%EigenValues)) then
+            print *, "Error: Tentativa de salvar dados sem que os Eigenvalues estejam calculados."
+            return
+        end if
+
+        nOrbs    = size(this%EigenValues, 1)
+        nkPoints = size(this%EigenValues, 2)
+
+        if (size(b_cfg%xpoints) /= nkPoints) then
+            print *, "Error: xpoints e EigenValues possuem dimensões incompatíveis."
+            return
+        end if
+
+        open(newunit=iunit, file=filename, status='replace', action='write', iostat=ios)
+        if (ios /= 0) then
+            print *, "Error: Não foi possível abrir o arquivo para escrita: ", filename
+            return
+        endif
+
+        ! Cabeçalho legível por softwares de plot (linhas com # são ignoradas por padrão)
+        write(iunit, '(A)') "# Dados de Estrutura de Bandas Gerados no LowFoldIn (formato em blocos)"
+        write(iunit, '(A, I6, A, I6)') "# Total de Pontos K: ", nkPoints, " | Total de Orbitais: ", nOrbs
+        write(iunit, '(A)') "# Cada bloco abaixo (separado por linha em branco) é UMA banda inteira"
+        write(iunit, '(A)') "# Colunas: [1] Posição x ao longo do caminho k | [2] Energia (eV)"
+
+        ! Um bloco por banda: nkPoints linhas de (x, energia), separado por linha em branco
+        do ib = 1, nOrbs
+            write(iunit, '(A, I0)') "# Banda ", ib
+            do ik = 1, nkPoints
+                write(iunit, '(F14.8, F14.6)') b_cfg%xpoints(ik), this%EigenValues(ib, ik)
+            end do
+
+            ! Linha em branco separando os blocos (essencial: é o que faz o Gnuplot
+            ! interpretar cada bloco como um segmento de curva independente)
+            if (ib < nOrbs) write(iunit, *)
+        end do
+
+        close(iunit)
+        print *, "Bandas salvas em blocos com sucesso em: ", filename
+        print *, "Use o comando abaixo para plotar no Gnuplot (um único comando, sem loop):"
+        print *, 'plot "', trim(filename), '" using 1:2 with lines notitle lw 1.5 lc rgb "blue"'
+    end subroutine SaveToGnuplotBlocks
 
     !> Salva em formato binário bruto (Stream). Perfeito para ler em scripts Python com NumPy (Ultra rápido)
     subroutine SaveToBinary(this, filename, b_cfg)

@@ -5,7 +5,7 @@ module core
     use terminal_ui
     
     private
-    public :: calc_band_structure, compute_Hk_at_kpoint
+    public :: calc_band_structure, calc_band_structure_non_orth, compute_Hk_at_kpoint
 
     ! ==================================================================
     ! INTERFACES EXPLÍCITAS PARA AS ROTINAS DO LAPACK (Double Precision)
@@ -87,7 +87,7 @@ contains
         !$ max_threads = omp_get_max_threads()
         
         ! 4. Carrega os dados do arquivo
-        call FileData%ReadFile(cfg%DataFile)
+        call FileData%ReadFile(cfg%HDataFile)
 
         ! Tamanho de lwork = 3 * NOrbs - 1, conforme exigido pelo LAPACK
         lwork = 3 * FileData%NOrbs - 1
@@ -166,8 +166,8 @@ contains
         integer                  :: lwork, lrwork
 
         ! 1. Carrega os dados (o arquivo agora deve conter Hr e Sr)
-        call HData%ReadFile(cfg%DataFile)
-        call SData%ReadFile(cfg%DataFile)
+        call HData%ReadFile(cfg%HDataFile)
+        call SData%ReadFile(cfg%SDataFile)
 
         max_threads = 1
         !$ max_threads = omp_get_max_threads()
@@ -236,7 +236,12 @@ contains
         complex(dp), intent(out), contiguous :: Hk_k(:, :)
         real(dp),    intent(in)              :: kpt(3)
         integer,     intent(in),  contiguous :: Rpt(:, :)
-        
+
+        ! Constante 2*pi: converte k (coordenadas reduzidas/fracionárias da
+        ! rede recíproca) e R (múltiplos inteiros dos vetores de rede direta)
+        ! em uma fase física e-i.k.R, já que b_i . a_j = 2*pi * delta_ij.
+        real(dp), parameter :: TWO_PI = 6.283185307179586476925286766559_dp
+
         integer     :: nNeighbors, ir
         real(dp)    :: k_dot_R
         complex(dp) :: phase_factor
@@ -249,8 +254,9 @@ contains
 
         ! Exemplo do loop de Fourier espacial ultra-eficiente
         do ir = 1, nNeighbors
-            ! k . R (Assumindo cálculo do produto escalar com vetor R)
-            k_dot_R = dot_product(kpt, real(Rpt(:, ir), kind=dp))
+            ! k . R (kpt em coordenadas reduzidas, Rpt em unidades inteiras de
+            ! vetores de rede direta -> precisa do fator 2*pi para virar fase)
+            k_dot_R = TWO_PI * dot_product(kpt, real(Rpt(:, ir), kind=dp))
             phase_factor = exp(cmplx(0.0d0, k_dot_R,    kind=dp))
 
             ! Auxilia no uso de operações vetorizadas e contíguas de memória
