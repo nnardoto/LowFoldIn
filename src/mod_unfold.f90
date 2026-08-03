@@ -347,9 +347,12 @@ contains
     !>
     !> Para M diagonal, a coordenada fracionaria de um atomo da SC na base da
     !> PC e' obtida componente-a-componente por xi_PC(i) = M(i,i) * xi_SC(i)
-    !> [caso diagonal da relacao geral xi_PC = M . xi_SC, decorrente de
-    !> A = a.M, Eq. (1) do artigo]. A parte inteira de xi_PC(i) e' o indice
-    !> de celula n_i (0-based), e a parte fracionaria e' comparada (com
+    !> [caso diagonal da relacao geral xi_PC = xi_SC . M, vetor-LINHA --
+    !> consequencia de A = M.a com LatticeVectors em linhas, convencao
+    !> POSCAR/ASE/CIF desta base de codigo (ver ReadStructureFile); NAO a
+    !> notacao vetor-coluna A=a.M do artigo, Eq. (1), que so' coincide com
+    !> esta quando M e' diagonal (M=M^T)]. A parte inteira de xi_PC(i) e' o
+    !> indice de celula n_i (0-based), e a parte fracionaria e' comparada (com
     !> imagem minima periodica, e mesmo simbolo quimico) contra a lista de
     !> posicoes da PC para identificar de qual atomo-PC aquele atomo da SC
     !> e' replica.
@@ -392,7 +395,17 @@ contains
 
         do i = 1, nAtoms
             xiSC = modulo(SCPos(:, i), 1.0_dp)                 ! defensivo: garante [0,1)
-            xiPC = matmul(real(cfg%M, kind=dp), xiSC)          ! Eq. (1)/xi_PC = M . xi_SC (caso geral)
+            ! xi_PC = xi_SC . M (vetor-LINHA) -- NAO matmul(M,xiSC) (vetor-coluna).
+            ! Esta base de codigo guarda LatticeVectors como LINHAS (convencao
+            ! POSCAR/ASE/CIF, ver ReadStructureFile) e usa coordenadas fracionarias
+            ! em vetor-linha em toda parte (e' a MESMA convencao de ScK=matmul(fk,M)
+            ! [Eq. 7] alguns paragrafos abaixo, em RunUnfolding) -- diferente da
+            ! notacao vetor-coluna do artigo (A=a.M column-vector), que so' bate
+            ! com matmul(M,xiSC) se a base de vetores de rede for tratada como
+            ! COLUNAS. Para M diagonal as duas formas coincidem (M=M^T), por isso
+            ! esse descasamento ficou latente ate' ser testado com M nao-diagonal
+            ! e rede nao-ortogonal de verdade.
+            xiPC = matmul(xiSC, real(cfg%M, kind=dp))
 
             ! floor() com pequeno epsilon: xiPC(j) pode legitimamente ser
             ! negativo quando M tem entradas negativas (caso nao-diagonal),
