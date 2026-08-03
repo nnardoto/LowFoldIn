@@ -232,7 +232,7 @@ program unfold_tool
     ! [Eq. (28)+(51) do artigo: a soma em `orbit` na definicao do peso ja'
     ! projeta no subespaco degenerado inteiro de dimensao p, entao somar
     ! ainda sobre N acumula um fator p adicional por completude].
-    nOrbitsPC_expected = HData%NOrbs / (cfg%MDiag(1) * cfg%MDiag(2) * cfg%MDiag(3))
+    nOrbitsPC_expected = HData%NOrbs / cfg%nCells
     worst_dev = 0.0_dp
     do ik = 1, cfg%PCPath%total_kpoints
         worst_dev = max(worst_dev, abs(Result%SumCheck(ik) - real(nOrbitsPC_expected, dp)))

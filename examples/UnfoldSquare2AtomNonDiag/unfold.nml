@@ -1,0 +1,39 @@
+! ----------------------------------------------------------------------------
+! Caso sintetico de validacao para M NAO-DIAGONAL: rede quadrada 2D
+! tight-binding (1 atomo/orbital na PC), SC "tabuleiro de xadrez" rodada
+! 45 graus com M = [[1,1,0],[-1,1,0],[0,0,1]], det(M) = 2.
+!
+! Como e' uma SC "perfeita" (sem perturbacao), os pesos devem ser
+! EXATAMENTE 0 ou 1, e a energia com peso ~1 deve coincidir com a formula
+! analitica da PC: E(k) = -2t(cos(2*pi*fk1) + cos(2*pi*fk2)), t = -1.
+! ----------------------------------------------------------------------------
+&UNFOLD
+    ProjectName = "Square2AtomNonDiag"
+    HDataFile   = "examples/UnfoldSquare2AtomNonDiag/Square2Atom_H.hsio"
+    SDataFile   = "examples/UnfoldSquare2AtomNonDiag/Square2Atom_S.hsio"
+    OutputDir   = "./"
+    M(1,:)      =  1, 1, 0
+    M(2,:)      = -1, 1, 0
+    M(3,:)      =  0, 0, 1
+    Broadening  = 0.05
+    Emin        = -5.0
+    Emax        =  5.0
+    nE          = 200
+    WriteSpectralFunction = .true.
+/
+
+&ATOMMAP
+! atomo-SC   PCAtom   n1 n2 n3   (rotulos de celula RAW, 0-based, na ordem do .hsio)
+    1   0 0 0
+    1   1 0 0
+/
+
+&PCPATH
+6
+ 0.10000  0.20000  0.00000  1  !p1
+ 0.30000 -0.15000  0.00000  1  !p2
+ 0.50000  0.00000  0.00000  1  !p3 (borda BZ)
+ 0.25000  0.25000  0.00000  1  !p4
+-0.42000  0.13000  0.00000  1  !p5
+-0.42000  0.13000  0.00000  1  !p5 (repetido: ReadPCPath descarta o penultimo vertice)
+/

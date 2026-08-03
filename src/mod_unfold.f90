@@ -101,12 +101,19 @@ module unfold
         character(len=256)     :: OutputDir   = "./"
 
         ! Matriz de transformacao PC->SC completa [Eq. (1) do artigo, A=a.M].
-        ! O MOTOR atual (RunUnfolding) so' suporta M DIAGONAL, mas a entrada ja'
-        ! aceita a matriz 3x3 completa (ver CheckDiagonalM) para nao ter que
-        ! mudar o formato do arquivo de novo quando o suporte a M generico for
-        ! implementado. MDiag(3) = [M(1,1),M(2,2),M(3,3)] e' o que o motor usa.
+        ! M pode ser QUALQUER matriz 3x3 de inteiros nao-singular (SC
+        ! "rodada"/nao-ortogonal incluida, Eq. 9 e Sec. II D do artigo).
+        ! DiagonalM e' calculado uma vez em ReadUnfoldNamelist e usado para
+        ! escolher, em RunUnfolding, entre a rotina RAPIDA especializada
+        ! (M diagonal, O(nCells) por orbita-PC por ponto k -- formula
+        ! fechada Eqs. 33-38) e a rotina GERAL (M qualquer, O(nCells^2) por
+        ! orbita-PC por ponto k -- formula direta do operador de projecao,
+        ! Eq. 14 + Eq. 10, provada equivalente a Eq. 28 no Apendice A do
+        ! artigo). MDiag(3) so' e' valido/usado quando DiagonalM = .true.
         integer                :: M(3, 3)    = reshape([1,0,0, 0,1,0, 0,0,1], [3,3])
         integer                :: MDiag(3)   = (/1, 1, 1/)
+        logical                :: DiagonalM  = .true.
+        integer                :: nCells     = 1     ! = |det(M)|, numero de celulas-PC na SC
 
         real(dp)               :: Broadening  = 0.010_dp      ! eV (largura Lorentziana p/ A(k,E))
         real(dp)               :: Emin        = -10.0_dp
@@ -232,35 +239,50 @@ contains
         cfg%SCStructureFile = SCStructureFile
         cfg%MatchTolerance  = MatchTolerance
 
-        call CheckDiagonalM(cfg)
-        cfg%MDiag = (/ cfg%M(1,1), cfg%M(2,2), cfg%M(3,3) /)
+        call ClassifyM(cfg)
 
-        if (any(cfg%MDiag < 1)) then
+        if (cfg%DiagonalM .and. any(cfg%MDiag < 1)) then
             print *, "[Unfold Input Error] Os elementos da diagonal de M devem ser >= 1"
             stop 1
         end if
     end subroutine ReadUnfoldNamelist
 
-    !> Verifica que M e' diagonal. O motor de unfolding (RunUnfolding) so'
-    !> implementa o caso M=diag(m1,m2,m3); dar erro claro aqui (em vez de um
-    !> resultado silenciosamente errado) quando o usuario fornecer uma SC
-    !> nao-ortogonal, ate' que o formalismo geral (Sec. II D do artigo,
-    !> M generico) seja implementado.
-    subroutine CheckDiagonalM(cfg)
-        type(UnfoldConfig), intent(in) :: cfg
+    !> Classifica M (diagonal ou nao) e calcula nCells = |det(M)| [Eq. (1):
+    !> "the volume of the supercell is m = |det(M)| times larger than that
+    !> of the PC"]. Quando M e' diagonal, tambem preenche MDiag(3) para a
+    !> rotina rapida especializada de RunUnfolding continuar funcionando
+    !> exatamente como antes (mesmo codigo, mesmo desempenho).
+    subroutine ClassifyM(cfg)
+        type(UnfoldConfig), intent(inout) :: cfg
         integer :: i, j
+        integer :: det
+
+        cfg%DiagonalM = .true.
         do i = 1, 3
             do j = 1, 3
-                if (i /= j .and. cfg%M(i, j) /= 0) then
-                    print '(A)', "[Unfold Input Error] M nao e' diagonal."
-                    print '(A)', "  O motor de unfolding atual so' suporta supercelulas" // &
-                                 " 'ortogonais' (M = diag(m1,m2,m3))."
-                    print '(A)', "  Suporte a M generico esta' planejado para uma versao futura."
-                    stop 1
-                end if
+                if (i /= j .and. cfg%M(i, j) /= 0) cfg%DiagonalM = .false.
             end do
         end do
-    end subroutine CheckDiagonalM
+
+        det = cfg%M(1,1) * (cfg%M(2,2)*cfg%M(3,3) - cfg%M(2,3)*cfg%M(3,2)) &
+            - cfg%M(1,2) * (cfg%M(2,1)*cfg%M(3,3) - cfg%M(2,3)*cfg%M(3,1)) &
+            + cfg%M(1,3) * (cfg%M(2,1)*cfg%M(3,2) - cfg%M(2,2)*cfg%M(3,1))
+
+        if (det == 0) then
+            print '(A)', "[Unfold Input Error] M e' singular (det(M) = 0) -- nao define uma supercelula valida."
+            stop 1
+        end if
+        cfg%nCells = abs(det)
+
+        if (cfg%DiagonalM) then
+            cfg%MDiag = (/ cfg%M(1,1), cfg%M(2,2), cfg%M(3,3) /)
+        else
+            cfg%MDiag = 0   ! nao usado fora do caso diagonal; deixado obviamente invalido
+            print '(A)', "  M nao e' diagonal: usando o motor de unfolding GERAL (Sec. II D do artigo)," // &
+                          " mais caro (O(nCells) extra por ponto k) que a rotina especializada" // &
+                          " para M diagonal."
+        end if
+    end subroutine ClassifyM
 
     !> .true. se o usuario forneceu os dois arquivos de estrutura (PC e SC),
     !> modo automatico de construcao do &ATOMMAP; .false. se deve usar o
@@ -303,13 +325,20 @@ contains
         if (any(cfg%CellIndex < 0)) then
             stop "[Unfold Input Error] Indices de celula em &ATOMMAP devem ser >= 0 (0-based)"
         end if
-        do i = 1, 3
-            if (any(cfg%CellIndex(i, :) >= cfg%MDiag(i))) then
-                print '(A, I0, A)', "[Unfold Input Error] Indice de celula na direcao ", i, &
-                                     " excede M(i,i)-1"
-                stop 1
-            end if
-        end do
+        if (cfg%DiagonalM) then
+            do i = 1, 3
+                if (any(cfg%CellIndex(i, :) >= cfg%MDiag(i))) then
+                    print '(A, I0, A)', "[Unfold Input Error] Indice de celula na direcao ", i, &
+                                         " excede M(i,i)-1"
+                    stop 1
+                end if
+            end do
+        end if
+        ! Para M nao-diagonal nao ha' um limite por-eixo simples (os
+        ! rotulos de celula validos formam um paralelepipedo torto, nao
+        ! uma caixa); a consistencia real e' verificada de forma GERAL em
+        ! RunUnfolding (cada orbital-PC precisa de exatamente nCells
+        ! replicas com rotulos de celula distintos).
     end subroutine ReadAtomMap
 
     !> Constroi automaticamente o mapeamento atomo(SC) -> (atomo-PC, celula)
@@ -363,12 +392,16 @@ contains
 
         do i = 1, nAtoms
             xiSC = modulo(SCPos(:, i), 1.0_dp)                 ! defensivo: garante [0,1)
-            xiPC = real(cfg%MDiag, kind=dp) * xiSC             ! caso diagonal de xi_PC = M.xi_SC
+            xiPC = matmul(real(cfg%M, kind=dp), xiSC)          ! Eq. (1)/xi_PC = M . xi_SC (caso geral)
 
+            ! floor() com pequeno epsilon: xiPC(j) pode legitimamente ser
+            ! negativo quando M tem entradas negativas (caso nao-diagonal),
+            ! entao nao ha' limite inferior valido para "clampar" como no
+            ! caso diagonal (onde xiPC(j) = MDiag(j)*xiSC(j) >= 0 sempre).
+            ! O epsilon so' protege contra ruido de ponto flutuante bem
+            ! perto de uma fronteira inteira (xiPC(j) ~ 0.0 ou ~ -1e-15).
             do j = 1, 3
-                cellIndex(j) = floor(xiPC(j))
-                if (cellIndex(j) >= cfg%MDiag(j)) cellIndex(j) = cfg%MDiag(j) - 1  ! guarda p/ ruido numerico
-                if (cellIndex(j) < 0) cellIndex(j) = 0
+                cellIndex(j) = floor(xiPC(j) + 1.0e-9_dp)
             end do
             remainder = xiPC - real(cellIndex, kind=dp)
 
@@ -691,8 +724,16 @@ contains
         call print_row_split("Project Name:", cfg%ProjectName)
         call print_row_split("HData File:",   cfg%HDataFile)
         call print_row_split("SData File:",   cfg%SDataFile)
-        write(buf, '(I0, 1X, I0, 1X, I0)') cfg%MDiag
-        call print_row_split("SC multiplicity (m1,m2,m3):", buf)
+        if (cfg%DiagonalM) then
+            write(buf, '(I0, 1X, I0, 1X, I0)') cfg%MDiag
+            call print_row_split("SC multiplicity (m1,m2,m3):", buf)
+        else
+            write(buf, '(A, 3(I0,1X), A, 3(I0,1X), A, 3(I0,1X), A)') "[", cfg%M(1,:), "/ ", cfg%M(2,:), &
+                "/ ", cfg%M(3,:), "]"
+            call print_row_split("SC transform M (nao-diagonal):", buf)
+            write(buf, '(I0)') cfg%nCells
+            call print_row_split("nCells = |det(M)|:", buf)
+        end if
         write(buf, '(I0)') nAtoms
         call print_row_split("Atoms in SC:", buf)
         write(buf, '(I0)') nOrbs
@@ -733,6 +774,14 @@ contains
         integer, allocatable :: OrbitMemberCell(:, :, :) ! (3, nCells, nOrbitsPC)
         integer, allocatable :: fillcount(:)
 
+        ! -- SO' usados no caso M NAO-diagonal (ver secao 4b/5.5 abaixo) --
+        integer, allocatable :: Reps(:, :)          ! (3, nCells) rotulos-canonicos de celula
+        integer, allocatable :: OrbCellCanon(:, :)  ! (nCells, nOrbitsPC) reindexado p/ Reps
+        integer, allocatable :: DestIndex(:, :)     ! (nCells, nCells) aritmetica do grupo Z^3/M.Z^3
+        integer, allocatable :: WrapT(:, :, :)       ! (3, nCells, nCells) wraparound (Eq. 30)
+        integer :: rep_idx, ga, gb, gc
+        complex(dp) :: g_inner, g_W, g_wrap_phase
+
         integer :: iAtom, iOrb, gOrb, orbit, L, ik, ic, iN
         integer :: total_kpoints, max_threads, thread_id, completed_count, progress_width
         integer :: threads_used
@@ -754,7 +803,7 @@ contains
 
         nAtoms = HData%nAtoms
         nOrbs  = HData%NOrbs
-        nCells = cfg%MDiag(1) * cfg%MDiag(2) * cfg%MDiag(3)
+        nCells = cfg%nCells
 
         if (nAtoms /= size(cfg%PCOrbit)) then
             stop "[Unfold Error] &ATOMMAP incompatível com o numero de atomos do .hsio"
@@ -847,6 +896,47 @@ contains
         end if
 
         ! --------------------------------------------------------------
+        ! 4b. [SO' PARA M NAO-DIAGONAL] Pre-computa a "aritmetica de
+        !     grupo" dos rotulos de celula-PC, elementos do grupo
+        !     Z^3/M.Z^3 de ordem nCells [Sec. II A/D do artigo].
+        !
+        !     Fisicamente, cada replica de celula-PC dentro da SC contem
+        !     exatamente um atomo de cada identidade-PC, entao o CONJUNTO
+        !     de rotulos de celula (Reps) e' o MESMO para qualquer
+        !     orbital-PC -- usamos o do orbital 1 como referencia
+        !     canonica e reindexamos os demais orbitais contra ele
+        !     (OrbCellCanon), ja' que a ORDEM de preenchimento em
+        !     OrbitMemberCell/OrbitMemberOrb (feita em 3-4 acima) nao e'
+        !     necessariamente a mesma entre orbitais distintos.
+        !
+        !     DestIndex(a,c)/WrapT(:,a,c) respondem: "partindo do rotulo
+        !     Reps(:,a), transladando pelo vetor-PC Reps(:,c) (tratado
+        !     como elemento do grupo), a qual rotulo Reps(:,b) eu chego,
+        !     e quantas vezes cruzei a fronteira da SC em cada direcao
+        !     (WrapT, usado na fase de wraparound e^{iK.T} da Eq. 30)?"
+        !     Construido UMA VEZ (nao depende do ponto k), reusado em
+        !     todos os pontos k do loop paralelo abaixo (secao 5.5).
+        ! --------------------------------------------------------------
+        if (.not. cfg%DiagonalM) then
+            allocate(Reps(3, nCells))
+            Reps = OrbitMemberCell(:, :, 1)
+
+            allocate(OrbCellCanon(nCells, nOrbitsPC))
+            do orbit = 1, nOrbitsPC
+                do ic = 1, nCells
+                    rep_idx = FindCellIndex(Reps, OrbitMemberCell(:, ic, orbit), nCells)
+                    if (rep_idx < 0) then
+                        stop "[Unfold Error] Rotulo de celula inconsistente entre orbitais-PC " // &
+                             "(M nao-diagonal) -- verifique o &ATOMMAP"
+                    end if
+                    OrbCellCanon(rep_idx, orbit) = OrbitMemberOrb(ic, orbit)
+                end do
+            end do
+
+            call BuildGroupTable(cfg%M, Reps, nCells, DestIndex, WrapT)
+        end if
+
+        ! --------------------------------------------------------------
         ! 5. Loop principal sobre os pontos k da PC (paralelo, OpenMP)
         ! --------------------------------------------------------------
         total_kpoints = cfg%PCPath%total_kpoints
@@ -882,7 +972,8 @@ contains
         call system_clock(count=calculation_start)
 
         !$omp parallel default(shared) &
-        !$omp private(ik, thread_id, fk, ScK, L, iN, orbit, ic, proj, clock_start, clock_end, point_elapsed)
+        !$omp private(ik, thread_id, fk, ScK, L, iN, orbit, ic, proj, clock_start, clock_end, point_elapsed) &
+        !$omp private(ga, gb, gc, g_inner, g_W, g_wrap_phase)
         !$omp single
         !$ threads_used = omp_get_num_threads()
         !$omp end single
@@ -896,10 +987,14 @@ contains
 
             fk = cfg%PCPath%FullPath(:, ik)
 
-            ! 5.1 Ponto K da SC ao qual este k da PC e' mapeado [Eq. (7), M diagonal]
-            do L = 1, 3
-                ScK(L) = modulo(fk(L) * real(cfg%MDiag(L), kind=dp), 1.0_dp)
-            end do
+            ! 5.1 Ponto K da SC ao qual este k da PC e' mapeado [Eq. (7): F_K = f_k . M]
+            if (cfg%DiagonalM) then
+                do L = 1, 3
+                    ScK(L) = modulo(fk(L) * real(cfg%MDiag(L), kind=dp), 1.0_dp)
+                end do
+            else
+                ScK = modulo(matmul(fk, real(cfg%M, kind=dp)), 1.0_dp)
+            end if
 
             ! 5.2 Monta H(K) e S(K) por transformada de Fourier do espaco real
             call compute_Hk_at_kpoint(HData%Data, HData%IndexList, Hk_pool(:, :, thread_id), ScK)
@@ -914,34 +1009,70 @@ contains
                 Ssqrt_pool(:, :, thread_id), Usq_pool(:, :, thread_id), wS_pool(:, thread_id))
             Cprime_pool(:, :, thread_id) = matmul(Ssqrt_pool(:, :, thread_id), Cvec_pool(:, :, thread_id))
 
-            ! 5.5 Projeta cada autoestado da SC nos p orbitais-PC [Eq. (28)]:
-            !     W^k_KN = sum_{orbit=1}^{p} |F_{k,orbit}^dagger . C'_KN|^2.
-            !     A soma em `orbit` (1..p) faz parte da PROPRIA definicao do
-            !     peso -- ela projeta o estado N no subespaco DEGENERADO
-            !     inteiro do autovalor de translacao k (dimensao p), nao em
-            !     um unico "orbital-PC". Por isso a regra de soma correta
-            !     [Eq. (51), decorrente de completude] e' sum_N W^k_KN = p,
-            !     e nao 1, sempre que houver mais de um orbital-PC por
-            !     celula (p>1).
+            ! 5.5 Projeta cada autoestado da SC nos p orbitais-PC.
+            !
+            !     CASO M DIAGONAL [Eq. (28)]: W^k_KN = sum_orbit |F_{k,orbit}^dagger . C'_KN|^2,
+            !     com F_k na forma fechada das Eqs. (33)-(38) (produto de exponenciais
+            !     independente por direcao) -- O(nCells) por orbital-PC.
+            !
+            !     CASO M GERAL: essa forma fechada NAO vale (o grupo Z^3/M.Z^3 nao se
+            !     fatora em 3 ciclos independentes por eixo quando M nao e' diagonal --
+            !     ver Sec. II D do artigo, Eqs. 39-41). Em vez de diagonalizar as
+            !     matrizes de translacao passo-a-passo como o artigo faz na sua
+            !     implementacao (FHI-aims), usamos a formula do OPERADOR DE PROJECAO
+            !     diretamente [Eq. (14) substituida em Eq. (10), equivalencia provada
+            !     no Apendice A do artigo]:
+            !
+            !         W^k_KN = (1/nCells) * sum_c exp(-i.2pi.fk.Reps(c)) * <KN|t_c|KN>
+            !
+            !     onde t_c e' a translacao (na base de Bloch de Lowdin, ja' ortonormal
+            !     -- Eq. 27) pelo elemento de grupo Reps(c), cuja ACAO sobre C' e'
+            !     dada pela tabela pre-computada DestIndex/WrapT (secao 4b): manda o
+            !     orbital na celula Reps(a) para a celula Reps(DestIndex(a,c)), com
+            !     fase de wraparound exp(i.2pi.ScK.WrapT(:,a,c)) [Eq. 30] sempre que a
+            !     translacao cruza a fronteira da SC. Isso e' O(nCells) POR PAR (a,c)
+            !     -> O(nCells^2) por orbital-PC (mais caro que o caso diagonal, mas
+            !     matematicamente exato para qualquer M -- ver validacao no exemplo
+            !     sintetico UnfoldSquare2AtomNonDiag).
             do iN = 1, nOrbs
                 Result%Energies(iN, ik) = Eval_pool(iN, thread_id)
                 Result%Weights(iN, ik)  = 0.0_dp
 
-                do orbit = 1, nOrbitsPC
-                    do ic = 1, nCells
-                        associate(nvec => OrbitMemberCell(:, ic, orbit))
-                            phase_pool(ic, thread_id) = &
-                                exp(-cmplx(0.0_dp, TWO_PI * dot_product(fk, real(nvec, kind=dp)), kind=dp)) &
-                                / sqrt(real(nCells, kind=dp))
-                        end associate
+                if (cfg%DiagonalM) then
+                    do orbit = 1, nOrbitsPC
+                        do ic = 1, nCells
+                            associate(nvec => OrbitMemberCell(:, ic, orbit))
+                                phase_pool(ic, thread_id) = &
+                                    exp(-cmplx(0.0_dp, TWO_PI * dot_product(fk, real(nvec, kind=dp)), kind=dp)) &
+                                    / sqrt(real(nCells, kind=dp))
+                            end associate
+                        end do
+                        proj = cmplx(0.0_dp, 0.0_dp, kind=dp)
+                        do ic = 1, nCells
+                            proj = proj + phase_pool(ic, thread_id) &
+                                   * Cprime_pool(OrbitMemberOrb(ic, orbit), iN, thread_id)
+                        end do
+                        Result%Weights(iN, ik) = Result%Weights(iN, ik) + abs(proj)**2
                     end do
-                    proj = cmplx(0.0_dp, 0.0_dp, kind=dp)
-                    do ic = 1, nCells
-                        proj = proj + phase_pool(ic, thread_id) &
-                               * Cprime_pool(OrbitMemberOrb(ic, orbit), iN, thread_id)
+                else
+                    g_W = cmplx(0.0_dp, 0.0_dp, kind=dp)
+                    do gc = 1, nCells
+                        g_inner = cmplx(0.0_dp, 0.0_dp, kind=dp)
+                        do orbit = 1, nOrbitsPC
+                            do ga = 1, nCells
+                                gb = DestIndex(ga, gc)
+                                g_wrap_phase = exp(cmplx(0.0_dp, &
+                                    TWO_PI * dot_product(ScK, real(WrapT(:, ga, gc), kind=dp)), kind=dp))
+                                g_inner = g_inner &
+                                    + conjg(Cprime_pool(OrbCellCanon(ga, orbit), iN, thread_id)) &
+                                    * g_wrap_phase * Cprime_pool(OrbCellCanon(gb, orbit), iN, thread_id)
+                            end do
+                        end do
+                        g_W = g_W + exp(-cmplx(0.0_dp, &
+                            TWO_PI * dot_product(fk, real(Reps(:, gc), kind=dp)), kind=dp)) * g_inner
                     end do
-                    Result%Weights(iN, ik) = Result%Weights(iN, ik) + abs(proj)**2
-                end do
+                    Result%Weights(iN, ik) = real(g_W / real(nCells, kind=dp), kind=dp)
+                end if
             end do
 
             Result%SumCheck(ik) = sum(Result%Weights(:, ik))
@@ -984,7 +1115,81 @@ contains
 
         deallocate(Hk_pool, Sk_pool, Cvec_pool, Cprime_pool, Ssqrt_pool, Usq_pool, &
                    Eval_pool, wS_pool, phase_pool, point_times)
+        if (allocated(Reps))          deallocate(Reps)
+        if (allocated(OrbCellCanon))  deallocate(OrbCellCanon)
+        if (allocated(DestIndex))     deallocate(DestIndex)
+        if (allocated(WrapT))         deallocate(WrapT)
     end subroutine RunUnfolding
+
+    !> Procura `target` entre as colunas de `Reps(3,nCells)`; devolve o
+    !> indice (1..nCells) ou -1 se nao encontrado. Usado so' no caso M
+    !> nao-diagonal para reindexar OrbitMemberCell/Orb contra o conjunto
+    !> canonico de rotulos de celula (ver secao 4b de RunUnfolding).
+    function FindCellIndex(Reps, target, nCells) result(idx)
+        integer, intent(in) :: nCells
+        integer, intent(in) :: Reps(3, nCells), target(3)
+        integer :: idx, k
+
+        idx = -1
+        do k = 1, nCells
+            if (all(Reps(:, k) == target)) then
+                idx = k
+                return
+            end if
+        end do
+    end function FindCellIndex
+
+    !> Constroi a tabela de "aritmetica de grupo" de Z^3/M.Z^3 (ordem
+    !> nCells = |det M|) sobre o conjunto de rotulos canonicos Reps:
+    !> para cada par (a,c), encontra b e o inteiro t tais que
+    !>   Reps(:,a) + Reps(:,c) - matmul(M, t) = Reps(:,b)
+    !> (i.e., soma os dois rotulos como elementos do grupo e reduz de
+    !> volta ao conjunto de representantes). t e' o numero de vezes que a
+    !> translacao cruzou a fronteira da SC em cada direcao, usado para a
+    !> fase de wraparound e^{i.K.T} [Eq. (30) do artigo] em RunUnfolding.
+    !>
+    !> Busca por forca bruta (O(nCells) candidatos por par, O(nCells^2)
+    !> pares -> O(nCells^3) no total) via inversa real de M: como M e'
+    !> inteira e nao-singular, para o candidato correto o vetor
+    !> M^{-1}.(soma - Reps(:,b)) fica bem proximo de um inteiro; para os
+    !> demais candidatos, longe. So' roda UMA vez por calculo (nao por
+    !> ponto k), entao o custo O(nCells^3) e' irrelevante na pratica.
+    subroutine BuildGroupTable(M, Reps, nCells, DestIndex, WrapT)
+        integer, intent(in)  :: M(3, 3), nCells
+        integer, intent(in)  :: Reps(3, nCells)
+        integer, allocatable, intent(out) :: DestIndex(:, :)
+        integer, allocatable, intent(out) :: WrapT(:, :, :)
+
+        real(dp) :: Minv(3, 3), tvec(3)
+        integer :: a, c, b, raw(3)
+        logical :: found
+
+        Minv = Invert3x3(real(M, kind=dp))
+        allocate(DestIndex(nCells, nCells))
+        allocate(WrapT(3, nCells, nCells))
+
+        do a = 1, nCells
+            do c = 1, nCells
+                raw = Reps(:, a) + Reps(:, c)
+                found = .false.
+                do b = 1, nCells
+                    tvec = matmul(Minv, real(raw - Reps(:, b), kind=dp))
+                    if (all(abs(tvec - real(nint(tvec), kind=dp)) < 1.0e-6_dp)) then
+                        DestIndex(a, c) = b
+                        WrapT(:, a, c) = nint(tvec)
+                        found = .true.
+                        exit
+                    end if
+                end do
+                if (.not. found) then
+                    print '(A, I0, A, I0)', &
+                        "[Unfold Error] Falha ao construir a tabela de grupo (M nao-diagonal) para (a,c) = ", &
+                        a, ", ", c
+                    stop 1
+                end if
+            end do
+        end do
+    end subroutine BuildGroupTable
 
     ! ======================================================================
     ! ALGEBRA LINEAR AUXILIAR (LAPACK)
