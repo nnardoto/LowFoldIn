@@ -483,3 +483,25 @@ Issues and pull requests are welcome. For numerical changes, please include:
 - OpenMP thread count;
 - a minimal input reproducing the result;
 - the expected and obtained sum-rule deviations.
+
+### Resumo de desempenho do `unfold`
+
+Ao final da execução, o `unfold` apresenta um resumo com:
+
+- número de pontos k calculados e threads OpenMP utilizadas;
+- tempos de preparação, cálculo, escrita e execução total;
+- tempos mínimo, médio e máximo por ponto k;
+- desvio-padrão dos tempos individuais;
+- tempo efetivo por ponto, considerando a execução paralela;
+- vazão em pontos por segundo e por minuto;
+- eficiência paralela aproximada.
+
+A eficiência paralela é estimada por
+
+```text
+soma dos tempos individuais / (threads × tempo de cálculo)
+```
+
+Ela mede a ocupação média das threads durante a etapa principal e pode ficar
+abaixo de 100% por desbalanceamento entre pontos, sincronização, contenção de
+memória ou custos fora do laço paralelo.

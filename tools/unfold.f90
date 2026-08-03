@@ -138,18 +138,18 @@
 !
 ! Paralelizacao: o laco sobre os pontos k e' paralelizado com OpenMP (mesma
 ! tecnica de calc_band_structure_non_orth em mod_core.f90, usada por
-! "bands"), respeitando OMP_NUM_THREADS. Progresso e' impresso a cada ~5%
-! concluido.
+! "bands"), respeitando OMP_NUM_THREADS. Progresso e' impresso apos cada ponto concluido, com o tempo individual.
 !
 ! Nathanael N. Batista, Agosto de 2026
 ! ----------------------------------------------------------------------------------------------------------
 program unfold_tool
+    use iso_fortran_env, only: int64
     use types,     only: dp
     use HS_io,     only: HSDataFormat
     use unfold,    only: UnfoldConfig, UnfoldResultFormat, &
                           ReadUnfoldNamelist, ReadAtomMap, ReadPCPath, DisplayUnfoldConfig, &
                           BuildAtomMapFromPositions, UsesAutomaticAtomMap, &
-                          RunUnfolding
+                          RunUnfolding, UnfoldPerformance
     use terminal_ui, only: print_box, print_box_close
     implicit none
 
@@ -159,11 +159,17 @@ program unfold_tool
     type(UnfoldConfig)      :: cfg
     type(HSDataFormat)      :: HData, SData
     type(UnfoldResultFormat) :: Result
+    type(UnfoldPerformance)  :: Performance
 
     character(len=:), allocatable :: BaseName, ScatterFile, SpectralFile
     integer :: ik
     integer :: nOrbitsPC_expected
     real(dp) :: worst_dev
+    integer(int64) :: total_start, preparation_end, writing_start, writing_end, total_end, clock_rate
+    real(dp) :: preparation_time, writing_time, total_time
+
+    call system_clock(count_rate=clock_rate)
+    call system_clock(count=total_start)
 
     nargs = command_argument_count()
     if (nargs < 1) then
@@ -218,7 +224,8 @@ program unfold_tool
     ! 4. Executa o unfolding
     ! ------------------------------------------------------------------
     call print_box("Executando Unfolding")
-    call RunUnfolding(cfg, HData, SData, Result)
+    call system_clock(count=preparation_end)
+    call RunUnfolding(cfg, HData, SData, Result, Performance)
 
     ! Diagnostico: soma_N W^k_KN deveria ser p, o numero de orbitais-PC por
     ! celula (= NOrbsSC / (m1*m2*m3)) -- NAO 1, exceto no caso especial p=1
@@ -245,13 +252,46 @@ program unfold_tool
     SpectralFile = BaseName // ".unfold_spectral.dat"
 
     call print_box("Exportando Resultados")
+    call system_clock(count=writing_start)
     call Result%SaveScatter(ScatterFile, cfg%PCPath)
     if (cfg%WriteSpectralFunction) then
         call Result%SaveSpectralFunction(SpectralFile, cfg%PCPath, cfg%Emin, cfg%Emax, cfg%nE, cfg%Broadening)
     end if
+    call system_clock(count=writing_end)
     call print_box_close()
 
+    call system_clock(count=total_end)
+    preparation_time = real(preparation_end - total_start, dp) / real(clock_rate, dp)
+    writing_time = real(writing_end - writing_start, dp) / real(clock_rate, dp)
+    total_time = real(total_end - total_start, dp) / real(clock_rate, dp)
+    call PrintPerformanceSummary(Performance, preparation_time, writing_time, total_time)
+
 contains
+
+    subroutine PrintPerformanceSummary(perf, prep_time, write_time, elapsed_total)
+        type(UnfoldPerformance), intent(in) :: perf
+        real(dp), intent(in) :: prep_time, write_time, elapsed_total
+
+        call print_box("Resumo de Desempenho")
+        print '(A, I12)',      "  Pontos k calculados             : ", perf%PointsCalculated
+        print '(A, I12)',      "  Threads OpenMP                  : ", perf%ThreadsUsed
+        print '(A, F12.3, A)', "  Tempo de preparacao             : ", prep_time, " s"
+        print '(A, F12.3, A)', "  Tempo de calculo                : ", perf%CalculationTime, " s"
+        print '(A, F12.3, A)', "  Tempo de escrita                : ", write_time, " s"
+        print '(A, F12.3, A)', "  Tempo total                     : ", elapsed_total, " s"
+        print '(A)',           "  ----------------------------------------------------------------"
+        print '(A, F12.3, A)', "  Tempo minimo por ponto          : ", perf%PointTimeMin, " s"
+        print '(A, F12.3, A)', "  Tempo medio por ponto           : ", perf%PointTimeMean, " s"
+        print '(A, F12.3, A)', "  Tempo maximo por ponto          : ", perf%PointTimeMax, " s"
+        print '(A, F12.3, A)', "  Desvio-padrao                   : ", perf%PointTimeStdDev, " s"
+        print '(A, F12.3, A)', "  Tempo efetivo por ponto         : ", perf%EffectiveTimePerPoint, " s"
+        print '(A, F12.4, A)', "  Vazao                           : ", perf%ThroughputPointsPerSecond, " pontos/s"
+        print '(A, F12.2, A)', "  Vazao                           : ", 60.0_dp * perf%ThroughputPointsPerSecond, &
+                                  " pontos/min"
+        print '(A, F12.1, A)', "  Eficiencia paralela aproximada : ", &
+                                  100.0_dp * perf%ParallelEfficiency, " %"
+        call print_box_close()
+    end subroutine PrintPerformanceSummary
 
     function BuildOutputPath(OutputDir, ProjectName) result(path)
         character(len=*), intent(in)  :: OutputDir

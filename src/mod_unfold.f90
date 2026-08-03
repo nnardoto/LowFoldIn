@@ -56,7 +56,7 @@ module unfold
     implicit none
     private
 
-    public :: PCPathConfig, UnfoldConfig, UnfoldResultFormat
+    public :: PCPathConfig, UnfoldConfig, UnfoldResultFormat, UnfoldPerformance
     public :: ReadUnfoldNamelist, ReadAtomMap, ReadPCPath, DisplayUnfoldConfig
     public :: BuildAtomMapFromPositions, UsesAutomaticAtomMap, ReadStructureFile
     public :: RunUnfolding
@@ -69,6 +69,19 @@ module unfold
     ! de mod_config.f90, mas mantida separada para nao acoplar os dois
     ! modulos (e para deixar claro que aqui os pontos sao da PC, nao da SC).
     ! ----------------------------------------------------------------------
+    type :: UnfoldPerformance
+        integer  :: PointsCalculated = 0
+        integer  :: ThreadsUsed      = 1
+        real(dp) :: CalculationTime  = 0.0_dp
+        real(dp) :: PointTimeMin     = 0.0_dp
+        real(dp) :: PointTimeMean    = 0.0_dp
+        real(dp) :: PointTimeMax     = 0.0_dp
+        real(dp) :: PointTimeStdDev  = 0.0_dp
+        real(dp) :: EffectiveTimePerPoint = 0.0_dp
+        real(dp) :: ThroughputPointsPerSecond = 0.0_dp
+        real(dp) :: ParallelEfficiency = 0.0_dp
+    end type UnfoldPerformance
+
     type :: PCPathConfig
         integer                :: npaths = 0
         integer,  allocatable  :: nkpts(:)
@@ -705,11 +718,12 @@ contains
     !> pelo id da thread), evitando qualquer condicao de corrida -- cada
     !> iteracao ik so' escreve nas colunas ik de Result%Energies/Weights/
     !> SumCheck, que sao posicoes disjuntas entre threads.
-    subroutine RunUnfolding(cfg, HData, SData, Result)
-        use omp_lib, only: omp_get_max_threads, omp_get_thread_num
+    subroutine RunUnfolding(cfg, HData, SData, Result, Performance)
+        use omp_lib, only: omp_get_max_threads, omp_get_thread_num, omp_get_num_threads
         type(UnfoldConfig),   intent(in)    :: cfg
         type(HSDataFormat),   intent(in)    :: HData, SData
         type(UnfoldResultFormat), intent(out) :: Result
+        type(UnfoldPerformance), intent(out) :: Performance
 
         integer :: nAtoms, nOrbs, nCells, nAtomsPC, nOrbitsPC
         integer, allocatable :: AtomOrbOffset(:), nOrbsPerPCAtom(:), PCAtomOrbOffset(:)
@@ -721,8 +735,10 @@ contains
 
         integer :: iAtom, iOrb, gOrb, orbit, L, ik, ic, iN
         integer :: total_kpoints, max_threads, thread_id, completed_count, progress_width
-        integer(int64) :: clock_start, clock_end, clock_rate
-        real(dp) :: fk(3), ScK(3), point_elapsed
+        integer :: threads_used
+        integer(int64) :: clock_start, clock_end, clock_rate, calculation_start, calculation_end
+        real(dp) :: fk(3), ScK(3), point_elapsed, point_time_mean
+        real(dp), allocatable :: point_times(:)
         character(len=32)  :: total_kpoints_text
         character(len=128) :: progress_format
         complex(dp) :: proj
@@ -837,6 +853,7 @@ contains
         allocate(Result%Energies(nOrbs, total_kpoints))
         allocate(Result%Weights(nOrbs, total_kpoints))
         allocate(Result%SumCheck(total_kpoints))
+        allocate(point_times(total_kpoints), source=0.0_dp)
 
         max_threads = 1
         !$ max_threads = omp_get_max_threads()
@@ -854,6 +871,7 @@ contains
         ! Relata o progresso imediatamente apos a conclusao de cada ponto k.
         ! Como o loop e' paralelo, a ordem de conclusao pode diferir de ik.
         completed_count = 0
+        threads_used = 1
         write(total_kpoints_text, '(I0)') total_kpoints
         progress_width = len_trim(total_kpoints_text)
         write(progress_format, '("(A,I",I0,",A,I",I0,",A,F6.1,A,F10.3,A)")') &
@@ -861,9 +879,14 @@ contains
         call system_clock(count_rate=clock_rate)
         print '(A, I0, A, I0, A)', "  Diagonalizando ", total_kpoints, " pontos k (ate ", &
                                     max_threads, " threads OpenMP)..."
+        call system_clock(count=calculation_start)
 
-        !$omp parallel do default(shared) &
+        !$omp parallel default(shared) &
         !$omp private(ik, thread_id, fk, ScK, L, iN, orbit, ic, proj, clock_start, clock_end, point_elapsed)
+        !$omp single
+        !$ threads_used = omp_get_num_threads()
+        !$omp end single
+        !$omp do
         do ik = 1, total_kpoints
             call system_clock(count=clock_start)
 
@@ -925,6 +948,7 @@ contains
 
             call system_clock(count=clock_end)
             point_elapsed = real(clock_end - clock_start, dp) / real(clock_rate, dp)
+            point_times(ik) = point_elapsed
 
             !$omp critical (unfold_progress_report)
             completed_count = completed_count + 1
@@ -935,10 +959,31 @@ contains
             flush(output_unit)
             !$omp end critical (unfold_progress_report)
         end do
-        !$omp end parallel do
+        !$omp end do
+        !$omp end parallel
+        call system_clock(count=calculation_end)
+
+        Performance%PointsCalculated = total_kpoints
+        Performance%ThreadsUsed = threads_used
+        Performance%CalculationTime = real(calculation_end - calculation_start, dp) / real(clock_rate, dp)
+
+        if (total_kpoints > 0) then
+            point_time_mean = sum(point_times) / real(total_kpoints, dp)
+            Performance%PointTimeMin = minval(point_times)
+            Performance%PointTimeMean = point_time_mean
+            Performance%PointTimeMax = maxval(point_times)
+            Performance%PointTimeStdDev = sqrt(sum((point_times - point_time_mean)**2) / real(total_kpoints, dp))
+
+            if (Performance%CalculationTime > 0.0_dp) then
+                Performance%EffectiveTimePerPoint = Performance%CalculationTime / real(total_kpoints, dp)
+                Performance%ThroughputPointsPerSecond = real(total_kpoints, dp) / Performance%CalculationTime
+                Performance%ParallelEfficiency = sum(point_times) / &
+                    (real(max(1, threads_used), dp) * Performance%CalculationTime)
+            end if
+        end if
 
         deallocate(Hk_pool, Sk_pool, Cvec_pool, Cprime_pool, Ssqrt_pool, Usq_pool, &
-                   Eval_pool, wS_pool, phase_pool)
+                   Eval_pool, wS_pool, phase_pool, point_times)
     end subroutine RunUnfolding
 
     ! ======================================================================
