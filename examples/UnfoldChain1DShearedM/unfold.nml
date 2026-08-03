@@ -1,0 +1,51 @@
+! ----------------------------------------------------------------------------
+! Valida o motor GERAL de unfolding (M nao-diagonal) reaproveitando os MESMOS
+! dados H/S do UnfoldChain1D (ja' extensivamente validados: regra de soma em
+! precisao de maquina, pesos exatamente 0/1). Aqui a SC e' descrita por uma
+! matriz M CISALHADA mas fisicamente EQUIVALENTE a M=diag(4,1,1):
+!
+!   M(1,:) = 4, 1, 0   (em vez de 4, 0, 0)
+!   M(2,:) = 0, 1, 0
+!   M(3,:) = 0, 0, 1
+!
+! (A1 = 4*a1 + 1*a2 ainda e' um vetor de rede valido da MESMA supercelula --
+! y e' uma direcao trivial/desacoplada nesta cadeia 1D, entao um "shear" ali
+! nao muda a fisica, so' a DESCRICAO da SC.) Como a estrutura fisica e'
+! identica ao UnfoldChain1D, o resultado deve ser IDENTICO (a precisao de
+! maquina) ao daquele exemplo -- essa e' a validacao: o motor de M generico,
+! aplicado a uma SC que TAMBEM pode ser descrita de forma diagonal, tem que
+! reproduzir exatamente o resultado da rotina diagonal especializada.
+!
+! Rode com:
+!   fpm run unfold -- examples/UnfoldChain1DShearedM/unfold.nml
+! e compare (ex.: diff) o .unfold.dat resultante contra o do UnfoldChain1D.
+! ----------------------------------------------------------------------------
+&UNFOLD
+    ProjectName = "Chain1DShearedM"
+    HDataFile   = "examples/UnfoldChain1D/Chain_H.hsio"
+    SDataFile   = "examples/UnfoldChain1D/Chain_S.hsio"
+    OutputDir   = "./"
+    M(1,:)      = 4, 1, 0
+    M(2,:)      = 0, 1, 0
+    M(3,:)      = 0, 0, 1
+    Broadening  = 0.05
+    Emin        = -3.0
+    Emax        =  3.0
+    nE          = 200
+    WriteSpectralFunction = .true.
+/
+
+&ATOMMAP
+! atomo-SC   PCAtom   n1 n2 n3   (identico ao UnfoldChain1D -- ver nota
+! acima sobre por que os rotulos nao mudam neste caso particular)
+    1   0 0 0
+    1   1 0 0
+    1   2 0 0
+    1   3 0 0
+/
+
+&PCPATH
+2
+-0.500000  0.00000  0.00000  41  !X-
+ 0.500000  0.00000  0.00000  41  !X+
+/

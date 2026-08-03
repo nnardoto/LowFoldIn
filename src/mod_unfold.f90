@@ -407,14 +407,26 @@ contains
             ! e rede nao-ortogonal de verdade.
             xiPC = matmul(xiSC, real(cfg%M, kind=dp))
 
-            ! floor() com pequeno epsilon: xiPC(j) pode legitimamente ser
-            ! negativo quando M tem entradas negativas (caso nao-diagonal),
-            ! entao nao ha' limite inferior valido para "clampar" como no
-            ! caso diagonal (onde xiPC(j) = MDiag(j)*xiSC(j) >= 0 sempre).
-            ! O epsilon so' protege contra ruido de ponto flutuante bem
-            ! perto de uma fronteira inteira (xiPC(j) ~ 0.0 ou ~ -1e-15).
+            ! "Arredonda para a fronteira" quando xiPC(j) esta' a menos de
+            ! MatchTolerance de um inteiro, em vez de so' floor() puro com um
+            ! epsilon fixo minusculo. Motivo: coordenadas de estruturas DFT
+            ! reais tem ruido numerico (relaxacao, precisao de escrita do
+            ! arquivo) da ORDEM de MatchTolerance -- maior que qualquer
+            ! epsilon fixo pequeno. Sem isso, dois atomos que fisicamente
+            ! pertencem a' MESMA copia da PC (mesmo rotulo de celula) podem
+            ! computar xiPC(j) em lados OPOSTOS de uma fronteira inteira por
+            ! ruido independente em cada atomo (ex.: 1.999950 vs 2.000010),
+            ! dando cellIndex(j) diferente para os dois -- o que quebra a
+            ! consistencia exigida pela tabela de grupo do motor GERAL (M
+            ! nao-diagonal) em RunUnfolding ("Rotulo de celula inconsistente
+            ! entre orbitais-PC"). Reusa MatchTolerance (ja' configuravel via
+            ! &UNFOLD) em vez de introduzir mais um parametro.
             do j = 1, 3
-                cellIndex(j) = floor(xiPC(j) + 1.0e-9_dp)
+                if (xiPC(j) - floor(xiPC(j)) > 1.0_dp - cfg%MatchTolerance) then
+                    cellIndex(j) = floor(xiPC(j)) + 1   ! bem perto do proximo inteiro: arredonda p/ cima
+                else
+                    cellIndex(j) = floor(xiPC(j))
+                end if
             end do
             remainder = xiPC - real(cellIndex, kind=dp)
 
@@ -937,7 +949,7 @@ contains
             allocate(OrbCellCanon(nCells, nOrbitsPC))
             do orbit = 1, nOrbitsPC
                 do ic = 1, nCells
-                    rep_idx = FindCellIndex(Reps, OrbitMemberCell(:, ic, orbit), nCells)
+                    rep_idx = FindCellIndex(Reps, OrbitMemberCell(:, ic, orbit), nCells, cfg%M)
                     if (rep_idx < 0) then
                         stop "[Unfold Error] Rotulo de celula inconsistente entre orbitais-PC " // &
                              "(M nao-diagonal) -- verifique o &ATOMMAP"
@@ -1138,14 +1150,34 @@ contains
     !> indice (1..nCells) ou -1 se nao encontrado. Usado so' no caso M
     !> nao-diagonal para reindexar OrbitMemberCell/Orb contra o conjunto
     !> canonico de rotulos de celula (ver secao 4b de RunUnfolding).
-    function FindCellIndex(Reps, target, nCells) result(idx)
+    !> Procura, entre as colunas de `Reps(3,nCells)`, aquela que representa a
+    !> MESMA classe lateral (coset) de Z^3/M.Z^3 que `target` -- ou seja,
+    !> `target - Reps(:,k)` e' um vetor de rede da SC (em unidades da PC).
+    !> Devolve o indice (1..nCells) ou -1 se nao encontrado.
+    !>
+    !> Usa equivalencia de GRUPO (tolerante, via inversa de M), nao
+    !> igualdade exata: rotulos de celula calculados independentemente por
+    !> atomo (BuildAtomMapFromPositions, um floor() por atomo) podem cair em
+    !> QUALQUER representante valido da mesma classe lateral -- nao
+    !> necessariamente o mesmo escolhido para outro atomo-PC -- em
+    !> estruturas reais onde os atomos foram "embrulhados" de volta pra
+    !> celula unitaria da SC (comportamento padrao de praticamente
+    !> qualquer gerador de supercelula). Comparar so' por igualdade exata
+    !> rejeita rotulos legitimos com o erro espurio "Rotulo de celula
+    !> inconsistente entre orbitais-PC".
+    function FindCellIndex(Reps, target, nCells, M) result(idx)
         integer, intent(in) :: nCells
-        integer, intent(in) :: Reps(3, nCells), target(3)
+        integer, intent(in) :: Reps(3, nCells), target(3), M(3, 3)
         integer :: idx, k
+        real(dp) :: Minv(3, 3), tvec(3)
 
+        Minv = Invert3x3(real(M, kind=dp))
         idx = -1
         do k = 1, nCells
-            if (all(Reps(:, k) == target)) then
+            ! mesma convencao de BuildGroupTable (Minv@diff, NAO diff@Minv --
+            ! ver nota la')
+            tvec = matmul(Minv, real(target - Reps(:, k), kind=dp))
+            if (all(abs(tvec - real(nint(tvec), kind=dp)) < 1.0e-6_dp)) then
                 idx = k
                 return
             end if
@@ -1186,6 +1218,16 @@ contains
                 raw = Reps(:, a) + Reps(:, c)
                 found = .false.
                 do b = 1, nCells
+                    ! diff = raw - Reps(b) e' o vetor SC-latice (candidato) EXPRESSO
+                    ! em coeficientes INTEIROS da base da PC (mesmas unidades de
+                    ! Reps). tvec = Minv . diff (vetor-COLUNA) da' os coeficientes
+                    ! inteiros s tais que diff = M . s -- validado empiricamente
+                    ! contra o exemplo Chain1D com M cisalhada-mas-fisicamente-
+                    ! equivalente (M(1,:)=4,1,0 em vez de 4,0,0, mesmo .hsio e
+                    ! ATOMMAP): a convencao vetor-linha (diff@Minv) usada em
+                    ! BuildAtomMapFromPositions/ScK NAO se aplica aqui -- ver
+                    ! nota extensa no cabecalho do modulo sobre a diferenca entre
+                    ! as duas convencoes.
                     tvec = matmul(Minv, real(raw - Reps(:, b), kind=dp))
                     if (all(abs(tvec - real(nint(tvec), kind=dp)) < 1.0e-6_dp)) then
                         DestIndex(a, c) = b
