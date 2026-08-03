@@ -1,0 +1,1130 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 Nathanael Nardoto Batista
+
+! ----------------------------------------------------------------------------------------------------------
+! mod_unfold.f90
+!
+! Implementa o unfolding de estrutura de bandas para bases LCAO nao-ortogonais,
+! conforme:
+!
+!   J. Quan, N. Rybin, M. Scheffler, C. Carbogno,
+!   "Efficient band structure unfolding with atom-centered orbitals: General
+!    theory and application", Phys. Rev. B 113, 085112 (2026). DOI: 10.1103/7xym-7388
+!
+! Formalismo utilizado (ver Sec. II B-D do artigo):
+!
+!   1. Transformacao de Lowdin: C'_KN = S(K)^(1/2) C_KN  [Eq. (24)]
+!   2. Os autovetores F_kn do operador de translacao da celula primitiva (PC),
+!      representado na base da supercelula (SC), tem forma analitica fechada
+!      quando a matriz de transformacao M e' diagonal (SC = M1 x M2 x M3
+!      replicas "ortogonais" da PC, o caso mais comum na pratica). Combinando
+!      a recursao das Eqs. (33)-(37) nas 3 direcoes (Eq. 48), obtem-se, para
+!      cada "orbital primitivo" (uma identidade de orbital-PC que se repete
+!      m1*m2*m3 vezes dentro da SC) o autovetor
+!
+!         F_{k}(celula L=(n1,n2,n3)) = (1/sqrt(m1*m2*m3)) * exp(i * 2*pi *
+!                                        (fk1*n1 + fk2*n2 + fk3*n3))
+!
+!      onde fk = (fk1,fk2,fk3) sao as coordenadas fracionarias do ponto k da
+!      PC na base reciproca da PC, e (n1,n2,n3) e' o indice inteiro (0-based)
+!      da celula-PC replicada dentro da SC ao longo de a1,a2,a3.
+!
+!   3. O peso de "unfolding" de cada autoestado |KN> da SC no ponto k da PC
+!      e' entao [Eq. (28)]:
+!
+!         W^k_KN = sum_{n=1}^{p} | F_{k,n}^dagger . C'_KN |^2
+!
+!      onde a soma em n percorre os p "orbitais primitivos" distintos da PC.
+!
+!   4. O ponto K da SC ao qual um dado k da PC e' mapeado segue da Eq. (7),
+!      que para M diagonal se reduz a FK_i = mod(fk_i * m_i, 1).
+!
+! LIMITACAO ATUAL: apenas matrizes de transformacao M DIAGONAIS (M = diag(m1,
+! m2,m3)) sao suportadas, i.e., supercelulas "ortogonais" obtidas por simples
+! multiplicacao da PC ao longo de cada vetor de rede (o caso mais comum em
+! calculos de defeitos, dopagem, ligas e fonons). O formalismo geral do artigo
+! (M nao-diagonal, Eq. 30-32, com blocos D_i genericos) fica para trabalho
+! futuro.
+!
+! Nathanael N. Batista, Agosto de 2026
+! ----------------------------------------------------------------------------------------------------------
+module unfold
+    use iso_fortran_env, only: int64, output_unit
+    use types,  only: dp
+    use HS_io,  only: HSDataFormat
+    use core,   only: compute_Hk_at_kpoint
+    implicit none
+    private
+
+    public :: PCPathConfig, UnfoldConfig, UnfoldResultFormat
+    public :: ReadUnfoldNamelist, ReadAtomMap, ReadPCPath, DisplayUnfoldConfig
+    public :: BuildAtomMapFromPositions, UsesAutomaticAtomMap, ReadStructureFile
+    public :: RunUnfolding
+
+    real(dp), parameter :: TWO_PI = 6.283185307179586476925286766559_dp
+
+    ! ----------------------------------------------------------------------
+    ! Caminho de pontos k da CELULA PRIMITIVA (coordenadas fracionarias na
+    ! base reciproca da PC). Estrutura identica, em espirito, a BandsConfig
+    ! de mod_config.f90, mas mantida separada para nao acoplar os dois
+    ! modulos (e para deixar claro que aqui os pontos sao da PC, nao da SC).
+    ! ----------------------------------------------------------------------
+    type :: PCPathConfig
+        integer                :: npaths = 0
+        integer,  allocatable  :: nkpts(:)
+        real(dp), allocatable  :: kpoints(:, :)   ! (3, npaths) vertices do caminho
+        real(dp), allocatable  :: FullPath(:, :)  ! (3, total_kpoints) caminho completo
+        real(dp), allocatable  :: xpoints(:)      ! (total_kpoints) posicao acumulada
+        integer                :: total_kpoints = 0
+    end type PCPathConfig
+
+    ! ----------------------------------------------------------------------
+    ! Configuracao completa do calculo de unfolding
+    ! ----------------------------------------------------------------------
+    type :: UnfoldConfig
+        character(len=256)     :: ProjectName = ""
+        character(len=256)     :: HDataFile   = ""
+        character(len=256)     :: SDataFile   = ""
+        character(len=256)     :: OutputDir   = "./"
+
+        ! Matriz de transformacao PC->SC completa [Eq. (1) do artigo, A=a.M].
+        ! O MOTOR atual (RunUnfolding) so' suporta M DIAGONAL, mas a entrada ja'
+        ! aceita a matriz 3x3 completa (ver CheckDiagonalM) para nao ter que
+        ! mudar o formato do arquivo de novo quando o suporte a M generico for
+        ! implementado. MDiag(3) = [M(1,1),M(2,2),M(3,3)] e' o que o motor usa.
+        integer                :: M(3, 3)    = reshape([1,0,0, 0,1,0, 0,0,1], [3,3])
+        integer                :: MDiag(3)   = (/1, 1, 1/)
+
+        real(dp)               :: Broadening  = 0.010_dp      ! eV (largura Lorentziana p/ A(k,E))
+        real(dp)               :: Emin        = -10.0_dp
+        real(dp)               :: Emax        =  10.0_dp
+        integer                :: nE          = 400
+        logical                :: WriteSpectralFunction = .true.
+
+        ! --------------------------------------------------------------
+        ! Modo automatico (RECOMENDADO): fornecendo os dois arquivos de
+        ! ESTRUTURA abaixo (PC e SC, no formato .nml do proprio pacote --
+        ! ver ReadStructureFile), o mapeamento atomo(SC)->(atomo-PC, celula)
+        ! e' construido automaticamente por casamento geometrico (ver
+        ! BuildAtomMapFromPositions), dispensando o bloco &ATOMMAP manual.
+        ! Cada arquivo de estrutura contem os vetores de rede (&STRUCTURE)
+        ! e a lista de atomos da celula, Especie X Y Z em Angstrom (&ATOMS).
+        ! Os simbolos quimicos sao usados como checagem extra no casamento
+        ! geometrico (um atomo de Ga nunca casa com um N).
+        ! --------------------------------------------------------------
+        character(len=256)     :: PCStructureFile = ""
+        character(len=256)     :: SCStructureFile = ""
+        real(dp)               :: MatchTolerance  = 1.0e-3_dp  ! coord. fracionaria da PC
+
+        ! Mapeamento atomo(SC) -> (atomo-PC, indice de celula-PC dentro da SC).
+        ! Preenchido OU pelo bloco manual &ATOMMAP (ReadAtomMap), OU
+        ! automaticamente a partir das posicoes (BuildAtomMapFromPositions).
+        integer, allocatable   :: PCOrbit(:)      ! (nAtomsSC) rotulo do atomo-PC (1..nAtomsPC)
+        integer, allocatable   :: CellIndex(:, :) ! (3, nAtomsSC) indice (n1,n2,n3), 0-based
+
+        type(PCPathConfig)     :: PCPath
+    end type UnfoldConfig
+
+    ! ----------------------------------------------------------------------
+    ! Resultado do unfolding: para cada ponto k da PC, todas as energias e
+    ! pesos W^k_KN dos estados da SC no K correspondente.
+    ! ----------------------------------------------------------------------
+    type :: UnfoldResultFormat
+        real(dp), allocatable :: Energies(:, :)  ! (NOrbsSC, total_kpoints)
+        real(dp), allocatable :: Weights(:, :)   ! (NOrbsSC, total_kpoints)
+        real(dp), allocatable :: SumCheck(:)     ! (total_kpoints) soma_N W^k_KN (deveria ser p, o
+                                                  ! numero de orbitais-PC por celula; ver RunUnfolding)
+
+        contains
+            procedure :: SaveScatter
+            procedure :: SaveSpectralFunction
+    end type UnfoldResultFormat
+
+contains
+
+    ! ======================================================================
+    ! LEITURA DE ENTRADA
+    ! ======================================================================
+
+    !> Le a proxima linha "util" da unidade `iu`, pulando linhas em branco e
+    !> linhas de comentario puro (primeiro caractere nao-branco "!" ou "#").
+    !> Comentarios ao FINAL de uma linha de dados (ex.: "0.5 0.0 0.0 10 !X")
+    !> nao precisam disso: list-directed READ ja os ignora nativamente.
+    subroutine NextDataLine(iu, line, ierr)
+        integer,           intent(in)  :: iu
+        character(len=*),  intent(out) :: line
+        integer,           intent(out) :: ierr
+        character(len=len(line)) :: raw
+
+        do
+            read(iu, '(A)', iostat=ierr) raw
+            if (ierr /= 0) return
+            line = adjustl(raw)
+            if (len_trim(line) == 0) cycle
+            if (line(1:1) == '!' .or. line(1:1) == '#') cycle
+            exit
+        end do
+    end subroutine NextDataLine
+
+    !> Le o bloco de namelist &UNFOLD a partir da unidade ja aberta `iu`.
+    subroutine ReadUnfoldNamelist(iu, cfg)
+        integer,           intent(in)    :: iu
+        type(UnfoldConfig), intent(inout) :: cfg
+        integer :: ierr
+        character(len=256) :: ErrorMessage
+
+        character(len=256) :: ProjectName, HDataFile, SDataFile, OutputDir
+        character(len=256) :: PCStructureFile, SCStructureFile
+        integer  :: M(3, 3), nE
+        real(dp) :: Broadening, Emin, Emax, MatchTolerance
+        logical  :: WriteSpectralFunction
+
+        namelist /UNFOLD/ ProjectName, HDataFile, SDataFile, OutputDir, M, &
+                           Broadening, Emin, Emax, nE, WriteSpectralFunction, &
+                           PCStructureFile, SCStructureFile, MatchTolerance
+
+        ! Valores padrao
+        ProjectName      = cfg%ProjectName
+        HDataFile        = cfg%HDataFile
+        SDataFile        = cfg%SDataFile
+        OutputDir        = cfg%OutputDir
+        M                = cfg%M
+        Broadening       = cfg%Broadening
+        Emin             = cfg%Emin
+        Emax             = cfg%Emax
+        nE               = cfg%nE
+        WriteSpectralFunction = cfg%WriteSpectralFunction
+        PCStructureFile  = cfg%PCStructureFile
+        SCStructureFile  = cfg%SCStructureFile
+        MatchTolerance   = cfg%MatchTolerance
+
+        read(iu, nml=UNFOLD, iostat=ierr, iomsg=ErrorMessage)
+        if (ierr /= 0) then
+            print *, "[Unfold Input Error] Falha ao ler o bloco &UNFOLD"
+            print *, "Mensagem: ", trim(ErrorMessage)
+            stop 1
+        end if
+
+        cfg%ProjectName = ProjectName
+        cfg%HDataFile   = HDataFile
+        cfg%SDataFile   = SDataFile
+        cfg%OutputDir   = OutputDir
+        cfg%M           = M
+        cfg%Broadening  = Broadening
+        cfg%Emin        = Emin
+        cfg%Emax        = Emax
+        cfg%nE          = nE
+        cfg%WriteSpectralFunction = WriteSpectralFunction
+        cfg%PCStructureFile = PCStructureFile
+        cfg%SCStructureFile = SCStructureFile
+        cfg%MatchTolerance  = MatchTolerance
+
+        call CheckDiagonalM(cfg)
+        cfg%MDiag = (/ cfg%M(1,1), cfg%M(2,2), cfg%M(3,3) /)
+
+        if (any(cfg%MDiag < 1)) then
+            print *, "[Unfold Input Error] Os elementos da diagonal de M devem ser >= 1"
+            stop 1
+        end if
+    end subroutine ReadUnfoldNamelist
+
+    !> Verifica que M e' diagonal. O motor de unfolding (RunUnfolding) so'
+    !> implementa o caso M=diag(m1,m2,m3); dar erro claro aqui (em vez de um
+    !> resultado silenciosamente errado) quando o usuario fornecer uma SC
+    !> nao-ortogonal, ate' que o formalismo geral (Sec. II D do artigo,
+    !> M generico) seja implementado.
+    subroutine CheckDiagonalM(cfg)
+        type(UnfoldConfig), intent(in) :: cfg
+        integer :: i, j
+        do i = 1, 3
+            do j = 1, 3
+                if (i /= j .and. cfg%M(i, j) /= 0) then
+                    print '(A)', "[Unfold Input Error] M nao e' diagonal."
+                    print '(A)', "  O motor de unfolding atual so' suporta supercelulas" // &
+                                 " 'ortogonais' (M = diag(m1,m2,m3))."
+                    print '(A)', "  Suporte a M generico esta' planejado para uma versao futura."
+                    stop 1
+                end if
+            end do
+        end do
+    end subroutine CheckDiagonalM
+
+    !> .true. se o usuario forneceu os dois arquivos de estrutura (PC e SC),
+    !> modo automatico de construcao do &ATOMMAP; .false. se deve usar o
+    !> bloco manual &ATOMMAP no proprio arquivo de entrada.
+    function UsesAutomaticAtomMap(cfg) result(auto)
+        type(UnfoldConfig), intent(in) :: cfg
+        logical :: auto
+        auto = (len_trim(cfg%PCStructureFile) > 0) .and. (len_trim(cfg%SCStructureFile) > 0)
+    end function UsesAutomaticAtomMap
+
+    !> Le o bloco &ATOMMAP: exatamente nAtoms linhas "PCAtom  n1 n2 n3",
+    !> na MESMA ordem dos atomos do arquivo .hsio (ordem de Orbs(:)).
+    subroutine ReadAtomMap(iu, cfg, nAtoms)
+        integer,            intent(in)    :: iu
+        type(UnfoldConfig), intent(inout) :: cfg
+        integer,            intent(in)    :: nAtoms
+
+        character(len=256) :: line
+        integer :: ierr, i
+
+        ! 1. Avanca ate a linha "&ATOMMAP"
+        do
+            read(iu, '(A)', iostat=ierr) line
+            if (ierr /= 0) stop "[Unfold Input Error] Bloco &ATOMMAP nao encontrado"
+            if (trim(adjustl(line)) == "&ATOMMAP") exit
+        end do
+
+        allocate(cfg%PCOrbit(nAtoms))
+        allocate(cfg%CellIndex(3, nAtoms))
+
+        do i = 1, nAtoms
+            call NextDataLine(iu, line, ierr)
+            if (ierr == 0) read(line, *, iostat=ierr) cfg%PCOrbit(i), cfg%CellIndex(:, i)
+            if (ierr /= 0) then
+                print '(A, I0)', "[Unfold Input Error] Falha ao ler &ATOMMAP na linha do atomo ", i
+                stop 1
+            end if
+        end do
+
+        if (any(cfg%CellIndex < 0)) then
+            stop "[Unfold Input Error] Indices de celula em &ATOMMAP devem ser >= 0 (0-based)"
+        end if
+        do i = 1, 3
+            if (any(cfg%CellIndex(i, :) >= cfg%MDiag(i))) then
+                print '(A, I0, A)', "[Unfold Input Error] Indice de celula na direcao ", i, &
+                                     " excede M(i,i)-1"
+                stop 1
+            end if
+        end do
+    end subroutine ReadAtomMap
+
+    !> Constroi automaticamente o mapeamento atomo(SC) -> (atomo-PC, celula)
+    !> por CASAMENTO GEOMETRICO, lendo PCStructureFile e SCStructureFile
+    !> (formato .nml proprio do pacote, ver ReadStructureFile).
+    !>
+    !> Para M diagonal, a coordenada fracionaria de um atomo da SC na base da
+    !> PC e' obtida componente-a-componente por xi_PC(i) = M(i,i) * xi_SC(i)
+    !> [caso diagonal da relacao geral xi_PC = M . xi_SC, decorrente de
+    !> A = a.M, Eq. (1) do artigo]. A parte inteira de xi_PC(i) e' o indice
+    !> de celula n_i (0-based), e a parte fracionaria e' comparada (com
+    !> imagem minima periodica, e mesmo simbolo quimico) contra a lista de
+    !> posicoes da PC para identificar de qual atomo-PC aquele atomo da SC
+    !> e' replica.
+    !>
+    !> Alem do casamento geometrico, esta rotina tambem CONFERE, para cada
+    !> atomo, que o numero de orbitais realmente presente no .hsio
+    !> (HData%Orbs) bate com o numero declarado no bloco &SPECIES do arquivo
+    !> de estrutura correspondente (PC e SC) -- um jeito barato de pegar
+    !> cedo erros de ordenacao de atomos ou de conjunto de base usado.
+    !>
+    !> Esta rotina evita ter que digitar manualmente uma linha por atomo em
+    !> &ATOMMAP -- basta fornecer a estrutura da PC e da SC (que o usuario
+    !> ja' tem, vindas de qualquer ferramenta usada para construir a SC) e M.
+    subroutine BuildAtomMapFromPositions(cfg, HData)
+        type(UnfoldConfig), intent(inout) :: cfg
+        type(HSDataFormat), intent(in)    :: HData
+
+        real(dp), allocatable :: PCPos(:, :)   ! (3, nAtomsPC)
+        real(dp), allocatable :: SCPos(:, :)   ! (3, nAtoms)
+        character(len=8), allocatable :: PCEl(:), SCEl(:)
+        character(len=8), allocatable :: PCSpecies(:), SCSpecies(:)
+        integer,          allocatable :: PCSpeciesNOrbs(:), SCSpeciesNOrbs(:)
+        integer :: nAtoms, nAtomsPC, i, j, jbest, expectedOrbs
+        real(dp) :: xiSC(3), xiPC(3), remainder(3), diff(3), dist, distbest
+        integer  :: cellIndex(3)
+
+        nAtoms = HData%nAtoms
+
+        call ReadStructureFile(cfg%PCStructureFile, PCPos, PCEl, nAtomsPC, PCSpecies, PCSpeciesNOrbs)
+        call ReadStructureFile(cfg%SCStructureFile, SCPos, SCEl, i, SCSpecies, SCSpeciesNOrbs)
+
+        if (i /= nAtoms) then
+            print '(A, I0, A, I0)', "[Unfold Input Error] " // trim(cfg%SCStructureFile) // &
+                " tem numero de atomos diferente do .hsio: ", i, " vs ", nAtoms
+            stop 1
+        end if
+
+        allocate(cfg%PCOrbit(nAtoms))
+        allocate(cfg%CellIndex(3, nAtoms))
+
+        do i = 1, nAtoms
+            xiSC = modulo(SCPos(:, i), 1.0_dp)                 ! defensivo: garante [0,1)
+            xiPC = real(cfg%MDiag, kind=dp) * xiSC             ! caso diagonal de xi_PC = M.xi_SC
+
+            do j = 1, 3
+                cellIndex(j) = floor(xiPC(j))
+                if (cellIndex(j) >= cfg%MDiag(j)) cellIndex(j) = cfg%MDiag(j) - 1  ! guarda p/ ruido numerico
+                if (cellIndex(j) < 0) cellIndex(j) = 0
+            end do
+            remainder = xiPC - real(cellIndex, kind=dp)
+
+            ! Casa `remainder` (posicao fracionaria dentro da celula-PC) contra
+            ! a lista de atomos-template da PC, usando imagem minima periodica
+            ! e exigindo o MESMO simbolo quimico.
+            jbest = -1
+            distbest = huge(1.0_dp)
+            do j = 1, nAtomsPC
+                if (trim(adjustl(SCEl(i))) /= trim(adjustl(PCEl(j)))) cycle
+                diff = remainder - PCPos(:, j)
+                diff = diff - nint(diff)       ! imagem minima: dobra para [-0.5, 0.5)
+                dist = norm2(diff)
+                if (dist < distbest) then
+                    distbest = dist
+                    jbest = j
+                end if
+            end do
+
+            if (jbest < 0 .or. distbest > cfg%MatchTolerance) then
+                print '(A, I0)', "[Unfold Input Error] Nao foi possivel casar geometricamente o atomo da SC #", i
+                print '(A, A)', "  elemento: ", trim(adjustl(SCEl(i)))
+                print '(A, 3F10.6)', "  posicao fracionaria (SC): ", SCPos(:, i)
+                print '(A, 3F10.6)', "  posicao fracionaria (PC) reduzida: ", remainder
+                if (jbest > 0) then
+                    print '(A, I0, A, F10.6, A, F10.6, A)', "  atomo-PC mais proximo (mesmo elemento): ", jbest, &
+                        " (distancia = ", distbest, ", tolerancia = ", cfg%MatchTolerance, ")"
+                else
+                    print '(A)', "  Nenhum atomo-PC com o mesmo elemento quimico foi encontrado."
+                end if
+                print '(A)', "  Verifique se M, os vetores de rede/posicoes/simbolos e a ordem" // &
+                             " dos atomos no .hsio estao consistentes, ou aumente MatchTolerance em &UNFOLD."
+                stop 1
+            end if
+
+            ! Confere o numero de orbitais declarado no &SPECIES (tanto do
+            ! lado PC quanto do lado SC, que devem concordar entre si) contra
+            ! o que o .hsio realmente tem para este atomo -- SOMENTE se
+            ! ambos os arquivos de estrutura tiverem o bloco &SPECIES
+            ! (opcional); caso contrario, esta checagem extra e' pulada.
+            if (size(PCSpeciesNOrbs) > 0 .and. size(SCSpeciesNOrbs) > 0) then
+                expectedOrbs = SpeciesNOrbsLookup(PCSpecies, PCSpeciesNOrbs, PCEl(jbest))
+                if (expectedOrbs /= SpeciesNOrbsLookup(SCSpecies, SCSpeciesNOrbs, SCEl(i))) then
+                    print '(A, A)', "[Unfold Input Error] &SPECIES da PC e da SC discordam para a especie ", &
+                        trim(adjustl(SCEl(i)))
+                    stop 1
+                end if
+                if (expectedOrbs /= HData%Orbs(i)) then
+                    print '(A, I0)', "[Unfold Input Error] Numero de orbitais inconsistente no atomo da SC #", i
+                    print '(A, A)', "  especie: ", trim(adjustl(SCEl(i)))
+                    print '(A, I0)', "  declarado em &SPECIES (PC/SC): ", expectedOrbs
+                    print '(A, I0)', "  numero real no .hsio (Orbs): ", HData%Orbs(i)
+                    print '(A)', "  Verifique se o conjunto de base usado para gerar o .hsio bate com" // &
+                                 " o declarado no bloco &SPECIES, e se a ordem dos atomos esta correta."
+                    stop 1
+                end if
+            end if
+
+            cfg%PCOrbit(i)      = jbest
+            cfg%CellIndex(:, i) = cellIndex
+        end do
+
+        if (size(PCSpeciesNOrbs) > 0 .and. size(SCSpeciesNOrbs) > 0) then
+            print '(A, I0, A)', "  Mapeamento atomo->PC construido automaticamente (", nAtoms, " atomos, " // &
+                                 "casamento geometrico via estrutura, orbitais/especie conferidos)."
+        else
+            print '(A, I0, A)', "  Mapeamento atomo->PC construido automaticamente (", nAtoms, " atomos, " // &
+                                 "casamento geometrico via estrutura; &SPECIES ausente, sem checagem de orbitais)."
+        end if
+    end subroutine BuildAtomMapFromPositions
+
+    !> Procura `species` na tabela `names(:)` e devolve o numero de orbitais
+    !> correspondente em `norbs(:)`; para com erro claro se nao encontrar.
+    function SpeciesNOrbsLookup(names, norbs, species) result(n)
+        character(len=8), intent(in) :: names(:)
+        integer,           intent(in) :: norbs(:)
+        character(len=8), intent(in) :: species
+        integer :: n, k
+
+        n = -1
+        do k = 1, size(names)
+            if (trim(adjustl(names(k))) == trim(adjustl(species))) then
+                n = norbs(k)
+                return
+            end if
+        end do
+        print '(A, A)', "[Unfold Input Error] Especie nao encontrada em &SPECIES: ", trim(adjustl(species))
+        stop 1
+    end function SpeciesNOrbsLookup
+
+    !> Le um arquivo de ESTRUTURA no formato .nml do proprio pacote: vetores
+    !> de rede (bloco &STRUCTURE, namelist), a associacao especie->numero de
+    !> orbitais (bloco &SPECIES) e a lista de atomos da celula (bloco &ATOMS:
+    !> Especie X Y Z, Cartesiano, em Angstrom):
+    !>
+    !>   &STRUCTURE
+    !>       LatticeVectors(1,:) = a1x, a1y, a1z   ! Angstrom
+    !>       LatticeVectors(2,:) = a2x, a2y, a2z
+    !>       LatticeVectors(3,:) = a3x, a3y, a3z
+    !>   /
+    !>
+    !>   &SPECIES
+    !>   <nEspecies>
+    !>   Especie  nOrbitais
+    !>   ...
+    !>   /
+    !>
+    !>   &ATOMS
+    !>   <nAtomos>
+    !>   Especie  x  y  z    ! Cartesiano, Angstrom
+    !>   ...
+    !>   /
+    !>
+    !> Devolve as posicoes ja' convertidas para coordenadas FRACIONARIAS.
+    !> LatticeVectors tem uma LINHA por vetor de rede (LatticeVectors(1,:)=a1,
+    !> (2,:)=a2, (3,:)=a3 -- a mesma convencao de POSCAR/ASE/CIF). Como
+    !> r_cart = f_frac . LatticeVectors (f_frac linha, vetores em linha),
+    !> tem-se f_frac = r_cart . LatticeVectors^-1, i.e., em notacao
+    !> matriz-vetor coluna, f_frac = (LatticeVectors^T)^-1 . r_cart.
+    !> Devolve tambem os simbolos quimicos de cada atomo, e a tabela
+    !> especie->numero de orbitais (usada por BuildAtomMapFromPositions para
+    !> conferir, contra o .hsio, que a base realmente usada tem o numero de
+    !> orbitais esperado para cada especie -- um jeito barato de pegar cedo
+    !> erros de ordenacao ou de conjunto de base).
+    subroutine ReadStructureFile(filename, Pos, Elements, nAtoms, SpeciesNames, SpeciesNOrbs)
+        character(len=*),               intent(in)  :: filename
+        real(dp), allocatable,          intent(out) :: Pos(:, :)
+        character(len=8), allocatable,  intent(out) :: Elements(:)
+        integer,                        intent(out) :: nAtoms
+        character(len=8), allocatable,  intent(out) :: SpeciesNames(:)
+        integer,          allocatable,  intent(out) :: SpeciesNOrbs(:)
+
+        integer :: iu, ierr, i, nSpecies
+        character(len=256) :: line, ErrorMessage
+        real(dp) :: LatticeVectors(3, 3), InvLattice(3, 3), rcart(3)
+        namelist /STRUCTURE/ LatticeVectors
+
+        open(newunit=iu, file=trim(filename), status='old', action='read', iostat=ierr)
+        if (ierr /= 0) then
+            print '(A, A)', "[Unfold Input Error] Nao foi possivel abrir arquivo de estrutura: ", trim(filename)
+            stop 1
+        end if
+
+        ! 1. Bloco &STRUCTURE (namelist): LatticeVectors(3,3), LINHAS = a1,a2,a3
+        !    (convencao POSCAR/ASE/CIF). f_frac = (LatticeVectors^T)^-1 . r_cart
+        LatticeVectors = 0.0_dp
+        read(iu, nml=STRUCTURE, iostat=ierr, iomsg=ErrorMessage)
+        if (ierr /= 0) then
+            print '(A, A)', "[Unfold Input Error] Falha ao ler o bloco &STRUCTURE em ", trim(filename)
+            print '(A, A)', "  Mensagem: ", trim(ErrorMessage)
+            stop 1
+        end if
+        if (all(abs(LatticeVectors) < 1.0e-12_dp)) then
+            print '(A, A)', "[Unfold Input Error] LatticeVectors ausente ou nulo em ", trim(filename)
+            stop 1
+        end if
+        InvLattice = Invert3x3(transpose(LatticeVectors))
+
+        ! 2. Bloco &SPECIES (OPCIONAL): <nEspecies> seguido de "Especie
+        !    nOrbitais" por linha. Se ausente, pula direto para &ATOMS e a
+        !    checagem especie->numero-de-orbitais e' simplesmente ignorada
+        !    (BuildAtomMapFromPositions detecta a tabela vazia e nao confere).
+        do
+            read(iu, '(A)', iostat=ierr) line
+            if (ierr /= 0) then
+                print '(A, A)', "[Unfold Input Error] Bloco &ATOMS nao encontrado em ", trim(filename)
+                stop 1
+            end if
+            if (trim(adjustl(line)) == "&SPECIES" .or. trim(adjustl(line)) == "&ATOMS") exit
+        end do
+
+        if (trim(adjustl(line)) == "&SPECIES") then
+            call NextDataLine(iu, line, ierr)
+            if (ierr == 0) read(line, *, iostat=ierr) nSpecies
+            if (ierr /= 0 .or. nSpecies < 1) then
+                print '(A, A)', "[Unfold Input Error] Falha ao ler o numero de especies em ", trim(filename)
+                stop 1
+            end if
+
+            allocate(SpeciesNames(nSpecies))
+            allocate(SpeciesNOrbs(nSpecies))
+            do i = 1, nSpecies
+                call NextDataLine(iu, line, ierr)
+                if (ierr == 0) read(line, *, iostat=ierr) SpeciesNames(i), SpeciesNOrbs(i)
+                if (ierr /= 0 .or. SpeciesNOrbs(i) < 1) then
+                    print '(A, I0, A, A)', "[Unfold Input Error] Falha ao ler a especie ", i, " em ", trim(filename)
+                    stop 1
+                end if
+            end do
+
+            ! 3. Bloco &ATOMS: <nAtomos> seguido de "Especie x y z" por linha
+            do
+                read(iu, '(A)', iostat=ierr) line
+                if (ierr /= 0) then
+                    print '(A, A)', "[Unfold Input Error] Bloco &ATOMS nao encontrado em ", trim(filename)
+                    stop 1
+                end if
+                if (trim(adjustl(line)) == "&ATOMS") exit
+            end do
+        else
+            ! &SPECIES ausente: a linha atual JA' e' "&ATOMS" (nao ha' o que
+            ! avancar); tabela de especies fica vazia.
+            allocate(SpeciesNames(0))
+            allocate(SpeciesNOrbs(0))
+        end if
+
+        call NextDataLine(iu, line, ierr)
+        if (ierr == 0) read(line, *, iostat=ierr) nAtoms
+        if (ierr /= 0 .or. nAtoms < 1) then
+            print '(A, A)', "[Unfold Input Error] Falha ao ler o numero de atomos em ", trim(filename)
+            stop 1
+        end if
+
+        allocate(Pos(3, nAtoms))
+        allocate(Elements(nAtoms))
+        do i = 1, nAtoms
+            call NextDataLine(iu, line, ierr)
+            if (ierr == 0) read(line, *, iostat=ierr) Elements(i), rcart
+            if (ierr /= 0) then
+                print '(A, I0, A, A)', "[Unfold Input Error] Falha ao ler o atomo ", i, " em ", trim(filename)
+                stop 1
+            end if
+            if (size(SpeciesNames) > 0 .and. .not. any(Elements(i) == SpeciesNames)) then
+                print '(A, I0, A, A, A, A)', "[Unfold Input Error] Atomo ", i, " (especie '", &
+                    trim(adjustl(Elements(i))), "') nao consta no bloco &SPECIES de ", trim(filename)
+                stop 1
+            end if
+            Pos(:, i) = matmul(InvLattice, rcart)
+        end do
+        close(iu)
+    end subroutine ReadStructureFile
+
+
+    !> Inversa de uma matriz 3x3 (formula de cofatores). Usada para converter
+    !> posicoes Cartesianas de arquivos .xyz em coordenadas fracionarias.
+    function Invert3x3(A) result(Ainv)
+        real(dp), intent(in) :: A(3, 3)
+        real(dp) :: Ainv(3, 3), det
+
+        det = A(1,1) * (A(2,2)*A(3,3) - A(2,3)*A(3,2)) &
+            - A(1,2) * (A(2,1)*A(3,3) - A(2,3)*A(3,1)) &
+            + A(1,3) * (A(2,1)*A(3,2) - A(2,2)*A(3,1))
+
+        if (abs(det) < 1.0e-12_dp) then
+            print '(A)', "[Unfold Error] Matriz de rede singular (determinante ~ 0)."
+            stop 1
+        end if
+
+        Ainv(1,1) =  (A(2,2)*A(3,3) - A(2,3)*A(3,2)) / det
+        Ainv(1,2) = -(A(1,2)*A(3,3) - A(1,3)*A(3,2)) / det
+        Ainv(1,3) =  (A(1,2)*A(2,3) - A(1,3)*A(2,2)) / det
+        Ainv(2,1) = -(A(2,1)*A(3,3) - A(2,3)*A(3,1)) / det
+        Ainv(2,2) =  (A(1,1)*A(3,3) - A(1,3)*A(3,1)) / det
+        Ainv(2,3) = -(A(1,1)*A(2,3) - A(1,3)*A(2,1)) / det
+        Ainv(3,1) =  (A(2,1)*A(3,2) - A(2,2)*A(3,1)) / det
+        Ainv(3,2) = -(A(1,1)*A(3,2) - A(1,2)*A(3,1)) / det
+        Ainv(3,3) =  (A(1,1)*A(2,2) - A(1,2)*A(2,1)) / det
+    end function Invert3x3
+
+    !> Le o bloco &PCPATH, no MESMO formato do bloco &BANDS de mod_config.f90,
+    !> mas interpretado como coordenadas fracionarias da PC.
+    subroutine ReadPCPath(iu, path)
+        integer,           intent(in)    :: iu
+        type(PCPathConfig), intent(inout) :: path
+
+        character(len=256) :: line
+        integer  :: ierr, i, j, idx
+        real(dp) :: dk(3), xbuffer, length
+
+        do
+            read(iu, '(A)', iostat=ierr) line
+            if (ierr /= 0) stop "[Unfold Input Error] Bloco &PCPATH nao encontrado"
+            if (trim(adjustl(line)) == "&PCPATH") exit
+        end do
+
+        call NextDataLine(iu, line, ierr)
+        if (ierr == 0) read(line, *, iostat=ierr) path%npaths
+        if (ierr /= 0) stop "[Unfold Input Error] Falha ao ler o numero de caminhos em &PCPATH"
+        if (path%npaths < 2) stop "[Unfold Input Error] &PCPATH precisa de ao menos 2 vertices"
+
+        allocate(path%nkpts(path%npaths))
+        allocate(path%kpoints(3, path%npaths))
+
+        do i = 1, path%npaths
+            call NextDataLine(iu, line, ierr)
+            if (ierr == 0) read(line, *, iostat=ierr) path%kpoints(:, i), path%nkpts(i)
+            if (ierr /= 0) then
+                print '(A, I0)', "[Unfold Input Error] Falha ao ler o vertice ", i, " de &PCPATH"
+                stop 1
+            end if
+        end do
+
+        path%total_kpoints = sum(path%nkpts(1:path%npaths - 1))
+        allocate(path%FullPath(3, path%total_kpoints))
+        allocate(path%xpoints(path%total_kpoints))
+
+        idx = 1
+        xbuffer = 0.0_dp
+        do i = 1, path%npaths - 1
+            dk = (path%kpoints(:, i + 1) - path%kpoints(:, i)) / real(path%nkpts(i), kind=dp)
+            length = norm2(dk)
+            do j = 1, path%nkpts(i)
+                path%FullPath(:, idx) = path%kpoints(:, i) + real(j - 1, kind=dp) * dk
+                path%xpoints(idx) = xbuffer
+                xbuffer = xbuffer + length
+                idx = idx + 1
+            end do
+        end do
+        path%xpoints(idx - 1)     = xbuffer
+        path%FullPath(:, idx - 1) = path%kpoints(:, path%npaths)
+    end subroutine ReadPCPath
+
+    subroutine DisplayUnfoldConfig(cfg, nAtoms, nOrbs)
+        use terminal_ui, only: print_box, print_row_split, print_box_close
+        type(UnfoldConfig), intent(in) :: cfg
+        integer,             intent(in) :: nAtoms, nOrbs
+        character(len=64) :: buf
+
+        call print_box("Unfold Configuration")
+        call print_row_split("Project Name:", cfg%ProjectName)
+        call print_row_split("HData File:",   cfg%HDataFile)
+        call print_row_split("SData File:",   cfg%SDataFile)
+        write(buf, '(I0, 1X, I0, 1X, I0)') cfg%MDiag
+        call print_row_split("SC multiplicity (m1,m2,m3):", buf)
+        write(buf, '(I0)') nAtoms
+        call print_row_split("Atoms in SC:", buf)
+        write(buf, '(I0)') nOrbs
+        call print_row_split("Orbitals in SC:", buf)
+        write(buf, '(I0)') cfg%PCPath%total_kpoints
+        call print_row_split("PC k-points to unfold:", buf)
+        write(buf, '(F0.4, A)') cfg%Broadening, " eV"
+        call print_row_split("Broadening:", buf)
+        call print_box_close()
+    end subroutine DisplayUnfoldConfig
+
+    ! ======================================================================
+    ! MOTOR DE UNFOLDING
+    ! ======================================================================
+
+    !> Executa o unfolding completo: monta as tabelas de orbita, faz a
+    !> diagonalizacao generalizada em cada K da SC e projeta o resultado
+    !> nos "orbitais primitivos" para obter os pesos W^k_KN.
+    !>
+    !> Paralelizado sobre os pontos k da PC com OpenMP, na MESMA tecnica
+    !> usada em calc_band_structure_non_orth (mod_core.f90): cada thread
+    !> recebe seu proprio conjunto de matrizes de trabalho (pool indexado
+    !> pelo id da thread), evitando qualquer condicao de corrida -- cada
+    !> iteracao ik so' escreve nas colunas ik de Result%Energies/Weights/
+    !> SumCheck, que sao posicoes disjuntas entre threads.
+    subroutine RunUnfolding(cfg, HData, SData, Result)
+        use omp_lib, only: omp_get_max_threads, omp_get_thread_num
+        type(UnfoldConfig),   intent(in)    :: cfg
+        type(HSDataFormat),   intent(in)    :: HData, SData
+        type(UnfoldResultFormat), intent(out) :: Result
+
+        integer :: nAtoms, nOrbs, nCells, nAtomsPC, nOrbitsPC
+        integer, allocatable :: AtomOrbOffset(:), nOrbsPerPCAtom(:), PCAtomOrbOffset(:)
+        integer, allocatable :: OrbitID(:)          ! (nOrbs)
+        integer, allocatable :: OrbitCell(:, :)     ! (3, nOrbs)
+        integer, allocatable :: OrbitMemberOrb(:, :)   ! (nCells, nOrbitsPC)
+        integer, allocatable :: OrbitMemberCell(:, :, :) ! (3, nCells, nOrbitsPC)
+        integer, allocatable :: fillcount(:)
+
+        integer :: iAtom, iOrb, gOrb, orbit, L, ik, ic, iN
+        integer :: total_kpoints, max_threads, thread_id, completed_count, progress_width
+        integer(int64) :: clock_start, clock_end, clock_rate
+        real(dp) :: fk(3), ScK(3), point_elapsed
+        character(len=32)  :: total_kpoints_text
+        character(len=128) :: progress_format
+        complex(dp) :: proj
+
+        ! Pools de matrizes de trabalho: uma "fatia" por thread (ultima
+        ! dimensao = indice da thread), exatamente como em
+        ! calc_band_structure_non_orth (mod_core.f90)
+        complex(dp), allocatable :: Hk_pool(:, :, :), Sk_pool(:, :, :)
+        complex(dp), allocatable :: Cvec_pool(:, :, :), Cprime_pool(:, :, :)
+        complex(dp), allocatable :: Ssqrt_pool(:, :, :), Usq_pool(:, :, :)
+        real(dp),    allocatable :: Eval_pool(:, :), wS_pool(:, :)
+        complex(dp), allocatable :: phase_pool(:, :)
+
+        nAtoms = HData%nAtoms
+        nOrbs  = HData%NOrbs
+        nCells = cfg%MDiag(1) * cfg%MDiag(2) * cfg%MDiag(3)
+
+        if (nAtoms /= size(cfg%PCOrbit)) then
+            stop "[Unfold Error] &ATOMMAP incompatível com o numero de atomos do .hsio"
+        end if
+        if (SData%NOrbs /= nOrbs .or. SData%nAtoms /= nAtoms) then
+            stop "[Unfold Error] Arquivos H e S sao incompatíveis (NOrbs/nAtoms diferentes)"
+        end if
+
+        ! --------------------------------------------------------------
+        ! 1. Deslocamentos de orbital por atomo (blocos contiguos, na
+        !    mesma ordem de HData%Orbs, exatamente como AssembleDense usa)
+        ! --------------------------------------------------------------
+        allocate(AtomOrbOffset(nAtoms))
+        AtomOrbOffset(1) = 0
+        do iAtom = 2, nAtoms
+            AtomOrbOffset(iAtom) = AtomOrbOffset(iAtom - 1) + HData%Orbs(iAtom - 1)
+        end do
+        if (AtomOrbOffset(nAtoms) + HData%Orbs(nAtoms) /= nOrbs) then
+            stop "[Unfold Error] Soma de Orbs(:) nao bate com NOrbs do .hsio"
+        end if
+
+        ! --------------------------------------------------------------
+        ! 2. Identifica quantos "atomos-PC" distintos existem e quantos
+        !    orbitais cada um tem, e monta os deslocamentos no espaco de
+        !    "identidades de orbital-PC" (1..nOrbitsPC)
+        ! --------------------------------------------------------------
+        nAtomsPC = maxval(cfg%PCOrbit)
+        allocate(nOrbsPerPCAtom(nAtomsPC), source=0)
+        do iAtom = 1, nAtoms
+            if (nOrbsPerPCAtom(cfg%PCOrbit(iAtom)) == 0) then
+                nOrbsPerPCAtom(cfg%PCOrbit(iAtom)) = HData%Orbs(iAtom)
+            else if (nOrbsPerPCAtom(cfg%PCOrbit(iAtom)) /= HData%Orbs(iAtom)) then
+                stop "[Unfold Error] Atomos com o mesmo rotulo PCOrbit tem numeros diferentes de orbitais"
+            end if
+        end do
+        if (any(nOrbsPerPCAtom == 0)) then
+            stop "[Unfold Error] Rotulo de atomo-PC sem nenhum atomo associado em &ATOMMAP (1..max devem ser todos usados)"
+        end if
+
+        allocate(PCAtomOrbOffset(nAtomsPC))
+        PCAtomOrbOffset(1) = 0
+        do iAtom = 2, nAtomsPC
+            PCAtomOrbOffset(iAtom) = PCAtomOrbOffset(iAtom - 1) + nOrbsPerPCAtom(iAtom - 1)
+        end do
+        nOrbitsPC = sum(nOrbsPerPCAtom)
+
+        if (nOrbitsPC * nCells /= nOrbs) then
+            print '(A, I0, A, I0, A, I0)', &
+                "[Unfold Error] Incompatibilidade de contagem: nOrbitsPC(", nOrbitsPC, &
+                ") * nCells(", nCells, ") != NOrbs(", nOrbs, ")"
+            stop 1
+        end if
+
+        ! --------------------------------------------------------------
+        ! 3. Expande o mapa atomo->(PCOrbit, celula) para o nivel de
+        !    orbital, atribuindo a cada orbital da SC sua "identidade de
+        !    orbital-PC" (1..nOrbitsPC) e sua celula (n1,n2,n3)
+        ! --------------------------------------------------------------
+        allocate(OrbitID(nOrbs))
+        allocate(OrbitCell(3, nOrbs))
+        do iAtom = 1, nAtoms
+            do iOrb = 1, HData%Orbs(iAtom)
+                gOrb = AtomOrbOffset(iAtom) + iOrb
+                OrbitID(gOrb)    = PCAtomOrbOffset(cfg%PCOrbit(iAtom)) + iOrb
+                OrbitCell(:, gOrb) = cfg%CellIndex(:, iAtom)
+            end do
+        end do
+
+        ! --------------------------------------------------------------
+        ! 4. Tabela inversa: para cada identidade de orbital-PC, a lista
+        !    dos nCells orbitais da SC que sao suas replicas, e a celula
+        !    de cada um
+        ! --------------------------------------------------------------
+        allocate(OrbitMemberOrb(nCells, nOrbitsPC))
+        allocate(OrbitMemberCell(3, nCells, nOrbitsPC))
+        allocate(fillcount(nOrbitsPC), source=0)
+
+        do gOrb = 1, nOrbs
+            orbit = OrbitID(gOrb)
+            fillcount(orbit) = fillcount(orbit) + 1
+            if (fillcount(orbit) > nCells) then
+                print '(A, I0)', "[Unfold Error] Orbital-PC com mais de nCells replicas: orbit ", orbit
+                stop 1
+            end if
+            OrbitMemberOrb(fillcount(orbit), orbit)    = gOrb
+            OrbitMemberCell(:, fillcount(orbit), orbit) = OrbitCell(:, gOrb)
+        end do
+        if (any(fillcount /= nCells)) then
+            stop "[Unfold Error] Alguma identidade de orbital-PC nao tem exatamente nCells replicas"
+        end if
+
+        ! --------------------------------------------------------------
+        ! 5. Loop principal sobre os pontos k da PC (paralelo, OpenMP)
+        ! --------------------------------------------------------------
+        total_kpoints = cfg%PCPath%total_kpoints
+        allocate(Result%Energies(nOrbs, total_kpoints))
+        allocate(Result%Weights(nOrbs, total_kpoints))
+        allocate(Result%SumCheck(total_kpoints))
+
+        max_threads = 1
+        !$ max_threads = omp_get_max_threads()
+
+        allocate(Hk_pool(nOrbs, nOrbs, max_threads))
+        allocate(Sk_pool(nOrbs, nOrbs, max_threads))
+        allocate(Cvec_pool(nOrbs, nOrbs, max_threads))
+        allocate(Cprime_pool(nOrbs, nOrbs, max_threads))
+        allocate(Ssqrt_pool(nOrbs, nOrbs, max_threads))
+        allocate(Usq_pool(nOrbs, nOrbs, max_threads))
+        allocate(Eval_pool(nOrbs, max_threads))
+        allocate(wS_pool(nOrbs, max_threads))
+        allocate(phase_pool(nCells, max_threads))
+
+        ! Relata o progresso imediatamente apos a conclusao de cada ponto k.
+        ! Como o loop e' paralelo, a ordem de conclusao pode diferir de ik.
+        completed_count = 0
+        write(total_kpoints_text, '(I0)') total_kpoints
+        progress_width = len_trim(total_kpoints_text)
+        write(progress_format, '("(A,I",I0,",A,I",I0,",A,F6.1,A,F10.3,A)")') &
+            progress_width, progress_width
+        call system_clock(count_rate=clock_rate)
+        print '(A, I0, A, I0, A)', "  Diagonalizando ", total_kpoints, " pontos k (ate ", &
+                                    max_threads, " threads OpenMP)..."
+
+        !$omp parallel do default(shared) &
+        !$omp private(ik, thread_id, fk, ScK, L, iN, orbit, ic, proj, clock_start, clock_end, point_elapsed)
+        do ik = 1, total_kpoints
+            call system_clock(count=clock_start)
+
+            thread_id = 0
+            !$ thread_id = omp_get_thread_num()
+            thread_id = thread_id + 1
+
+            fk = cfg%PCPath%FullPath(:, ik)
+
+            ! 5.1 Ponto K da SC ao qual este k da PC e' mapeado [Eq. (7), M diagonal]
+            do L = 1, 3
+                ScK(L) = modulo(fk(L) * real(cfg%MDiag(L), kind=dp), 1.0_dp)
+            end do
+
+            ! 5.2 Monta H(K) e S(K) por transformada de Fourier do espaco real
+            call compute_Hk_at_kpoint(HData%Data, HData%IndexList, Hk_pool(:, :, thread_id), ScK)
+            call compute_Hk_at_kpoint(SData%Data, SData%IndexList, Sk_pool(:, :, thread_id), ScK)
+
+            ! 5.3 Resolve o problema de autovalor generalizado H(K) C = E S(K) C
+            call SolveGeneralizedEigenproblem(Hk_pool(:, :, thread_id), Sk_pool(:, :, thread_id), &
+                nOrbs, Eval_pool(:, thread_id), Cvec_pool(:, :, thread_id))
+
+            ! 5.4 Transformacao de Lowdin: C' = S(K)^(1/2) C  [Eq. (24)]
+            call MatrixSqrtHermitian(Sk_pool(:, :, thread_id), nOrbs, &
+                Ssqrt_pool(:, :, thread_id), Usq_pool(:, :, thread_id), wS_pool(:, thread_id))
+            Cprime_pool(:, :, thread_id) = matmul(Ssqrt_pool(:, :, thread_id), Cvec_pool(:, :, thread_id))
+
+            ! 5.5 Projeta cada autoestado da SC nos p orbitais-PC [Eq. (28)]:
+            !     W^k_KN = sum_{orbit=1}^{p} |F_{k,orbit}^dagger . C'_KN|^2.
+            !     A soma em `orbit` (1..p) faz parte da PROPRIA definicao do
+            !     peso -- ela projeta o estado N no subespaco DEGENERADO
+            !     inteiro do autovalor de translacao k (dimensao p), nao em
+            !     um unico "orbital-PC". Por isso a regra de soma correta
+            !     [Eq. (51), decorrente de completude] e' sum_N W^k_KN = p,
+            !     e nao 1, sempre que houver mais de um orbital-PC por
+            !     celula (p>1).
+            do iN = 1, nOrbs
+                Result%Energies(iN, ik) = Eval_pool(iN, thread_id)
+                Result%Weights(iN, ik)  = 0.0_dp
+
+                do orbit = 1, nOrbitsPC
+                    do ic = 1, nCells
+                        associate(nvec => OrbitMemberCell(:, ic, orbit))
+                            phase_pool(ic, thread_id) = &
+                                exp(-cmplx(0.0_dp, TWO_PI * dot_product(fk, real(nvec, kind=dp)), kind=dp)) &
+                                / sqrt(real(nCells, kind=dp))
+                        end associate
+                    end do
+                    proj = cmplx(0.0_dp, 0.0_dp, kind=dp)
+                    do ic = 1, nCells
+                        proj = proj + phase_pool(ic, thread_id) &
+                               * Cprime_pool(OrbitMemberOrb(ic, orbit), iN, thread_id)
+                    end do
+                    Result%Weights(iN, ik) = Result%Weights(iN, ik) + abs(proj)**2
+                end do
+            end do
+
+            Result%SumCheck(ik) = sum(Result%Weights(:, ik))
+
+            call system_clock(count=clock_end)
+            point_elapsed = real(clock_end - clock_start, dp) / real(clock_rate, dp)
+
+            !$omp critical (unfold_progress_report)
+            completed_count = completed_count + 1
+            write(*, progress_format) &
+                "    Progresso [", completed_count, " / ", total_kpoints, " | ", &
+                100.0_dp * real(completed_count, dp) / real(total_kpoints, dp), &
+                "% ]  tempo do ponto: ", point_elapsed, " s"
+            flush(output_unit)
+            !$omp end critical (unfold_progress_report)
+        end do
+        !$omp end parallel do
+
+        deallocate(Hk_pool, Sk_pool, Cvec_pool, Cprime_pool, Ssqrt_pool, Usq_pool, &
+                   Eval_pool, wS_pool, phase_pool)
+    end subroutine RunUnfolding
+
+    ! ======================================================================
+    ! ALGEBRA LINEAR AUXILIAR (LAPACK)
+    ! ======================================================================
+
+    !> Resolve H C = E S C (Hermitiano generalizado) retornando TODOS os
+    !> autovalores e autovetores (necessario para o unfolding, ao contrario
+    !> de calc_band_structure_non_orth em mod_core.f90, que so' guarda E).
+    subroutine SolveGeneralizedEigenproblem(H, S, n, Eval, Cvec)
+        integer,     intent(in)  :: n
+        complex(dp), intent(in)  :: H(n, n), S(n, n)
+        real(dp),    intent(out) :: Eval(n)
+        complex(dp), intent(out) :: Cvec(n, n)
+
+        complex(dp), allocatable :: Awork(:, :), Bwork(:, :), work(:)
+        real(dp),    allocatable :: rwork(:)
+        integer :: lwork, info
+
+        interface
+            subroutine zhegv(itype, jobz, uplo, n, a, lda, b, ldb, w, work, lwork, rwork, info)
+                use types, only: dp
+                character   :: jobz, uplo
+                integer     :: itype, n, lda, ldb, lwork, info
+                complex(dp) :: a(lda, *), b(ldb, *), work(*)
+                real(dp)    :: w(*), rwork(*)
+            end subroutine zhegv
+        end interface
+
+        allocate(Awork(n, n), Bwork(n, n))
+        Awork = H
+        Bwork = S
+
+        lwork = max(1, 2 * n - 1)
+        allocate(work(lwork), rwork(max(1, 3 * n - 2)))
+
+        call zhegv(1, 'V', 'U', n, Awork, n, Bwork, n, Eval, work, lwork, rwork, info)
+        if (info /= 0) then
+            print '(A, I0)', "[Unfold Error] zhegv falhou com info = ", info
+            stop 1
+        end if
+
+        Cvec = Awork
+        deallocate(Awork, Bwork, work, rwork)
+    end subroutine SolveGeneralizedEigenproblem
+
+    !> Diagonaliza a matriz Hermitiana S e devolve S^(1/2) = U * sqrt(w) * U^dagger,
+    !> junto com os autovetores U e autovalores w (usados so' para diagnostico).
+    subroutine MatrixSqrtHermitian(S, n, Ssqrt, U, w)
+        integer,     intent(in)  :: n
+        complex(dp), intent(in)  :: S(n, n)
+        complex(dp), intent(out) :: Ssqrt(n, n), U(n, n)
+        real(dp),    intent(out) :: w(n)
+
+        complex(dp), allocatable :: Awork(:, :), work(:), scaled(:, :)
+        real(dp),    allocatable :: rwork(:)
+        integer :: lwork, info, i
+        real(dp), parameter :: EPS_FLOOR = 1.0e-10_dp
+
+        interface
+            subroutine zheev(jobz, uplo, n, a, lda, w, work, lwork, rwork, info)
+                use types, only: dp
+                character   :: jobz, uplo
+                integer     :: n, lda, lwork, info
+                complex(dp) :: a(lda, *), work(*)
+                real(dp)    :: w(*), rwork(*)
+            end subroutine zheev
+        end interface
+
+        allocate(Awork(n, n))
+        Awork = S
+
+        lwork = max(1, 2 * n - 1)
+        allocate(work(lwork), rwork(max(1, 3 * n - 2)))
+
+        call zheev('V', 'U', n, Awork, n, w, work, lwork, rwork, info)
+        if (info /= 0) then
+            print '(A, I0)', "[Unfold Error] zheev (S^1/2) falhou com info = ", info
+            stop 1
+        end if
+        U = Awork
+
+        ! Autovalores do overlap devem ser positivos; ruido numerico proximo
+        ! de zero e' truncado para evitar NaN/instabilidade em sqrt().
+        do i = 1, n
+            if (w(i) < EPS_FLOOR) then
+                w(i) = EPS_FLOOR
+            end if
+        end do
+
+        allocate(scaled(n, n))
+        do i = 1, n
+            scaled(:, i) = U(:, i) * sqrt(w(i))
+        end do
+        Ssqrt = matmul(scaled, conjg(transpose(U)))
+
+        deallocate(Awork, work, rwork, scaled)
+    end subroutine MatrixSqrtHermitian
+
+    ! ======================================================================
+    ! SAIDA DE RESULTADOS
+    ! ======================================================================
+
+    !> Salva (x, E, W) em formato "scatter": um bloco por ponto k, separado
+    !> por linha em branco (compativel com `splot ... with points` no gnuplot,
+    !> usando a coluna 3 (peso) como cor via `lc palette`).
+    subroutine SaveScatter(this, filename, PCPath)
+        class(UnfoldResultFormat), intent(in) :: this
+        character(len=*),          intent(in) :: filename
+        type(PCPathConfig),        intent(in) :: PCPath
+
+        integer :: iunit, ios, nOrbs, nk, ik, iN
+
+        nOrbs = size(this%Energies, 1)
+        nk    = size(this%Energies, 2)
+
+        open(newunit=iunit, file=filename, status='replace', action='write', iostat=ios)
+        if (ios /= 0) then
+            print *, "Error: nao foi possivel abrir para escrita: ", filename
+            return
+        end if
+
+        write(iunit, '(A)') "# Unfolding LowFoldIn -- PHYSICAL REVIEW B 113, 085112 (2026)"
+        write(iunit, '(A)') "# Colunas: [1] posicao x no caminho PC | [2] Energia (eV) | [3] Peso W^k_KN"
+        do ik = 1, nk
+            do iN = 1, nOrbs
+                write(iunit, '(F14.8, F14.6, ES16.6)') PCPath%xpoints(ik), &
+                    this%Energies(iN, ik), this%Weights(iN, ik)
+            end do
+            if (ik < nk) write(iunit, *)
+        end do
+        close(iunit)
+
+        print *, "Unfolding (scatter) salvo em: ", filename
+        print *, 'Use no gnuplot: '
+        print *, '  set palette defined (0 "white", 1 "blue")'
+        print *, '  plot "', trim(filename), '" using 1:2:3 with points pt 7 ps 0.6 lc palette notitle'
+    end subroutine SaveScatter
+
+    !> Calcula e salva a funcao espectral A(k,E) [Eq. (12)] em uma grade de
+    !> energias, aproximando a delta de Dirac por uma Lorentziana de largura
+    !> `cfg%Broadening`, no formato de triplas (x, E, A) pronto para
+    !> `splot ... with pm3d` / `plot ... with image`.
+    subroutine SaveSpectralFunction(this, filename, PCPath, Emin, Emax, nE, Broadening)
+        class(UnfoldResultFormat), intent(in) :: this
+        character(len=*),          intent(in) :: filename
+        type(PCPathConfig),        intent(in) :: PCPath
+        real(dp),                  intent(in) :: Emin, Emax, Broadening
+        integer,                   intent(in) :: nE
+
+        integer :: iunit, ios, nOrbs, nk, ik, iN, iE
+        real(dp) :: E, dE, A, gamma_half
+
+        nOrbs = size(this%Energies, 1)
+        nk    = size(this%Energies, 2)
+        dE = (Emax - Emin) / real(max(nE - 1, 1), kind=dp)
+        gamma_half = 0.5_dp * Broadening
+
+        open(newunit=iunit, file=filename, status='replace', action='write', iostat=ios)
+        if (ios /= 0) then
+            print *, "Error: nao foi possivel abrir para escrita: ", filename
+            return
+        end if
+
+        write(iunit, '(A)') "# Funcao espectral A(k,E) [Eq. (12), PRB 113, 085112 (2026)]"
+        write(iunit, '(A, F0.4, A)') "# Broadening Lorentziano: ", Broadening, " eV"
+        write(iunit, '(A)') "# Colunas: [1] posicao x no caminho PC | [2] Energia (eV) | [3] A(k,E)"
+
+        do ik = 1, nk
+            do iE = 1, nE
+                E = Emin + real(iE - 1, kind=dp) * dE
+                A = 0.0_dp
+                do iN = 1, nOrbs
+                    A = A + this%Weights(iN, ik) * (gamma_half / 3.14159265358979323846_dp) &
+                            / ((E - this%Energies(iN, ik))**2 + gamma_half**2)
+                end do
+                write(iunit, '(F14.8, F14.6, ES16.6)') PCPath%xpoints(ik), E, A
+            end do
+            write(iunit, *)
+        end do
+        close(iunit)
+
+        print *, "Funcao espectral salva em: ", filename
+        print *, 'Use no gnuplot: '
+        print *, '  set pm3d map'
+        print *, '  splot "', trim(filename), '" using 1:2:3 notitle'
+    end subroutine SaveSpectralFunction
+
+end module unfold

@@ -1,3 +1,6 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 Nathanael Nardoto Batista
+
 ! ----------------------------------------------------------------------------------------------------------
 ! tools/openmx2hsio.f90
 !
@@ -11,9 +14,28 @@
 !
 ! Gera:
 !   PREFIXO_S.hsio
-!   PREFIXO_H.hsio                       (SpinP_switch == 0 ou 3)
+!   PREFIXO_H.hsio                       (SpinP_switch == 0)
 ! ou
-!   PREFIXO_H_up.hsio, PREFIXO_H_dn.hsio (SpinP_switch == 1)
+!   PREFIXO_H_up.hsio, PREFIXO_H_dn.hsio (SpinP_switch == 1, spin colinear;
+!                                          um S.hsio so', compartilhado pelos
+!                                          dois canais de spin -- rode o
+!                                          `unfold` duas vezes, uma por canal,
+!                                          com o MESMO mapeamento atomo->PC)
+! ou
+!   PREFIXO_H.hsio, PREFIXO_S.hsio       (SpinP_switch == 3, spin nao-colinear
+!                                          / spinor, NOrbs dobrado. Escrito em
+!                                          ordem ATOMO-MAJOR -- up e down
+!                                          contiguos por atomo -- via
+!                                          ReorderSpinorAtomMajor, a UNICA
+!                                          ordem compativel com Orbs(:) do
+!                                          formato HSDataFormat. A ordem
+!                                          "spin-major" bruta que sai de
+!                                          AssembleNonCollinearH/scfout NAO e'
+!                                          usavel diretamente por ferramentas
+!                                          que indexam orbitais por atomo via
+!                                          Orbs(:), como o `unfold` -- ver
+!                                          comentario de ReorderSpinorAtomMajor
+!                                          em mod_openmx_convert.f90.)
 !
 ! Por padrao, o nivel de Fermi (ChemP) e' lido automaticamente do
 ! proprio .scfout e H e' deslocado para que E_F caia em 0 eV, via
@@ -26,7 +48,7 @@ program openmx2hsio
     use scfout_io,      only: ScfoutData, ReadScfoutFile
     use openmx_convert, only: HARTREE_TO_EV, AssembleDense, AssembleNonCollinearH, &
                                DoubleBlockDiagonal, BuildIndexList, HermiticityReport, &
-                               ApplyFermiShift
+                               ApplyFermiShift, ReorderSpinorAtomMajor
     use HS_io,          only: HSDataFormat
     implicit none
 
@@ -149,6 +171,7 @@ program openmx2hsio
     case (3)
         block
             complex(dp), allocatable :: Sspatial(:, :, :), Sspinor(:, :, :)
+            complex(dp), allocatable :: HdataReordered(:, :, :), SspinorReordered(:, :, :)
             integer :: NOrbsSpatial
 
             call AssembleDense(scfout, scfout%OLP_flat, Sspatial, NOrbsSpatial)
@@ -159,15 +182,22 @@ program openmx2hsio
             Hdata = Hdata * HARTREE_TO_EV
             if (apply_shift) call ApplyFermiShift(Hdata, Sspinor, fermi_ev)
 
-            call HermiticityReport(Hdata, "H (spinor)")
-            call HermiticityReport(Sspinor, "S (spinor)")
+            call HermiticityReport(Hdata, "H (spinor, ordem original spin-major)")
+            call HermiticityReport(Sspinor, "S (spinor, ordem original spin-major)")
+
+            ! Reordena de "spin-major" (todos os orbitais up, depois todos
+            ! os down) para "atomo-major" (up e down contiguos por atomo),
+            ! a UNICA ordem compativel com Orbs(:) do formato HSDataFormat.
+            ! Pura permutacao de base: autovalores e hermiticidade
+            ! preservados, so' a ordem das linhas/colunas muda.
+            call ReorderSpinorAtomMajor(scfout, Hdata, Sspinor, HdataReordered, SspinorReordered)
 
             call WriteHS(trim(out_prefix) // "_H.hsio", &
-                         "H, nao-colinear, eV, spinor bloco uu/ud/du/dd", &
-                         scfout, NOrbs2, neighbors, IndexList, Hdata)
+                         "H, nao-colinear, eV, ordem atomo-major (up,dn contiguos por atomo)", &
+                         scfout, NOrbs2, neighbors, IndexList, HdataReordered)
             call WriteHS(trim(out_prefix) // "_S.hsio", &
-                         "S, nao-colinear, bloco-diagonal uu/dd", &
-                         scfout, NOrbs2, neighbors, IndexList, Sspinor)
+                         "S, nao-colinear, ordem atomo-major (up,dn contiguos por atomo)", &
+                         scfout, NOrbs2, neighbors, IndexList, SspinorReordered)
         end block
 
     case default

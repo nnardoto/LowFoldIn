@@ -3,3 +3,6 @@
 *.o
 *.mod
 *.bin
+
+# Project archives
+*.zip

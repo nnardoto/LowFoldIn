@@ -1,3 +1,6 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 Nathanael Nardoto Batista
+
 module config
     use types
     implicit none
@@ -87,7 +90,8 @@ module config
                 call ReadBandsConfig(config%Bands)
                 call DisplayBandsConfig(config%Bands)
             case("unfold")
-                stop "[Calculation Error] Unfolding não implementado"
+                stop "[Calculation Error] Unfolding nao e' feito por este binario. " // &
+                     "Use o executavel dedicado 'unfold' (tools/unfold.f90, veja o README)."
             case default
                 stop "[Calculation Error] Calculation Inexistente"
             end select

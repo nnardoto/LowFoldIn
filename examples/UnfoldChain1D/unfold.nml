@@ -1,0 +1,43 @@
+! ----------------------------------------------------------------------------
+! Exemplo mínimo de unfolding: cadeia 1D tight-binding (1 atomo, 1 orbital,
+! hopping t = -1 eV) tiled 4x na direcao a1 para formar uma "supercelula
+! perfeita" (sem nenhuma perturbacao).
+!
+! Este e' o caso mais simples possivel para validar a implementacao: como a
+! SC e' composta por 4 replicas identicas da PC, os pesos de unfolding devem
+! ser EXATAMENTE 0 ou 1 (ver Sec. II A do artigo), e a banda recuperada deve
+! coincidir com a banda analitica da PC, E(k) = 2*t*cos(2*pi*fk1).
+!
+! Rode com:
+!   fpm run unfold -- examples/UnfoldChain1D/unfold.nml
+! ou, apos compilar,
+!   ./build/gfortran_*/app/unfold examples/UnfoldChain1D/unfold.nml
+! ----------------------------------------------------------------------------
+&UNFOLD
+    ProjectName = "Chain1D"
+    HDataFile   = "examples/UnfoldChain1D/Chain_H.hsio"
+    SDataFile   = "examples/UnfoldChain1D/Chain_S.hsio"
+    OutputDir   = "./"
+    M(1,:)      = 4, 0, 0
+    M(2,:)      = 0, 1, 0
+    M(3,:)      = 0, 0, 1
+    Broadening  = 0.05
+    Emin        = -3.0
+    Emax        =  3.0
+    nE          = 200
+    WriteSpectralFunction = .true.
+/
+
+&ATOMMAP
+! atomo-SC   PCAtom   n1 n2 n3   (na mesma ordem dos atomos no .hsio)
+    1   0 0 0
+    1   1 0 0
+    1   2 0 0
+    1   3 0 0
+/
+
+&PCPATH
+2
+-0.500000  0.00000  0.00000  41  !X-
+ 0.500000  0.00000  0.00000  41  !X+
+/

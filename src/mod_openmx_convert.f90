@@ -1,3 +1,6 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 Nathanael Nardoto Batista
+
 ! ----------------------------------------------------------------------------------------------------------
 ! mod_openmx_convert.f90
 !
@@ -21,6 +24,7 @@ module openmx_convert
     public :: HARTREE_TO_EV
     public :: AssembleDense, AssembleNonCollinearH, DoubleBlockDiagonal
     public :: BuildIndexList, HermiticityReport, ApplyFermiShift
+    public :: ReorderSpinorAtomMajor
 
     ! CODATA 2018 (mesmo valor usado internamente pelo OpenMX). O .scfout
     ! guarda Hks/iHks em Hartree; mod_hs_io/mod_core nao fazem nenhuma
@@ -64,6 +68,72 @@ contains
         end do
         NOrbs = atom_offset(scfout%atomnum + 1)
     end subroutine OrbitalOffsets
+
+    ! -----------------------------------------------------------------
+    ! Reordena H/S do caso nao-colinear (SpinP_switch=3) da convencao
+    ! "spin-major" produzida por AssembleNonCollinearH/DoubleBlockDiagonal
+    ! (todos os N orbitais espaciais "up" primeiro, depois todos os N
+    ! "down": Hin(off1+i, off2+j) = bloco up-up do par de atomos, e
+    ! Hin(N+off1+i, N+off2+j) = bloco down-down, com N=NOrbsSpatial) para a
+    ! convencao "atomo-major, spin-menor" (para cada atomo, seus orbitais
+    ! up seguidos pelos seus orbitais down, atomo apos atomo) -- que e' a
+    ! UNICA convencao compativel com o campo Orbs(:) do formato
+    ! HSDataFormat, que assume blocos CONTIGUOS por atomo (ver cabecalho de
+    ! mod_hs_io.f90). A rotina WriteHS (em tools/openmx2hsio.f90) ja'
+    ! assume essa contiguidade ao gravar Orbs(iAtom) = 2*TotalNumOrbs(iAtom);
+    ! sem este reordenamento essa premissa fica FALSA para os dados
+    ! realmente gravados, e qualquer ferramenta que localize orbitais de um
+    ! atomo via Orbs(:) (como o `unfold`) leria indices errados no caso
+    ! nao-colinear -- ainda que o calculo de bandas em si (que nao usa
+    ! Orbs(:) para nada) continue correto de qualquer forma.
+    !
+    ! E' uma transformacao de similaridade por PERMUTACAO (unitaria):
+    ! preserva hermiticidade e todos os autovalores, so' reordena rotulos
+    ! de base. Aplicada a cada bloco de vizinho independentemente.
+    ! -----------------------------------------------------------------
+    subroutine ReorderSpinorAtomMajor(scfout, Hin, Sin, Hout, Sout)
+        type(ScfoutData), intent(in)  :: scfout
+        complex(dp),      intent(in)  :: Hin(:, :, :), Sin(:, :, :)
+        complex(dp), allocatable, intent(out) :: Hout(:, :, :), Sout(:, :, :)
+
+        integer, allocatable :: perm(:), atom_offset(:), new_atom_offset(:)
+        integer :: NOrbsSpatial, NOrbsTotal, ncell
+        integer :: ct_AN, o, TNO, dummyNOrbs
+
+        call OrbitalOffsets(scfout, atom_offset, dummyNOrbs)
+        NOrbsSpatial = dummyNOrbs
+        NOrbsTotal   = 2 * NOrbsSpatial
+        ncell        = size(Hin, 3)
+
+        if (size(Hin, 1) /= NOrbsTotal) then
+            print '(A)', "[openmx_convert] Erro: dimensao de Hin incompativel com 2*NOrbsSpatial " // &
+                          "em ReorderSpinorAtomMajor."
+            stop 1
+        end if
+
+        ! Deslocamentos na NOVA ordem (atomo-major): cada atomo ocupa
+        ! 2*TotalNumOrbs(ct_AN) posicoes contiguas, up seguido de down.
+        allocate(new_atom_offset(scfout%atomnum + 1))
+        new_atom_offset(1) = 0
+        do ct_AN = 1, scfout%atomnum
+            new_atom_offset(ct_AN + 1) = new_atom_offset(ct_AN) + 2 * scfout%TotalNumOrbs(ct_AN)
+        end do
+
+        allocate(perm(NOrbsTotal))
+        do ct_AN = 1, scfout%atomnum
+            TNO = scfout%TotalNumOrbs(ct_AN)
+            do o = 1, TNO
+                ! perm(nova_posicao) = posicao_antiga
+                perm(new_atom_offset(ct_AN) + o)       = atom_offset(ct_AN) + o                  ! up
+                perm(new_atom_offset(ct_AN) + TNO + o) = NOrbsSpatial + atom_offset(ct_AN) + o    ! down
+            end do
+        end do
+
+        allocate(Hout(NOrbsTotal, NOrbsTotal, ncell))
+        allocate(Sout(NOrbsTotal, NOrbsTotal, ncell))
+        Hout = Hin(perm, perm, :)
+        Sout = Sin(perm, perm, :)
+    end subroutine ReorderSpinorAtomMajor
 
     ! -----------------------------------------------------------------
     ! Monta um bloco denso complex(dp) (NOrbs,NOrbs,Neighbors) a partir

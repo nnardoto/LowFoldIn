@@ -1,3 +1,6 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 Nathanael Nardoto Batista
+
 ! ----------------------------------------------------------------------------------------------------------
 ! Descrição Completa do Formato Esperado do Arquivo:
 ! O arquivo deve conter os seguintes elementos na ordem:

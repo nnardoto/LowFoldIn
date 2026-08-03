@@ -1,3 +1,6 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 Nathanael Nardoto Batista
+
 module bands_io
     use types
     use config, only: BandsConfig

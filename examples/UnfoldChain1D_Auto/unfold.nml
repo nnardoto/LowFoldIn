@@ -1,0 +1,37 @@
+! ----------------------------------------------------------------------------
+! MESMO sistema de examples/UnfoldChain1D (cadeia 1D, m=4), mas usando o modo
+! AUTOMATICO de mapeamento atomo->PC via arquivos de ESTRUTURA (pc.nml/
+! sc.nml, no mesmo estilo .nml do resto do pacote: vetores de rede + lista de
+! atomos), em vez de digitar manualmente uma linha por atomo em &ATOMMAP.
+! Compare com examples/UnfoldChain1D/unfold.nml: o resultado numerico e'
+! EXATAMENTE o mesmo.
+!
+! Rode com:
+!   fpm run unfold -- examples/UnfoldChain1D_Auto/unfold.nml
+! ----------------------------------------------------------------------------
+&UNFOLD
+    ProjectName = "Chain1D_Auto"
+    HDataFile   = "examples/UnfoldChain1D_Auto/Chain_H.hsio"
+    SDataFile   = "examples/UnfoldChain1D_Auto/Chain_S.hsio"
+    OutputDir   = "./"
+    M(1,:)      = 4, 0, 0   ! SC 4x na direcao a1 (matriz PC->SC completa, Eq. 1)
+    M(2,:)      = 0, 1, 0
+    M(3,:)      = 0, 0, 1
+    Broadening  = 0.05
+    Emin        = -3.0
+    Emax        =  3.0
+    nE          = 200
+    WriteSpectralFunction = .true.
+
+    PCStructureFile = "examples/UnfoldChain1D_Auto/pc.nml"
+    SCStructureFile = "examples/UnfoldChain1D_Auto/sc.nml"
+/
+
+! Nao ha' bloco &ATOMMAP aqui: como PCStructureFile/SCStructureFile foram
+! fornecidos acima, o mapeamento atomo->PC e' construido automaticamente.
+
+&PCPATH
+2
+-0.500000  0.00000  0.00000  41  !X-
+ 0.500000  0.00000  0.00000  41  !X+
+/

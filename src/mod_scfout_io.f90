@@ -1,3 +1,6 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 Nathanael Nardoto Batista
+
 ! ----------------------------------------------------------------------------------------------------------
 ! mod_scfout_io.f90
 !
