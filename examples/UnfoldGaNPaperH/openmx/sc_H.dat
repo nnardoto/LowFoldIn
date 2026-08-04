@@ -1,0 +1,62 @@
+#
+# SC de 8 atomos de H (rotacionada), M = [[2,2,0],[2,-2,0],[0,0,1]]
+# (Eq. 9 do artigo), a partir da PC cubica de 3.5 Angstrom (pc_H.dat).
+# SC "perfeita" (8 replicas identicas da PC, sem perturbacao) -- os
+# pesos de unfolding devem sair EXATAMENTE 0 ou 1, e a banda
+# recuperada deve coincidir com a da PC.
+#
+# a = 3.5 Angstrom (nao os 1.5 Angstrom da Fig. 1 do artigo -- aquele
+# valor e' um modelo tight-binding ilustrativo, nao uma distancia H-H
+# fisicamente sensata para um calculo PAO real: com raio de corte do
+# H5.0-s1 (~2.65 Angstrom), atomos a 1.5 Angstrom tem sobreposicao de
+# orbitais violenta entre celulas vizinhas, deixando a matriz S quase
+# singular. 3.5 Angstrom mantem a MESMA M/topologia de teste com uma
+# matriz de overlap bem-comportada).
+#
+# Vetores de rede da SC = M @ a (linhas; a = diag(3.5,3.5,3.5)):
+#   A1 = 2*a1 + 2*a2         = ( 7.0,  7.0, 0.0)
+#   A2 = 2*a1 - 2*a2         = ( 7.0, -7.0, 0.0)
+#   A3 = a3                  = ( 0.0,  0.0, 3.5)
+#
+System.CurrentDirectory        ./
+System.Name                    sc_H
+level.of.stdout                 1
+level.of.fileout                 1
+HS.fileout                     on
+
+Species.Number       1
+<Definition.of.Atomic.Species
+  H   H5.0-s1     H_CA19
+Definition.of.Atomic.Species>
+
+Atoms.Number         8
+Atoms.SpeciesAndCoordinates.Unit  Ang
+<Atoms.SpeciesAndCoordinates
+  1  H    0.000000   0.000000   0.000000   0.5  0.5   ! celula-PC (0,0,0)
+  2  H    3.500000  -3.500000   0.000000   0.5  0.5   ! celula-PC (1,-1,0)
+  3  H    3.500000   0.000000   0.000000   0.5  0.5   ! celula-PC (1,0,0)
+  4  H    3.500000   3.500000   0.000000   0.5  0.5   ! celula-PC (1,1,0)
+  5  H    7.000000  -3.500000   0.000000   0.5  0.5   ! celula-PC (2,-1,0)
+  6  H    7.000000   0.000000   0.000000   0.5  0.5   ! celula-PC (2,0,0)
+  7  H    7.000000   3.500000   0.000000   0.5  0.5   ! celula-PC (2,1,0)
+  8  H   10.500000   0.000000   0.000000   0.5  0.5   ! celula-PC (3,0,0)
+Atoms.SpeciesAndCoordinates>
+
+Atoms.UnitVectors.Unit             Ang
+<Atoms.UnitVectors
+  7.000000   7.000000   0.000000
+  7.000000  -7.000000   0.000000
+  0.000000   0.000000   3.500000
+Atoms.UnitVectors>
+
+scf.EigenvalueSolver         Band
+scf.XcType                  LDA
+scf.SpinPolarization        off
+scf.ElectronicTemperature   300.0
+scf.energycutoff            100.0
+scf.Kgrid                   4 4 8
+scf.Mixing.Type              rmm-diis
+scf.criterion                1.0e-7
+scf.maxIter                  100
+
+Band.dispersion              off

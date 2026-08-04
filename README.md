@@ -4,7 +4,7 @@
 
 The project includes a native OpenMX converter, so an OpenMX `.scfout` file can be transformed directly into the internal Hamiltonian and overlap format used by the band and unfolding solvers.
 
-> **Project status:** research software under active development. The unfolding implementation currently supports diagonal primitive-cell-to-supercell transformation matrices.
+> **Project status:** research software under active development. The unfolding implementation supports both diagonal and general (non-diagonal) primitive-cell-to-supercell transformation matrices; the diagonal case uses a specialized O(m) closed-form routine, while the general case uses an O(m^2) group-projector formula (see "Transformation matrix M" below).
 
 ## Main features
 
@@ -267,13 +267,20 @@ M(2,:) = 0, 2, 0
 M(3,:) = 0, 0, 1
 ```
 
-The current implementation only accepts diagonal matrices:
+`M` may be diagonal or a general nonsingular integer matrix (nondiagonal/rotated supercells are supported):
 
-```text
-M = diag(m1,m2,m3)
+```fortran
+M(1,:) = 2,  2, 0
+M(2,:) = 2, -2, 0
+M(3,:) = 0,  0, 1
 ```
 
-Non-diagonal matrices are rejected with an explicit error instead of producing a potentially incorrect result.
+The program automatically classifies `M`:
+
+- **Diagonal `M`** uses a specialized closed-form routine (Eqs. 33-38 of the reference paper), cost `O(m)` per primitive-cell orbital per k-point, where `m = |det(M)|`.
+- **General (nondiagonal) `M`** uses a direct group-projector formula (Eq. 14 of the reference paper, proven equivalent to the eigenvector-sum definition in Appendix A), cost `O(m^2)` per primitive-cell orbital per k-point. This is more expensive but requires no eigenvector construction or degenerate-subspace handling.
+
+A message is printed at startup indicating which routine was selected. `LatticeVectors` in the structure files must be given as rows (POSCAR/ASE/CIF convention, see below); the relation used internally is `A_rows = M @ a_rows`, consistent with `F_K = f_k . M` (Eq. 7 of the reference paper).
 
 ### Structure-file format
 
@@ -346,7 +353,7 @@ Each line contains:
 primitive_atom_index  n1  n2  n3
 ```
 
-The lines must follow exactly the atom order stored in the `.hsio` file. Translation indices are zero-based and must satisfy `0 <= ni < M(i,i)`.
+The lines must follow exactly the atom order stored in the `.hsio` file. Translation indices are zero-based. For **diagonal** `M`, each component must satisfy `0 <= ni < M(i,i)`. For **general (nondiagonal)** `M`, there is no simple per-axis box constraint -- cell labels are elements of the quotient group `Z^3 / M.Z^3` (order `m = |det(M)|`), and consistency across primitive-cell orbitals is checked via group-coset equivalence (tolerant of the different but equivalent integer representatives real structure-file generators commonly produce, e.g. when atoms are wrapped back into the home unit cell) rather than a fixed numeric range.
 
 ### Unfolding outputs
 
@@ -446,7 +453,7 @@ LowFoldIn/
 ## Current limitations
 
 - Only OpenMX `.scfout` format version 3 is supported, corresponding to OpenMX 3.9/4.0.
-- The unfolding transformation matrix `M` must currently be diagonal.
+- The unfolding transformation matrix `M` may be diagonal or general (nondiagonal); the general case is `O(m)` times more expensive per k-point (`m = |det(M)|`, see "Transformation matrix M").
 - The structure-file parser expects Cartesian coordinates in ångström.
 - The supercell atom order must match the order represented in the converted `.hsio` file.
 - There is not yet a stable public library API; the command-line programs are the primary interface.
