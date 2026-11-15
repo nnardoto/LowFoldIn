@@ -40,6 +40,11 @@ name       = "unfold"
 source-dir = "tools"
 main       = "unfold.f90"
 
+[[executable]]
+name       = "atomselect"
+source-dir = "tools"
+main       = "atomselect.f90"
+
 # ==============================================================================
 # FEATURES DE COMPILAÇÃO — fpm 0.13+
 #
