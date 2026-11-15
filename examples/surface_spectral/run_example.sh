@@ -30,9 +30,10 @@ done
 cd "$HERE"
 step() { printf '\n==== %s ====\n' "$*"; }
 
-# ---- 0. clean previous outputs (regions.nml is regenerated from scratch) ----
+# ---- 0. clean previous outputs (regions are rebuilt in regions.tmp.nml and
+#      replace the committed regions.nml only after validation succeeds) ----
 step "0. clean"
-rm -f model_H.hsio model_S.hsio model.nml regions.nml \
+rm -f model_H.hsio model_S.hsio model.nml regions.tmp.nml \
       ./*.spectral.bin ./*.spectral.txt ./*.map.dat ./*.kticks.gp ./*.png ./*.pdf
 
 # ---- 1. synthetic model -----------------------------------------------------
@@ -45,13 +46,14 @@ step "2a. atomselect inspect"
 step "2b. atomselect layers"
 "$ATOMSELECT" layers model.nml --normal 0 0 1
 step "2c. atomselect surface (top/bottom)"
-"$ATOMSELECT" surface model.nml --regions regions.nml --normal 0 0 1 --top 1 --bottom 1
+"$ATOMSELECT" surface model.nml --regions regions.tmp.nml --normal 0 0 1 --top 1 --bottom 1
 step "2d. atomselect select (interior)"
-"$ATOMSELECT" select model.nml --regions regions.nml --name interior --atoms "2-7"
+"$ATOMSELECT" select model.nml --regions regions.tmp.nml --name interior --atoms "2-7"
 
 # ---- 3. validate ----------------------------------------------------------------
 step "3. atomselect validate"
-"$ATOMSELECT" validate model.nml regions.nml
+"$ATOMSELECT" validate model.nml regions.tmp.nml
+mv regions.tmp.nml regions.nml
 
 # ---- 4. spectral ----------------------------------------------------------------
 step "4. spectral (Mulliken, X-G-M)"

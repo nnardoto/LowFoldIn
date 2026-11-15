@@ -50,8 +50,8 @@ program specmap_main
     type(spectral_data_t) :: sd
     character(len=1024)   :: input_path, errmsg
     character(len=:), allocatable :: tag, fname, kname, wmeaning, occ_line, eref_line
-    character(len=256)    :: hdr(12)
-    integer  :: u, ios, ierr, im, it, ie, nmaps, kern
+    character(len=640)    :: hdr(12)
+    integer  :: u, ios, ierr, im, jm, it, ie, nmaps, kern
     real(dp) :: mu
     real(dp), allocatable :: grid(:), wcomb(:,:), A(:,:), focc(:)
     integer,  allocatable :: ridx(:)
@@ -116,6 +116,12 @@ program specmap_main
         if (len_trim(maps(im)) == 0) cycle
         call parse_map_expression(trim(maps(im)), sd, ridx, coef, ierr, errmsg)
         if (ierr /= 0) call die(trim(errmsg))
+        do jm = 1, im - 1
+            if (len_trim(maps(jm)) == 0) cycle
+            if (map_file_tag(trim(maps(jm))) == map_file_tag(trim(maps(im)))) &
+                call die("maps '" // trim(maps(jm)) // "' and '" // trim(maps(im)) // &
+                         "' would write the same output file")
+        end do
     end do
 
     ! ------------------------------------------------------------- compute

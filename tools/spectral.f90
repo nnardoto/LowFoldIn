@@ -24,7 +24,7 @@ program spectral
 
     if (command_argument_count() /= 1) then
         write(error_unit, '(A)') 'Usage: spectral <spectral.nml>'
-        write(error_unit, '(A)') '  Computes band energies and Mulliken weights per region along a k-path'
+        write(error_unit, '(A)') '  Computes band energies and Mulliken or Lowdin weights per region along a k-path'
         write(error_unit, '(A)') '  and writes <output_prefix>.spectral.bin (+ .spectral.txt if write_text).'
         stop 1
     end if

@@ -98,7 +98,7 @@ contains
         real(dp) :: fermi_energy_ev, tol_norm, tol_negative_warn, tol_s_min
         integer :: nvertex
         real(dp) :: vertex(3, MAX_KVERTEX)
-        character(len=16) :: label(MAX_KVERTEX)
+        character(len=64) :: label(MAX_KVERTEX)   ! wider than stored (16) to detect truncation
         integer :: npoints(MAX_KVERTEX - 1)
 
         namelist /SPECTRAL/ h_file, h_up_file, h_dn_file, s_file, structure_file, regions_file, &
@@ -173,6 +173,10 @@ contains
         inp%tol_norm = tol_norm;           inp%tol_negative_warn = tol_negative_warn
         inp%tol_s_min = tol_s_min
         inp%nvertex = nvertex;             inp%vertex = vertex
+        if (any(len_trim(label) > len(inp%label))) then
+            call fail('&KPATH label longer than 16 characters')
+            return
+        end if
         inp%label = label;                 inp%npoints = npoints
 
         ! --- enums -------------------------------------------------------
