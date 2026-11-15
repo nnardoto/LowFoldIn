@@ -253,7 +253,8 @@ duplication.
 ```fortran
 integer, parameter, public :: MAX_KVERTEX = 100, SPEC_PATH_LEN = 512
 type, public :: spectral_input_t      ! &SPECTRAL fields (§3) + &KPATH (vertex, label, npoints, nvertex)
-type, public :: spectral_timing_t     ! read_s, build_s, diag_s, proj_s, write_s, total_s (measured)
+type, public :: spectral_timing_t     ! read_s, loop_wall_s, write_s, total_s (wall); build_s, diag_s,
+                                      ! proj_s (accumulated thread-seconds); nthreads
 subroutine read_spectral_input(filename, inp, ierr, errmsg)   ! &SPECTRAL and &KPATH, any order
 subroutine run_spectral(inp, sd, timing, ierr, errmsg)
 subroutine process_kpoint(n, ngroup, Hr, Sr, Rpt, kfrac, groups, Hk, Sk, C, SC, E, W, &
@@ -386,6 +387,20 @@ atomselect surface  <structure.nml> --regions <file> --normal nx ny nz --tol T -
   (canonical layout, previous regions preserved in order).
 - Exit code 0 on success, 1 on any error (message on stdout prefixed
   `[atomselect error]`).
+
+### §6.1 Geometric selection rules (F8)
+- `atomic_selection` adds: `project_positions`, `select_by_range`, `select_by_box`,
+  `detect_layers` (single-linkage along s = r·n̂, layers numbered by ascending s),
+  `check_periodic_split` (warns when the slab wraps across the cell boundary
+  along n̂; lattice vectors with |a_i·n̂| ≤ tol are in-plane and skipped),
+  `assign_to_references`, `surface_layers`.
+- `--normal` is Cartesian (3 argv tokens). `select` takes exactly one of
+  `--atoms` / `--normal [--smin] [--smax]` / `--box "xlo xhi ylo yhi zlo zhi"`
+  (`*` = unbounded); empty geometric selection is an error.
+- `layers`/`surface`: `--tol` default 0.5 Å; `--refs "c1,c2,..."` assigns atoms
+  to the nearest reference (error if farther than tol). `surface`: 'top' =
+  highest s along +n̂; ntop+nbottom > nlayer → error. Periodic split → warning,
+  never silent re-wrapping. Layer regions are named `layer_001`, ...
 
 ## §7. `specmap.nml` and specmap (tools/specmap.f90)
 

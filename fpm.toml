@@ -226,6 +226,11 @@ source-dir = "test"
 main       = "test_regions.f90"
 
 [[test]]
+name       = "test_selection_geom"
+source-dir = "test"
+main       = "test_selection_geom.f90"
+
+[[test]]
 name       = "test_spectral_data"
 source-dir = "test"
 main       = "test_spectral_data.f90"
