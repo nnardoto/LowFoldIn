@@ -219,3 +219,13 @@ main       = "test_regions.f90"
 name       = "test_spectral_data"
 source-dir = "test"
 main       = "test_spectral_data.f90"
+
+[[test]]
+name       = "test_projection"
+source-dir = "test"
+main       = "test_projection.f90"
+
+[[test]]
+name       = "test_kpath"
+source-dir = "test"
+main       = "test_kpath.f90"

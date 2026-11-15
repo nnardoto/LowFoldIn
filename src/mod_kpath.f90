@@ -1,0 +1,140 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 Nathanael Nardoto Batista
+
+!> Piecewise-linear k-path in fractional reciprocal coordinates with
+!> accumulated distance in Cartesian 1/Å (reciprocal metric, contracts §3.1).
+module kpath
+    use types, only: dp
+    implicit none
+    private
+
+    integer, parameter, public :: KLABEL_LEN = 16
+
+    type, public :: kpath_t
+        integer :: nk = 0, nvertex = 0
+        real(dp), allocatable :: kfrac(:,:)     ! (3,nk)
+        real(dp), allocatable :: kdist(:)       ! (nk) 1/Å, kdist(1)=0
+        integer,  allocatable :: vertex_k(:)    ! (nvertex) index of vertex in k list
+        character(len=KLABEL_LEN), allocatable :: label(:)   ! (nvertex)
+    end type kpath_t
+
+    public :: build_kpath
+
+contains
+
+    !> Build the k-path.
+    !> vertex(3,nvertex) fractional; npoints(nvertex-1) >= 1 intervals per
+    !> segment; label(nvertex); recip(3,3) with rows b_i (1/Å, includes 2π).
+    !> Segment s: vertex_s + j/npoints(s)*(vertex_{s+1}-vertex_s),
+    !> j = 0..npoints(s)-1; the final vertex is appended once.
+    !> nk = sum(npoints) + 1. kdist increments = norm2(matmul(dk_frac, recip)).
+    !> Errors (ierr /= 0, errmsg set, path left empty): nvertex < 2, size
+    !> mismatch, npoints < 1, zero-length segment, label longer than KLABEL_LEN.
+    subroutine build_kpath(vertex, npoints, label, recip, path, ierr, errmsg)
+        real(dp),         intent(in)  :: vertex(:,:)
+        integer,          intent(in)  :: npoints(:)
+        character(len=*), intent(in)  :: label(:)
+        real(dp),         intent(in)  :: recip(3,3)
+        type(kpath_t),    intent(out) :: path
+        integer,          intent(out) :: ierr
+        character(len=*), intent(out) :: errmsg
+
+        integer  :: nvertex, nk, s, j, k
+        real(dp) :: dv(3), seglen, step, dist0
+
+        ierr = 0
+        errmsg = ''
+        nvertex = size(vertex, 2)
+
+        if (size(vertex, 1) /= 3) then
+            ierr = 1
+            errmsg = 'build_kpath: vertex must have shape (3,nvertex)'
+            return
+        end if
+        if (nvertex < 2) then
+            ierr = 2
+            errmsg = 'build_kpath: at least 2 vertices are required'
+            return
+        end if
+        if (size(npoints) /= nvertex - 1) then
+            ierr = 3
+            write(errmsg, '(A,I0,A,I0)') 'build_kpath: npoints must have nvertex-1 = ', &
+                nvertex - 1, ' values, got ', size(npoints)
+            return
+        end if
+        if (size(label) /= nvertex) then
+            ierr = 4
+            write(errmsg, '(A,I0,A,I0)') 'build_kpath: label must have nvertex = ', &
+                nvertex, ' values, got ', size(label)
+            return
+        end if
+        do s = 1, nvertex - 1
+            if (npoints(s) < 1) then
+                ierr = 5
+                write(errmsg, '(A,I0,A,I0)') 'build_kpath: npoints(', s, ') must be >= 1, got ', &
+                    npoints(s)
+                return
+            end if
+            if (all(vertex(:, s + 1) == vertex(:, s))) then
+                ierr = 6
+                write(errmsg, '(A,I0,A,I0)') 'build_kpath: zero-length segment between vertices ', &
+                    s, ' and ', s + 1
+                return
+            end if
+        end do
+        do s = 1, nvertex
+            if (len_trim(label(s)) > KLABEL_LEN) then
+                ierr = 7
+                write(errmsg, '(A,I0,A,I0,A)') 'build_kpath: label(', s, ') longer than ', &
+                    KLABEL_LEN, ' characters'
+                return
+            end if
+        end do
+
+        nk = sum(npoints) + 1
+        path%nk = nk
+        path%nvertex = nvertex
+        allocate(path%kfrac(3, nk), path%kdist(nk), path%vertex_k(nvertex), path%label(nvertex))
+        do s = 1, nvertex
+            path%label(s) = label(s)
+        end do
+
+        k = 0
+        dist0 = 0.0_dp
+        do s = 1, nvertex - 1
+            dv = vertex(:, s + 1) - vertex(:, s)
+            seglen = norm2(matmul(dv, recip))
+            if (seglen <= 0.0_dp) then
+                ierr = 6
+                write(errmsg, '(A,I0,A,I0)') 'build_kpath: zero-length segment between vertices ', &
+                    s, ' and ', s + 1
+                call reset_path(path)
+                return
+            end if
+            step = seglen / real(npoints(s), dp)
+            path%vertex_k(s) = k + 1
+            do j = 0, npoints(s) - 1
+                k = k + 1
+                path%kfrac(:, k) = vertex(:, s) + (real(j, dp) / real(npoints(s), dp)) * dv
+                path%kdist(k) = dist0 + real(j, dp) * step
+            end do
+            dist0 = dist0 + seglen
+        end do
+        ! Final vertex, appended once.
+        k = k + 1
+        path%kfrac(:, k) = vertex(:, nvertex)
+        path%kdist(k) = dist0
+        path%vertex_k(nvertex) = k
+    end subroutine build_kpath
+
+    subroutine reset_path(path)
+        type(kpath_t), intent(inout) :: path
+        if (allocated(path%kfrac))    deallocate(path%kfrac)
+        if (allocated(path%kdist))    deallocate(path%kdist)
+        if (allocated(path%vertex_k)) deallocate(path%vertex_k)
+        if (allocated(path%label))    deallocate(path%label)
+        path%nk = 0
+        path%nvertex = 0
+    end subroutine reset_path
+
+end module kpath
