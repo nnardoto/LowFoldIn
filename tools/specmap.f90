@@ -1,0 +1,254 @@
+! SPDX-License-Identifier: GPL-3.0-or-later
+! Copyright (C) 2026 Nathanael Nardoto Batista
+
+! ----------------------------------------------------------------------------------------------------------
+! tools/specmap.f90
+!
+! Broadens the discrete (energy, weight) data of a spectral data file into
+! continuous maps A_P(k,E) for regions or +/- combinations of regions
+! (docs/design/contracts.md §7). Reads ONLY the spectral data file: no HSIO,
+! no structure, no diagonalisation. Changing kernel/width/window/occupation
+! therefore only requires re-running specmap.
+!
+! Usage:
+!   specmap <specmap.nml>
+!
+! Writes <output_prefix>.<tag>.map.dat for every map expression and
+! <output_prefix>.kticks.gp (gnuplot include). Exit code 1 on any error
+! (message prefixed "[specmap error]").
+! ----------------------------------------------------------------------------------------------------------
+program specmap_main
+    use types,               only: dp
+    use spectral_data,       only: spectral_data_t, read_spectral_file, &
+                                   METHOD_MULLIKEN, METHOD_LOWDIN, &
+                                   EREF_UNKNOWN, EREF_FERMI, EREF_ABSOLUTE
+    use spectral_broadening, only: KERNEL_LORENTZIAN, KERNEL_GAUSSIAN, &
+                                   energy_grid, broaden, fermi_dirac
+    use spectral_map,        only: parse_map_expression, write_map_file, &
+                                   write_kticks_file, map_file_tag
+    implicit none
+
+    integer, parameter :: MAX_MAPS = 32
+
+    ! Namelist variables
+    character(len=512) :: spectral_file = ''
+    integer            :: spin_channel  = 1
+    character(len=32)  :: kernel        = 'lorentzian'
+    real(dp)           :: width_ev      = 0.05_dp
+    real(dp)           :: emin = -3.0_dp, emax = 3.0_dp
+    integer            :: ne = 601
+    character(len=256) :: maps(MAX_MAPS) = ''
+    logical            :: occupation    = .false.
+    real(dp)           :: temperature_k = 0.0_dp
+    real(dp)           :: mu_ev         = 0.0_dp
+    logical            :: mu_set        = .false.
+    character(len=512) :: output_prefix = 'specmap'
+
+    namelist /SPECMAP/ spectral_file, spin_channel, kernel, width_ev, emin, emax, ne, &
+                       maps, occupation, temperature_k, mu_ev, mu_set, output_prefix
+
+    type(spectral_data_t) :: sd
+    character(len=1024)   :: input_path, errmsg
+    character(len=:), allocatable :: tag, fname, kname, wmeaning, occ_line, eref_line
+    character(len=256)    :: hdr(12)
+    integer  :: u, ios, ierr, im, it, ie, nmaps, kern
+    real(dp) :: mu
+    real(dp), allocatable :: grid(:), wcomb(:,:), A(:,:), focc(:)
+    integer,  allocatable :: ridx(:)
+    real(dp), allocatable :: coef(:)
+
+    ! ---------------------------------------------------------------- input
+    if (command_argument_count() /= 1) then
+        print '(A)', "Usage: specmap <specmap.nml>"
+        stop 1
+    end if
+    call get_command_argument(1, input_path)
+
+    open(newunit=u, file=trim(input_path), status='old', action='read', iostat=ios)
+    if (ios /= 0) call die("cannot open input file: " // trim(input_path))
+    read(u, nml=SPECMAP, iostat=ios)
+    close(u)
+    if (ios /= 0) call die("error reading &SPECMAP namelist from " // trim(input_path))
+
+    ! ---------------------------------------------------------- validation
+    if (len_trim(spectral_file) == 0) call die("spectral_file is required")
+    select case (lower(trim(adjustl(kernel))))
+    case ('lorentzian')
+        kern = KERNEL_LORENTZIAN
+        kname = 'lorentzian'
+        wmeaning = 'HWHM eta'
+    case ('gaussian')
+        kern = KERNEL_GAUSSIAN
+        kname = 'gaussian'
+        wmeaning = 'standard deviation sigma'
+    case default
+        call die("kernel must be 'lorentzian' or 'gaussian', got '" // trim(kernel) // "'")
+    end select
+    if (.not. (width_ev > 0.0_dp)) call die("width_ev must be > 0")
+    if (ne < 2) call die("ne must be >= 2")
+    if (.not. (emax > emin)) call die("emax must be > emin")
+    if (temperature_k < 0.0_dp) call die("temperature_k must be >= 0")
+    if (len_trim(output_prefix) == 0) call die("output_prefix must not be empty")
+    nmaps = count(len_trim(maps) > 0)
+    if (nmaps == 0) call die("no map expression given in 'maps'")
+
+    call read_spectral_file(trim(spectral_file), sd, ierr, errmsg)
+    if (ierr /= 0) call die(trim(errmsg))
+
+    if (spin_channel < 1 .or. spin_channel > sd%nspin) &
+        call die("spin_channel must be in 1.." // itoa(sd%nspin))
+
+    mu = 0.0_dp
+    if (occupation) then
+        if (mu_set) then
+            mu = mu_ev
+        else if (sd%energy_ref == EREF_FERMI) then
+            mu = 0.0_dp
+        else if (sd%energy_ref == EREF_UNKNOWN) then
+            call die("occupation with energy reference 'unknown' requires mu_set = .true. and mu_ev")
+        else
+            call die("occupation with an absolute energy reference requires mu_set = .true. and mu_ev")
+        end if
+    end if
+
+    ! Validate every map expression before writing anything.
+    do im = 1, MAX_MAPS
+        if (len_trim(maps(im)) == 0) cycle
+        call parse_map_expression(trim(maps(im)), sd, ridx, coef, ierr, errmsg)
+        if (ierr /= 0) call die(trim(errmsg))
+    end do
+
+    ! ------------------------------------------------------------- compute
+    allocate(grid(ne), A(ne, sd%nk), wcomb(sd%nband, sd%nk), focc(ne))
+    call energy_grid(emin, emax, ne, grid)
+    if (occupation) then
+        focc = fermi_dirac(grid, mu, temperature_k)
+        occ_line = 'occupation: Fermi-Dirac, T = ' // rtoa(temperature_k) // ' K, mu = ' // &
+                   rtoa(mu) // ' eV (intensity = f(E) * A)'
+    else
+        focc = 1.0_dp
+        occ_line = 'occupation: none'
+    end if
+
+    select case (sd%energy_ref)
+    case (EREF_FERMI)
+        eref_line = 'energy reference: fermi (E - E_F)'
+    case (EREF_ABSOLUTE)
+        eref_line = 'energy reference: absolute'
+    case default
+        eref_line = 'energy reference: unknown'
+    end select
+    if (sd%fermi_known) then
+        eref_line = eref_line // ', E_F = ' // rtoa(sd%fermi_energy_ev) // ' eV'
+    else
+        eref_line = eref_line // ', E_F not known'
+    end if
+
+    do im = 1, MAX_MAPS
+        if (len_trim(maps(im)) == 0) cycle
+        call parse_map_expression(trim(maps(im)), sd, ridx, coef, ierr, errmsg)
+        if (ierr /= 0) call die(trim(errmsg))
+
+        ! Combine region weights first (linear: identical to combining the
+        ! broadened maps), then broaden once.
+        wcomb = 0.0_dp
+        do it = 1, size(ridx)
+            wcomb = wcomb + coef(it) * sd%weight(:, :, ridx(it), spin_channel)
+        end do
+        call broaden(sd%energy(:, :, spin_channel), wcomb, grid, kern, width_ev, A)
+        if (occupation) then
+            do ie = 1, ne
+                A(ie, :) = A(ie, :) * focc(ie)
+            end do
+        end if
+
+        hdr = ''
+        hdr(1)  = 'specmap spectral map (broadened projection weights; NOT a photoemission simulation)'
+        hdr(2)  = 'source file: ' // trim(spectral_file)
+        hdr(3)  = 'source (from file): ' // trim(sd%source)
+        hdr(4)  = 'map expression: ' // trim(maps(im)) // '   spin channel: ' // itoa(spin_channel)
+        hdr(5)  = 'method: ' // method_label(sd%method)
+        hdr(6)  = 'kernel: ' // kname // ', width = ' // rtoa(width_ev) // ' eV (' // wmeaning // ')'
+        hdr(7)  = 'energy window: [' // rtoa(emin) // ', ' // rtoa(emax) // '] eV, ne = ' // itoa(ne)
+        hdr(8)  = occ_line
+        hdr(9)  = 'units: k_distance 1/Angstrom, energy eV, intensity states/eV ' // &
+                  '(Mulliken/Lowdin-weighted)'
+        hdr(10) = eref_line
+        hdr(11) = 'regions combined with coefficients +/-1, no normalisation; ' // &
+                  'overlapping regions in a sum may double-count atoms'
+
+        tag = map_file_tag(trim(maps(im)))
+        fname = trim(output_prefix) // '.' // tag // '.map.dat'
+        call write_map_file(fname, sd, A, grid, hdr(1:11), ierr, errmsg)
+        if (ierr /= 0) call die(trim(errmsg))
+        print '(A, A, A, A)', "  map '", trim(maps(im)), "' -> ", fname
+    end do
+
+    fname = trim(output_prefix) // '.kticks.gp'
+    call write_kticks_file(fname, sd, ierr, errmsg)
+    if (ierr /= 0) call die(trim(errmsg))
+    print '(A, A)', "  k ticks -> ", fname
+
+contains
+
+    subroutine die(msg)
+        character(len=*), intent(in) :: msg
+        write(*, '(A, A)') "[specmap error] ", msg
+        stop 1
+    end subroutine die
+
+    pure function lower(s) result(r)
+        character(len=*), intent(in) :: s
+        character(len=len(s)) :: r
+        integer :: i, c
+        r = s
+        do i = 1, len(s)
+            c = iachar(s(i:i))
+            if (c >= iachar('A') .and. c <= iachar('Z')) r(i:i) = achar(c + 32)
+        end do
+    end function lower
+
+    function itoa(i) result(r)
+        integer, intent(in) :: i
+        character(len=:), allocatable :: r
+        character(len=32) :: buf
+        write(buf, '(I0)') i
+        r = trim(buf)
+    end function itoa
+
+    function rtoa(x) result(r)
+        real(dp), intent(in) :: x
+        character(len=:), allocatable :: r
+        character(len=32) :: buf
+        integer :: n
+        if (x == 0.0_dp .or. (abs(x) >= 1.0e-3_dp .and. abs(x) < 1.0e6_dp)) then
+            write(buf, '(F0.6)') x
+            r = trim(adjustl(buf))
+            n = len(r)
+            do while (n > 1)
+                if (r(n:n) /= '0') exit
+                n = n - 1
+            end do
+            if (r(n:n) == '.') n = n + 1    ! keep one decimal digit: '3.0'
+            r = r(1:n)
+            if (r(1:1) == '.') r = '0' // r
+            if (len(r) > 1) then
+                if (r(1:2) == '-.') r = '-0' // r(2:)
+            end if
+        else
+            write(buf, '(ES14.6E3)') x
+            r = trim(adjustl(buf))
+        end if
+    end function rtoa
+
+    function method_label(m) result(r)
+        integer, intent(in) :: m
+        character(len=:), allocatable :: r
+        select case (m)
+        case (METHOD_MULLIKEN); r = 'mulliken'
+        case (METHOD_LOWDIN);   r = 'lowdin'
+        case default;           r = 'unknown'
+        end select
+    end function method_label
+
+end program specmap_main

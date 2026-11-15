@@ -46,6 +46,11 @@ source-dir = "tools"
 main       = "atomselect.f90"
 
 [[executable]]
+name       = "specmap"
+source-dir = "tools"
+main       = "specmap.f90"
+
+[[executable]]
 name       = "spectral"
 source-dir = "tools"
 main       = "spectral.f90"
@@ -239,3 +244,8 @@ main       = "test_kpath.f90"
 name       = "test_spectral_engine"
 source-dir = "test"
 main       = "test_spectral_engine.f90"
+
+[[test]]
+name       = "test_specmap"
+source-dir = "test"
+main       = "test_specmap.f90"
