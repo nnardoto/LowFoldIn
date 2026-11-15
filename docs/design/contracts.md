@@ -131,6 +131,8 @@ overflow (e.g. 32-bit limbs held in int64). Test vectors:
 - Regions may overlap. Stored atom lists keep the user order (sorted
   ascending by atomselect when it writes them).
 - Partition: `is_partition = (every atom in exactly one region)`.
+- Species labels longer than `LABEL_LEN` (8) are truncated by the namelist
+  read (limitation; labels written by `atomselect` always fit).
 
 ### Module `atomic_regions` (src/mod_atomic_regions.f90)
 

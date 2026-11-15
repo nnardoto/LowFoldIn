@@ -204,3 +204,8 @@ ryzen7950x-fast = [
 name       = "test_structure_io"
 source-dir = "test"
 main       = "test_structure_io.f90"
+
+[[test]]
+name       = "test_regions"
+source-dir = "test"
+main       = "test_regions.f90"
