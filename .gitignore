@@ -6,3 +6,6 @@
 
 # Project archives
 *.zip
+
+# fpm build tree
+build/
