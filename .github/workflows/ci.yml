@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gfortran, BLAS/LAPACK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran liblapack-dev libblas-dev
+
+      - name: Install fpm
+        run: pip install fpm
+
+      - name: Build (default profile, serial)
+        run: fpm build
+
+      - name: Unit tests (serial)
+        run: fpm test
+
+      - name: Unit tests (OpenMP, release profile)
+        env:
+          OMP_NUM_THREADS: "2"
+          OPENBLAS_NUM_THREADS: "1"
+        run: fpm test --profile release
+
+      - name: atomselect CLI tests
+        run: bash test/test_atomselect_cli.sh
+
+      - name: Regression - existing unfold example
+        run: |
+          fpm run unfold -- examples/UnfoldDiatomic/unfold.nml
+          test -s Diatomic.unfold.dat
+
+      - name: Surface spectral example (no plotting)
+        run: |
+          if [ -x examples/surface_spectral/run_example.sh ]; then
+            NO_PLOT=1 bash examples/surface_spectral/run_example.sh
+          fi
