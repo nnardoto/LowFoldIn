@@ -1,0 +1,11 @@
+! Lorentzian maps of the SYNTHETIC model slab (NOT DFT). See README.md.
+&SPECMAP
+    spectral_file = 'model.spectral.bin'
+    spin_channel  = 1
+    kernel        = 'lorentzian'
+    width_ev      = 0.05
+    emin = -3.5, emax = 3.5, ne = 701
+    maps          = 'total', 'top', 'bottom', 'interior', 'top-bottom', 'top+bottom'
+    occupation    = .false.
+    output_prefix = 'model'
+/

@@ -254,3 +254,12 @@ main       = "test_spectral_engine.f90"
 name       = "test_specmap"
 source-dir = "test"
 main       = "test_specmap.f90"
+
+# ==============================================================================
+# EXEMPLOS (fpm run --example)
+# ==============================================================================
+
+[[example]]
+name       = "surface_model"
+source-dir = "examples/surface_spectral"
+main       = "gen_model.f90"
