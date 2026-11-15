@@ -248,6 +248,23 @@ fractional norm (not the reciprocal metric), a non-uniform last step and no
 labels; changing it would alter `unfold` output. Documented as a known
 duplication.
 
+### §3.2 Module `spectral_engine` (src/mod_spectral_engine.f90)
+
+```fortran
+integer, parameter, public :: MAX_KVERTEX = 100, SPEC_PATH_LEN = 512
+type, public :: spectral_input_t      ! &SPECTRAL fields (§3) + &KPATH (vertex, label, npoints, nvertex)
+type, public :: spectral_timing_t     ! read_s, build_s, diag_s, proj_s, write_s, total_s (measured)
+subroutine read_spectral_input(filename, inp, ierr, errmsg)   ! &SPECTRAL and &KPATH, any order
+subroutine run_spectral(inp, sd, timing, ierr, errmsg)
+subroutine process_kpoint(n, ngroup, Hr, Sr, Rpt, kfrac, groups, Hk, Sk, C, SC, E, W, &
+                          t_build, t_diag, t_proj, ierr)        ! per-k body, caller-owned workspaces
+```
+Energy-reference labels: `fermi` → "E - E_F (eV), E_F = 0 by definition";
+`absolute` → "E (eV)" (+ E_F if known); `unknown` → "E (eV, reference unknown)".
+`sd%source` = "H=<h> S=<s>" (collinear: "H_up=.. H_dn=.. S=..").
+Limitation: `HSDataFormat%ReadFile` stops on corrupt HSIO files (existing
+behaviour, not changed); `run_spectral` only pre-checks existence.
+
 ## §4. Projection module `spectral_projection` (src/mod_spectral_projection.f90)
 
 ```fortran

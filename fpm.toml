@@ -45,6 +45,11 @@ name       = "atomselect"
 source-dir = "tools"
 main       = "atomselect.f90"
 
+[[executable]]
+name       = "spectral"
+source-dir = "tools"
+main       = "spectral.f90"
+
 # ==============================================================================
 # FEATURES DE COMPILAÇÃO — fpm 0.13+
 #
@@ -229,3 +234,8 @@ main       = "test_projection.f90"
 name       = "test_kpath"
 source-dir = "test"
 main       = "test_kpath.f90"
+
+[[test]]
+name       = "test_spectral_engine"
+source-dir = "test"
+main       = "test_spectral_engine.f90"
