@@ -5,7 +5,11 @@
 !> H/S files, the structure file and regions.nml, diagonalizes H(k) along a
 !> k-path and computes per-region projection weights (Mulliken).
 !> The per-k work lives in `process_kpoint`, which only touches the arrays and
-!> workspaces passed to it (ready for a later OpenMP loop).
+!> workspaces passed to it. The (spin, k) loop of `run_spectral` is
+!> parallelized with OpenMP (when compiled with -fopenmp): each thread owns
+!> one set of workspaces, allocated once, and each iteration writes only its
+!> own sd%energy / sd%weight slices, so results do not depend on the thread
+!> count. Without -fopenmp the `!$` lines vanish and the loop runs serially.
 !> Library routines never stop: errors are returned through ierr/errmsg.
 !> (Exception: HSDataFormat%ReadFile stops on a corrupt HSIO file; missing
 !> files are detected here before calling it.)
@@ -22,6 +26,7 @@ module spectral_engine
                                    overlap_times_vectors, mulliken_weights, lowdin_weights, &
                                    generalized_eigensolve
     use kpath, only: kpath_t, build_kpath
+    !$ use omp_lib, only: omp_get_num_threads
     use spectral_data, only: spectral_data_t, SPIN_NONE, SPIN_COLLINEAR, SPIN_NONCOLLINEAR, &
                              METHOD_MULLIKEN, METHOD_LOWDIN, EREF_UNKNOWN, EREF_FERMI, EREF_ABSOLUTE
     implicit none
@@ -56,13 +61,20 @@ module spectral_engine
         integer :: npoints(MAX_KVERTEX - 1) = 0
     end type spectral_input_t
 
+    !> All values are measured with system_clock (wall clock), in seconds.
+    !> build_s, diag_s and proj_s are ACCUMULATED over all threads of the
+    !> k-loop (thread-seconds: sum of each thread's wall time in that phase);
+    !> loop_wall_s is the wall-clock time of the whole k-loop. With one thread
+    !> build_s + diag_s + proj_s <= loop_wall_s.
     type, public :: spectral_timing_t
-        real(dp) :: read_s  = 0.0_dp   ! structure, regions, HSIO
-        real(dp) :: build_s = 0.0_dp   ! H(k), S(k) construction
-        real(dp) :: diag_s  = 0.0_dp   ! generalized eigensolver
-        real(dp) :: proj_s  = 0.0_dp   ! S*C + weights
-        real(dp) :: write_s = 0.0_dp   ! filled by the driver
-        real(dp) :: total_s = 0.0_dp
+        real(dp) :: read_s  = 0.0_dp   ! structure, regions, HSIO (wall)
+        real(dp) :: build_s = 0.0_dp   ! H(k), S(k) construction (accumulated thread-s)
+        real(dp) :: diag_s  = 0.0_dp   ! generalized eigensolver (accumulated thread-s)
+        real(dp) :: proj_s  = 0.0_dp   ! S*C + weights (accumulated thread-s)
+        real(dp) :: loop_wall_s = 0.0_dp ! k-loop wall-clock time
+        real(dp) :: write_s = 0.0_dp   ! filled by the driver (wall)
+        real(dp) :: total_s = 0.0_dp   ! wall
+        integer  :: nthreads = 1       ! threads that ran the k-loop (1 without OpenMP)
     end type spectral_timing_t
 
     public :: read_spectral_input, run_spectral, process_kpoint
@@ -277,6 +289,12 @@ contains
         logical :: have_regions, partition, use_lowdin
         real(dp) :: smin
         character(len=512) :: msg
+        ! k-loop (OpenMP) state
+        integer :: nk, nit, it, first_fail, ff, nthr
+        integer, allocatable :: it_kerr(:), it_perr(:)
+        real(dp), allocatable :: it_smin(:)
+        real(dp) :: t_b, t_d, t_p
+        integer(int64) :: cl0, cl1
 
         ierr = 0
         errmsg = ''
@@ -448,40 +466,92 @@ contains
         allocate(sd%energy(n, path%nk, nspin), source=0.0_dp)
         allocate(sd%weight(n, path%nk, ngroup, nspin), source=0.0_dp)
 
-        ! ---------------- 6. k loop -------------------------------------
+        ! ---------------- 6. k loop (OpenMP over the flat (ispin, ik) index) --
+        ! it = (ispin-1)*nk + ik. Each iteration writes only sd%energy(:,ik,ispin),
+        ! sd%weight(:,ik,:,ispin) and its own entry of the status arrays, so the
+        ! result is independent of the thread count and schedule. Workspaces
+        ! are private and allocated once per thread. No I/O and no stop inside
+        ! the region: the first failing iteration (lowest it) is reported after.
+        ! Iterations above the lowest failure seen so far are skipped; those
+        ! below it always run, so the reported failure is deterministic.
+        nk = path%nk
+        nit = nspin * nk
+        allocate(it_kerr(nit), it_perr(nit), it_smin(nit))
+        it_kerr = 0
+        it_perr = 0
+        it_smin = 0.0_dp
+        first_fail = nit + 1
+        nthr = 1
+        t_b = 0.0_dp; t_d = 0.0_dp; t_p = 0.0_dp
+        call system_clock(cl0)
+
+        !$omp parallel default(none) &
+        !$omp shared(n, ngroup, nk, nit, hdat, sdat, path, groups, use_lowdin, inp, sd, &
+        !$omp        it_kerr, it_perr, it_smin, first_fail, nthr) &
+        !$omp private(it, ispin, ik, g, ff, kerr, perr, smin, Hk, Sk, C, SC, E, W) &
+        !$omp reduction(+: t_b, t_d, t_p)
         allocate(Hk(n, n), Sk(n, n), C(n, n), SC(n, n), E(n), W(n, ngroup))
-        do ispin = 1, nspin
-            do ik = 1, path%nk
-                call process_kpoint(n, ngroup, hdat(ispin)%Data, sdat%Data, sdat%IndexList, &
-                                    path%kfrac(:, ik), groups, Hk, Sk, C, SC, E, W, &
-                                    timing%build_s, timing%diag_s, timing%proj_s, kerr, &
-                                    lowdin=use_lowdin, tol_s_min=inp%tol_s_min, smin=smin, &
-                                    proj_ierr=perr)
-                if (perr == 1) then
-                    write(msg, '(A,I0,A,I0,A,3F12.7,A,ES12.4,A,ES10.3,A)') &
-                        'overlap matrix not positive definite above tol_s_min at ispin=', ispin, &
-                        ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), '): min eigenvalue smin=', smin, &
-                        ' (tol_s_min=', inp%tol_s_min, ')'
-                    call fail(trim(msg))
-                    return
-                else if (perr /= 0) then
-                    write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'Lowdin projection failed (ierr=', &
-                        perr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
-                    call fail(trim(msg))
-                    return
-                end if
-                if (kerr /= 0) then
-                    write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'generalized eigensolver failed (info=', &
-                        kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
-                    call fail(trim(msg))
-                    return
-                end if
-                sd%energy(:, ik, ispin) = E
-                do g = 1, ngroup
-                    sd%weight(:, ik, g, ispin) = W(:, g)
-                end do
+        !$omp single
+        !$ nthr = omp_get_num_threads()
+        !$omp end single
+        !$omp do schedule(dynamic, 1)
+        do it = 1, nit
+            !$omp atomic read
+            ff = first_fail
+            if (it > ff) cycle
+            ispin = (it - 1) / nk + 1
+            ik = it - (ispin - 1) * nk
+            call process_kpoint(n, ngroup, hdat(ispin)%Data, sdat%Data, sdat%IndexList, &
+                                path%kfrac(:, ik), groups, Hk, Sk, C, SC, E, W, &
+                                t_b, t_d, t_p, kerr, &
+                                lowdin=use_lowdin, tol_s_min=inp%tol_s_min, smin=smin, &
+                                proj_ierr=perr)
+            if (kerr /= 0 .or. perr /= 0) then
+                it_kerr(it) = kerr
+                it_perr(it) = perr
+                it_smin(it) = smin
+                !$omp atomic update
+                first_fail = min(first_fail, it)
+                cycle
+            end if
+            sd%energy(:, ik, ispin) = E
+            do g = 1, ngroup
+                sd%weight(:, ik, g, ispin) = W(:, g)
             end do
         end do
+        !$omp end do
+        deallocate(Hk, Sk, C, SC, E, W)
+        !$omp end parallel
+
+        call system_clock(cl1)
+        timing%loop_wall_s = elapsed(cl0, cl1, crate)
+        timing%build_s = t_b
+        timing%diag_s  = t_d
+        timing%proj_s  = t_p
+        timing%nthreads = nthr
+
+        if (first_fail <= nit) then
+            it = first_fail
+            ispin = (it - 1) / nk + 1
+            ik = it - (ispin - 1) * nk
+            perr = it_perr(it)
+            kerr = it_kerr(it)
+            smin = it_smin(it)
+            if (perr == 1) then
+                write(msg, '(A,I0,A,I0,A,3F12.7,A,ES12.4,A,ES10.3,A)') &
+                    'overlap matrix not positive definite above tol_s_min at ispin=', ispin, &
+                    ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), '): min eigenvalue smin=', smin, &
+                    ' (tol_s_min=', inp%tol_s_min, ')'
+            else if (perr /= 0) then
+                write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'Lowdin projection failed (ierr=', &
+                    perr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
+            else
+                write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'generalized eigensolver failed (info=', &
+                    kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
+            end if
+            call fail(trim(msg))
+            return
+        end if
 
         ! ---------------- 7. checks -------------------------------------
         call check_weights(sd, partition, inp%tol_norm, inp%tol_negative_warn, use_lowdin)

@@ -25,11 +25,17 @@ Branch: `feat/surface-spectral-analysis` (base: `main` @ 692012e)
 | F3 spectral_data | done | b12e32f | 82 checks |
 | F5 atomselect CLI | done | 6914a99 | 37 CLI checks (test/test_atomselect_cli.sh) |
 | F4 projection + kpath | done | 470061a | 45 + 24 checks |
-| F6 spectral exe | done | (next) | 131 checks; Diatomic manual run max dev 2e-15 |
-| F7 specmap (+F10 kernels/ops/FD) | running | | worktree ../LowFoldIn-f7, branch wip/f7-specmap |
+| F6 spectral exe | done | d844f20 | 131 checks; Diatomic manual run max dev 2e-15 |
+| F9 Löwdin | done | 4859668 | |
+| F7 specmap (+F10 kernels/ops/FD) | done | 51a0cc4 | 59 checks, gnuplot scripts rendered |
+| F8 geometry/layers | done | (see log) | 45 checks + CLI 92 |
+| F11 OpenMP | done | (see log) | bitwise identical 1 vs 4 threads; docs/performance.md |
 
 ## Pending / limitations
 - macOS/Accelerate: `--profile debug` (-ffpe-trap) crashes inside libBLAS
   (SIGILL) in test_projection; not reproduced without the trap flag.
 - Species labels > 8 chars truncated in regions.nml (documented in contracts §2).
 - Corrupt HSIO → existing ReadFile stops (no ierr path).
+- Projection wrappers allocate O(n^2) temporaries per call (negligible vs
+  O(n^3) diagonalisation); caller-owned workspaces are a possible refinement.
+- Diatomic example has S close to I, so Mulliken vs Löwdin barely differ there.

@@ -11,6 +11,7 @@ program spectral
     use spectral_engine, only: spectral_input_t, spectral_timing_t, read_spectral_input, run_spectral
     use spectral_data, only: spectral_data_t, write_spectral_file, write_spectral_text, &
                              SPIN_COLLINEAR
+    !$ use omp_lib, only: omp_get_max_threads
     implicit none
 
     type(spectral_input_t)  :: inp
@@ -18,7 +19,7 @@ program spectral
     type(spectral_timing_t) :: timing
     character(len=1024) :: nml_file, errmsg
     character(len=:), allocatable :: bin_file, txt_file
-    integer :: ierr, ir
+    integer :: ierr, ir, max_thr
     integer(int64) :: c0, c1, crate
 
     if (command_argument_count() /= 1) then
@@ -28,6 +29,16 @@ program spectral
         stop 1
     end if
     call get_command_argument(1, nml_file)
+
+    ! Start-up: thread information (the code never sets environment variables).
+    max_thr = 1
+    !$ max_thr = omp_get_max_threads()
+    print '(A,I0)', '[spectral] OpenMP threads available for the k-loop: ', max_thr
+    if (max_thr > 1) then
+        print '(A)', '[spectral] note: with OMP_NUM_THREADS > 1, consider limiting BLAS/LAPACK threads'
+        print '(A)', '[spectral]       to avoid oversubscription, e.g. OPENBLAS_NUM_THREADS=1 or'
+        print '(A)', '[spectral]       VECLIB_MAXIMUM_THREADS=1 (examples; see docs/performance.md)'
+    end if
 
     call read_spectral_input(trim(nml_file), inp, ierr, errmsg)
     if (ierr /= 0) call die(errmsg)
@@ -65,13 +76,17 @@ program spectral
     print '(A)', '  files written    :'
     print '(A,A)', '    ', bin_file
     if (inp%write_text) print '(A,A)', '    ', txt_file
-    print '(A)', '  timing (measured, s):'
-    print '(A,F12.4)', '    read             ', timing%read_s
-    print '(A,F12.4)', '    build H(k),S(k)  ', timing%build_s
-    print '(A,F12.4)', '    diagonalization  ', timing%diag_s
-    print '(A,F12.4)', '    projection       ', timing%proj_s
-    print '(A,F12.4)', '    write            ', timing%write_s
-    print '(A,F12.4)', '    total            ', timing%total_s
+    print '(A)',   '  timing (measured with system_clock, s):'
+    print '(A,I0)',    '    threads (k-loop)                ', timing%nthreads
+    print '(A,F12.4)', '    read                    [wall]  ', timing%read_s
+    print '(A,F12.4)', '    k-loop                  [wall]  ', timing%loop_wall_s
+    print '(A,F12.4)', '      build H(k),S(k) [accumulated] ', timing%build_s
+    print '(A,F12.4)', '      diagonalization [accumulated] ', timing%diag_s
+    print '(A,F12.4)', '      projection      [accumulated] ', timing%proj_s
+    print '(A,F12.4)', '    write                   [wall]  ', timing%write_s
+    print '(A,F12.4)', '    total                   [wall]  ', timing%total_s
+    print '(A)',   '  [accumulated] = sum over threads of per-thread wall time (thread-seconds);'
+    print '(A)',   '  it can exceed the k-loop wall time when more than one thread is used.'
     if (sd%spin_mode == SPIN_COLLINEAR) print '(A)', '  (spin channel 1 = up, 2 = down)'
 
 contains

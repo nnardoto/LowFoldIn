@@ -16,6 +16,7 @@ program test_spectral_engine
                              EREF_FERMI, EREF_UNKNOWN
     use spectral_engine, only: spectral_input_t, spectral_timing_t, read_spectral_input, run_spectral
     use testing, only: check, check_close, test_summary
+    !$ use omp_lib, only: omp_get_max_threads, omp_set_num_threads
     implicit none
 
     interface
@@ -46,6 +47,7 @@ program test_spectral_engine
     call test_spin_collinear()
     call test_errors()
     call test_roundtrip_file()
+    call test_determinism()
 
     call test_summary("test_spectral_engine")
 
@@ -505,5 +507,48 @@ contains
         call remove_file(bf)
         call remove_file(tf)
     end subroutine test_roundtrip_file
+
+    ! ------------------------------------------------------------------
+    ! Determinism: repeated runs are bitwise identical; under OpenMP, 1 vs 4
+    ! threads are bitwise identical as well (each (spin,k) is computed by one
+    ! thread with the same serial code path; no reductions over k).
+    ! ------------------------------------------------------------------
+
+    subroutine test_determinism()
+        type(spectral_input_t) :: inp
+        type(spectral_data_t) :: sd1, sd2
+        type(spectral_timing_t) :: tm
+        integer :: ierr, max_thr
+        character(len=512) :: msg
+
+        max_thr = 1
+        !$ max_thr = omp_get_max_threads()
+        call base_input(inp, SPI_H, SPI_S, SPI_ST)
+        inp%spin_mode = 'noncollinear'
+        inp%npoints(1) = 60
+        call run_spectral(inp, sd1, tm, ierr, msg)
+        call check(ierr == 0, 'determinism: run 1: ' // trim(msg))
+        call check(tm%nthreads >= 1, 'determinism: timing%nthreads >= 1')
+        call check(tm%loop_wall_s >= 0.0_dp, 'determinism: loop_wall_s >= 0')
+        call run_spectral(inp, sd2, tm, ierr, msg)
+        call check(ierr == 0, 'determinism: run 2: ' // trim(msg))
+        if (allocated(sd1%energy) .and. allocated(sd2%energy)) then
+            call check(all(sd1%energy == sd2%energy), 'determinism: energies bitwise equal (repeat)')
+            call check(all(sd1%weight == sd2%weight), 'determinism: weights bitwise equal (repeat)')
+        end if
+
+        ! OpenMP builds only: 1 thread vs 4 threads.
+        !$ call omp_set_num_threads(1)
+        !$ call run_spectral(inp, sd1, tm, ierr, msg)
+        !$ call check(ierr == 0 .and. tm%nthreads == 1, 'determinism: 1-thread run: ' // trim(msg))
+        !$ call omp_set_num_threads(4)
+        !$ call run_spectral(inp, sd2, tm, ierr, msg)
+        !$ call check(ierr == 0 .and. tm%nthreads == 4, 'determinism: 4-thread run: ' // trim(msg))
+        !$ if (allocated(sd1%energy) .and. allocated(sd2%energy)) then
+        !$     call check(all(sd1%energy == sd2%energy), 'determinism: energies bitwise equal (1 vs 4 threads)')
+        !$     call check(all(sd1%weight == sd2%weight), 'determinism: weights bitwise equal (1 vs 4 threads)')
+        !$ end if
+        !$ call omp_set_num_threads(max_thr)
+    end subroutine test_determinism
 
 end program test_spectral_engine
