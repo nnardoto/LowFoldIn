@@ -257,7 +257,8 @@ type, public :: spectral_timing_t     ! read_s, build_s, diag_s, proj_s, write_s
 subroutine read_spectral_input(filename, inp, ierr, errmsg)   ! &SPECTRAL and &KPATH, any order
 subroutine run_spectral(inp, sd, timing, ierr, errmsg)
 subroutine process_kpoint(n, ngroup, Hr, Sr, Rpt, kfrac, groups, Hk, Sk, C, SC, E, W, &
-                          t_build, t_diag, t_proj, ierr)        ! per-k body, caller-owned workspaces
+                          t_build, t_diag, t_proj, ierr [, lowdin, tol_s_min, smin, proj_ierr])
+! per-k body, caller-owned workspaces; optional args select the Löwdin path
 ```
 Energy-reference labels: `fermi` → "E - E_F (eV), E_F = 0 by definition";
 `absolute` → "E (eV)" (+ E_F if known); `unknown` → "E (eV, reference unknown)".
@@ -288,6 +289,7 @@ subroutine generalized_eigensolve(n, H, S, E, C, ierr)         ! wraps zhegv(1,'
 - Löwdin: `S^{1/2}` from `zheev` of a COPY of S; if min eigenvalue ≤
   `tol_s_min` → `ierr=1`, `smin` returned (caller aborts naming the k-point).
   Never floor eigenvalues. `W(b,g) = Σ_{μ∈g} |(S^{1/2}C)(μ,b)|²`.
+  zheev failure: `ierr = info` (info<0) or `1000+info` (info>0).
 - `generalized_eigensolve`: copies H and S, `zhegv(1,'V','U')`, eigenvalues
   ascending, `C^† S C = I`. Uses workspace query (lwork=-1). Never `stop`s;
   `ierr = info`. (Equivalent to the private
@@ -398,13 +400,14 @@ atomselect surface  <structure.nml> --regions <file> --normal nx ny nz --tol T -
     occupation    = .false.            ! multiply by Fermi–Dirac
     temperature_k = 0.0
     mu_ev         = 0.0
-    mu_set        = .false.            ! required true unless energy_ref = fermi (then μ=0 default)
+    mu_set        = .false.            ! required true unless energy_ref = fermi (then μ=0 default);
+                                       ! E_F is never used as an implicit μ
     output_prefix = 'slab'
 /
 ```
 - Map expression: region names joined by `+`/`-` (e.g. `top-bottom`,
   `a+b-c`); linear combination with coefficients ±1 of the per-region
-  intensities, computed after broadening without any normalisation; sign
+  intensities (combined before broadening; identical by linearity), without any normalisation; sign
   preserved. Overlapping regions in a sum may double-count atoms (documented).
 - `A_P(k,E) = Σ_n w_n^P K(E-ε_n)`; Lorentzian `K = (1/π) η/(x²+η²)`, Gaussian
   `K = exp(-x²/2σ²)/(σ√(2π))`.

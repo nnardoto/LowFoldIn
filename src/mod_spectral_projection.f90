@@ -3,7 +3,7 @@
 
 !> Pure numerical building blocks for atom/region-resolved spectral weights
 !> (contracts §4): orbital groups from atom lists, S·C product, Mulliken
-!> weights and a non-stopping generalized Hermitian eigensolver.
+!> and Löwdin weights and a non-stopping generalized Hermitian eigensolver.
 module spectral_projection
     use types, only: dp
     implicit none
@@ -11,7 +11,7 @@ module spectral_projection
 
     public :: orbital_groups_t
     public :: atom_orbital_offsets, build_orbital_groups
-    public :: overlap_times_vectors, mulliken_weights
+    public :: overlap_times_vectors, mulliken_weights, lowdin_weights
     public :: generalized_eigensolve
 
     !> Groups of orbital indices in CSR layout:
@@ -41,6 +41,22 @@ module spectral_projection
             complex(dp) :: a(lda, *), b(ldb, *), work(*)
             real(dp)    :: w(*), rwork(*)
         end subroutine zhegv
+
+        subroutine zheev(jobz, uplo, n, a, lda, w, work, lwork, rwork, info)
+            use types, only: dp
+            character   :: jobz, uplo
+            integer     :: n, lda, lwork, info
+            complex(dp) :: a(lda, *), work(*)
+            real(dp)    :: w(*), rwork(*)
+        end subroutine zheev
+
+        subroutine zgemm(transa, transb, m, n, k, alpha, a, lda, b, ldb, beta, c, ldc)
+            use types, only: dp
+            character   :: transa, transb
+            integer     :: m, n, k, lda, ldb, ldc
+            complex(dp) :: alpha, beta
+            complex(dp) :: a(lda, *), b(ldb, *), c(ldc, *)
+        end subroutine zgemm
     end interface
 
 contains
@@ -144,6 +160,80 @@ contains
             end do
         end do
     end subroutine mulliken_weights
+
+    !> Löwdin weights W(b,g) = Σ_{μ∈g} |(S^{1/2} C)(μ,b)|².
+    !> S^{1/2} = U diag(sqrt(w)) U^† from zheev('V','U') on a COPY of S.
+    !> smin = smallest eigenvalue of S. If smin <= tol_s_min: ierr = 1 and W is
+    !> left undefined (eigenvalues are never floored or clipped).
+    !> zheev failure: ierr = info (< 0, illegal argument) or 1000 + info (> 0,
+    !> no convergence), both distinct from 1. S and C are not modified.
+    subroutine lowdin_weights(n, nband, S, C, groups, W, tol_s_min, smin, ierr)
+        integer,                intent(in)  :: n, nband
+        complex(dp),            intent(in)  :: S(n, n)
+        complex(dp),            intent(in)  :: C(n, nband)
+        type(orbital_groups_t), intent(in)  :: groups
+        real(dp),               intent(out) :: W(nband, groups%ngroup)
+        real(dp),               intent(in)  :: tol_s_min
+        real(dp),               intent(out) :: smin
+        integer,                intent(out) :: ierr
+
+        complex(dp), allocatable :: U(:, :), US(:, :), Shalf(:, :), Cwork(:, :), Ct(:, :), work(:)
+        complex(dp) :: wquery(1)
+        real(dp),    allocatable :: ev(:), rwork(:)
+        real(dp) :: acc
+        integer :: lwork, info, i, g, b, mu
+
+        ierr = 0
+        smin = 0.0_dp
+        if (n <= 0 .or. nband <= 0) return
+
+        allocate(U(n, n), ev(n), rwork(max(1, 3 * n - 2)))
+        U = S
+
+        ! Workspace query
+        call zheev('V', 'U', n, U, n, ev, wquery, -1, rwork, info)
+        if (info /= 0) then
+            ierr = merge(info, 1000 + info, info < 0)
+            return
+        end if
+        lwork = max(1, 2 * n - 1, int(real(wquery(1), dp)))
+        allocate(work(lwork))
+        call zheev('V', 'U', n, U, n, ev, work, lwork, rwork, info)
+        if (info /= 0) then
+            ierr = merge(info, 1000 + info, info < 0)
+            return
+        end if
+
+        smin = minval(ev)
+        if (smin <= tol_s_min) then
+            ierr = 1
+            return
+        end if
+
+        ! S^{1/2} = (U diag(sqrt(ev))) U^H
+        allocate(US(n, n), Shalf(n, n))
+        do i = 1, n
+            US(:, i) = U(:, i) * sqrt(ev(i))
+        end do
+        call zgemm('N', 'C', n, n, n, (1.0_dp, 0.0_dp), US, n, U, n, (0.0_dp, 0.0_dp), Shalf, n)
+
+        ! Ct = S^{1/2} C (local copy of C keeps the intent(in) argument untouched)
+        allocate(Cwork(n, nband), Ct(n, nband))
+        Cwork = C
+        call zgemm('N', 'N', n, nband, n, (1.0_dp, 0.0_dp), Shalf, n, Cwork, n, &
+                   (0.0_dp, 0.0_dp), Ct, n)
+
+        do g = 1, groups%ngroup
+            do b = 1, nband
+                acc = 0.0_dp
+                do i = groups%start(g), groups%start(g + 1) - 1
+                    mu = groups%orb(i)
+                    acc = acc + real(Ct(mu, b), dp)**2 + aimag(Ct(mu, b))**2
+                end do
+                W(b, g) = acc
+            end do
+        end do
+    end subroutine lowdin_weights
 
     !> Generalized Hermitian eigenproblem H C = S C diag(E) via
     !> zhegv(1,'V','U') on internal copies of H and S. Eigenvalues ascending,

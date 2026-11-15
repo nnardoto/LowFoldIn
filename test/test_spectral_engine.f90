@@ -12,7 +12,7 @@ program test_spectral_engine
     use spectral_projection, only: orbital_groups_t, build_orbital_groups
     use spectral_data, only: spectral_data_t, write_spectral_file, read_spectral_file, &
                              write_spectral_text, find_region, &
-                             SPIN_NONE, SPIN_COLLINEAR, SPIN_NONCOLLINEAR, METHOD_MULLIKEN, &
+                             SPIN_NONE, SPIN_COLLINEAR, SPIN_NONCOLLINEAR, METHOD_MULLIKEN, METHOD_LOWDIN, &
                              EREF_FERMI, EREF_UNKNOWN
     use spectral_engine, only: spectral_input_t, spectral_timing_t, read_spectral_input, run_spectral
     use testing, only: check, check_close, test_summary
@@ -40,6 +40,7 @@ program test_spectral_engine
 
     call test_read_input()
     call test_consistency_diatomic()
+    call test_lowdin_diatomic()
     call test_regions_partition()
     call test_spin_noncollinear()
     call test_spin_collinear()
@@ -271,6 +272,37 @@ contains
     end subroutine test_consistency_diatomic
 
     ! ------------------------------------------------------------------
+    ! Lowdin on Diatomic: total = 1, partition = 1, energies = Mulliken run
+    ! ------------------------------------------------------------------
+
+    subroutine test_lowdin_diatomic()
+        type(spectral_input_t) :: inp
+        type(spectral_data_t) :: sdm, sdl
+        type(spectral_timing_t) :: tm
+        integer :: ierr
+        character(len=512) :: msg
+        character(len=*), parameter :: rf = TMP // 'regions_lowdin.nml'
+
+        call make_regions(rf, DIA_ST, ['A_atoms', 'B_atoms'], [1, 4, 7], [1, 3, 5, 2, 4, 6], 'auto')
+        call base_input(inp, DIA_H, DIA_S, DIA_ST)
+        inp%regions_file = rf
+        call run_spectral(inp, sdm, tm, ierr, msg)
+        call check(ierr == 0, 'lowdin ref: Mulliken run: ' // trim(msg))
+        inp%method = 'lowdin'
+        call run_spectral(inp, sdl, tm, ierr, msg)
+        call check(ierr == 0, 'run_spectral Diatomic lowdin: ' // trim(msg))
+        if (ierr == 0) then
+            call check(sdl%method == METHOD_LOWDIN, 'lowdin: sd%method = METHOD_LOWDIN')
+            call check_close(max_total_dev(sdl), 0.0_dp, 1e-10_dp, 'lowdin: total weight = 1')
+            call check_close(max_regsum_dev(sdl), 0.0_dp, 1e-10_dp, 'lowdin: partition sums to 1')
+            call check(minval(sdl%weight) >= -1e-12_dp, 'lowdin: weights >= -1e-12')
+            if (allocated(sdm%energy)) &
+                call check(all(sdl%energy == sdm%energy), 'lowdin: energies identical to Mulliken run')
+        end if
+        call remove_file(rf)
+    end subroutine test_lowdin_diatomic
+
+    ! ------------------------------------------------------------------
     ! Test 2b: regions partition / overlap
     ! ------------------------------------------------------------------
 
@@ -427,13 +459,6 @@ contains
         inp%allow_no_fingerprint = .true.
         call run_spectral(inp, sd, tm, ierr, msg)
         call check(ierr == 0, 'missing fingerprint accepted with allow flag: ' // trim(msg))
-
-        ! lowdin not implemented
-        call base_input(inp, DIA_H, DIA_S, DIA_ST)
-        inp%method = 'lowdin'
-        call run_spectral(inp, sd, tm, ierr, msg)
-        call check(ierr /= 0, 'lowdin returns error')
-        call check(index(msg, 'not implemented') > 0, 'lowdin message: ' // trim(msg))
 
         ! missing H file
         call base_input(inp, TMP // 'does_not_exist.hsio', DIA_S, DIA_ST)

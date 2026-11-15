@@ -19,10 +19,11 @@ module spectral_engine
     use atomic_regions, only: region_set_t, read_regions_file, validate_regions, &
                               regions_are_partition
     use spectral_projection, only: orbital_groups_t, build_orbital_groups, &
-                                   overlap_times_vectors, mulliken_weights, generalized_eigensolve
+                                   overlap_times_vectors, mulliken_weights, lowdin_weights, &
+                                   generalized_eigensolve
     use kpath, only: kpath_t, build_kpath
     use spectral_data, only: spectral_data_t, SPIN_NONE, SPIN_COLLINEAR, SPIN_NONCOLLINEAR, &
-                             METHOD_MULLIKEN, EREF_UNKNOWN, EREF_FERMI, EREF_ABSOLUTE
+                             METHOD_MULLIKEN, METHOD_LOWDIN, EREF_UNKNOWN, EREF_FERMI, EREF_ABSOLUTE
     implicit none
     private
 
@@ -272,18 +273,17 @@ contains
         real(dp), allocatable :: E(:), W(:,:)
         character(len=SPEC_PATH_LEN) :: hname(2)
         integer(int64) :: c_start, c0, c1, crate
-        integer :: nspin, nreg, ngroup, nat, n, ispin, ik, ia, ir, g, pos, smode, kerr
-        logical :: have_regions, partition
+        integer :: nspin, nreg, ngroup, nat, n, ispin, ik, ia, ir, g, pos, smode, kerr, perr
+        logical :: have_regions, partition, use_lowdin
+        real(dp) :: smin
         character(len=512) :: msg
 
         ierr = 0
         errmsg = ''
         call system_clock(c_start, crate)
+        use_lowdin = trim(inp%method) == 'lowdin'
 
-        if (trim(inp%method) == 'lowdin') then
-            call fail("method 'lowdin' not implemented yet")
-            return
-        else if (trim(inp%method) /= 'mulliken') then
+        if (trim(inp%method) /= 'mulliken' .and. trim(inp%method) /= 'lowdin') then
             call fail("invalid method '" // trim(inp%method) // "'")
             return
         end if
@@ -413,6 +413,7 @@ contains
         sd%nvertex = path%nvertex
         sd%spin_mode = smode
         sd%method = METHOD_MULLIKEN
+        if (use_lowdin) sd%method = METHOD_LOWDIN
         select case (trim(inp%energy_reference))
         case ('fermi');    sd%energy_ref = EREF_FERMI
         case ('absolute'); sd%energy_ref = EREF_ABSOLUTE
@@ -453,7 +454,22 @@ contains
             do ik = 1, path%nk
                 call process_kpoint(n, ngroup, hdat(ispin)%Data, sdat%Data, sdat%IndexList, &
                                     path%kfrac(:, ik), groups, Hk, Sk, C, SC, E, W, &
-                                    timing%build_s, timing%diag_s, timing%proj_s, kerr)
+                                    timing%build_s, timing%diag_s, timing%proj_s, kerr, &
+                                    lowdin=use_lowdin, tol_s_min=inp%tol_s_min, smin=smin, &
+                                    proj_ierr=perr)
+                if (perr == 1) then
+                    write(msg, '(A,I0,A,I0,A,3F12.7,A,ES12.4,A,ES10.3,A)') &
+                        'overlap matrix not positive definite above tol_s_min at ispin=', ispin, &
+                        ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), '): min eigenvalue smin=', smin, &
+                        ' (tol_s_min=', inp%tol_s_min, ')'
+                    call fail(trim(msg))
+                    return
+                else if (perr /= 0) then
+                    write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'Lowdin projection failed (ierr=', &
+                        perr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
+                    call fail(trim(msg))
+                    return
+                end if
                 if (kerr /= 0) then
                     write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'generalized eigensolver failed (info=', &
                         kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
@@ -468,7 +484,7 @@ contains
         end do
 
         ! ---------------- 7. checks -------------------------------------
-        call check_weights(sd, partition, inp%tol_norm, inp%tol_negative_warn)
+        call check_weights(sd, partition, inp%tol_norm, inp%tol_negative_warn, use_lowdin)
 
         call system_clock(c1)
         timing%total_s = elapsed(c_start, c1, crate)
@@ -487,8 +503,12 @@ contains
     ! Per-k body: touches only its arguments (thread-safe by construction).
     ! ==================================================================
 
+    !> Optional Löwdin mode (lowdin=.true.): weights from lowdin_weights on the
+    !> ORIGINAL Sk (SC is not used); tol_s_min, smin and proj_ierr are then
+    !> required. proj_ierr = 1 means min eig(Sk) = smin <= tol_s_min.
+    !> Without the optional arguments the Mulliken path is used (unchanged).
     subroutine process_kpoint(n, ngroup, Hr, Sr, Rpt, kfrac, groups, Hk, Sk, C, SC, E, W, &
-                              t_build, t_diag, t_proj, ierr)
+                              t_build, t_diag, t_proj, ierr, lowdin, tol_s_min, smin, proj_ierr)
         integer,                intent(in)    :: n, ngroup
         complex(dp), contiguous, intent(in)   :: Hr(:,:,:), Sr(:,:,:)
         integer,     contiguous, intent(in)   :: Rpt(:,:)
@@ -498,7 +518,21 @@ contains
         real(dp),               intent(inout) :: E(n), W(n, ngroup)
         real(dp),               intent(inout) :: t_build, t_diag, t_proj
         integer,                intent(out)   :: ierr
+        logical,  optional,     intent(in)    :: lowdin
+        real(dp), optional,     intent(in)    :: tol_s_min
+        real(dp), optional,     intent(out)   :: smin
+        integer,  optional,     intent(out)   :: proj_ierr
         integer(int64) :: c0, c1, c2, c3, crate
+        logical :: do_lowdin
+        real(dp) :: smin_loc
+        integer :: perr
+
+        do_lowdin = .false.
+        if (present(lowdin)) do_lowdin = lowdin
+        if (do_lowdin .and. .not. (present(tol_s_min) .and. present(proj_ierr))) &
+            error stop 'process_kpoint: lowdin requires tol_s_min and proj_ierr'
+        if (present(proj_ierr)) proj_ierr = 0
+        if (present(smin)) smin = 0.0_dp
 
         call system_clock(c0, crate)
         call compute_Hk_at_kpoint(Hr, Rpt, Hk, kfrac)
@@ -512,8 +546,14 @@ contains
             t_diag  = t_diag  + elapsed(c1, c2, crate)
             return
         end if
-        call overlap_times_vectors(n, n, Sk, C, SC)
-        call mulliken_weights(n, n, C, SC, groups, W)
+        if (do_lowdin) then
+            call lowdin_weights(n, n, Sk, C, groups, W, tol_s_min, smin_loc, perr)
+            proj_ierr = perr
+            if (present(smin)) smin = smin_loc
+        else
+            call overlap_times_vectors(n, n, Sk, C, SC)
+            call mulliken_weights(n, n, C, SC, groups, W)
+        end if
         call system_clock(c3)
         t_build = t_build + elapsed(c0, c1, crate)
         t_diag  = t_diag  + elapsed(c1, c2, crate)
@@ -524,13 +564,23 @@ contains
     ! Helpers
     ! ==================================================================
 
-    subroutine check_weights(sd, partition, tol_norm, tol_neg)
+    !> For Löwdin (lowdin=.true.) weights are non-negative by construction; the
+    !> negative check then uses -tol_norm instead of -tol_negative_warn.
+    subroutine check_weights(sd, partition, tol_norm, tol_neg_in, lowdin)
         type(spectral_data_t), intent(in) :: sd
         logical,               intent(in) :: partition
-        real(dp),              intent(in) :: tol_norm, tol_neg
+        real(dp),              intent(in) :: tol_norm, tol_neg_in
+        logical,               intent(in) :: lowdin
+        real(dp) :: tol_neg
+        character(len=8) :: mname
         integer :: ispin, ik, ib, g, n_tot, n_part, n_neg
         real(dp) :: dev, max_tot, max_part, wmin, w
 
+        if (lowdin) then
+            tol_neg = tol_norm;   mname = 'Lowdin'
+        else
+            tol_neg = tol_neg_in; mname = 'Mulliken'
+        end if
         n_tot = 0; n_part = 0; n_neg = 0
         max_tot = 0.0_dp; max_part = 0.0_dp; wmin = huge(1.0_dp)
         do ispin = 1, sd%nspin
@@ -560,7 +610,7 @@ contains
                         if (w < -tol_neg) then
                             n_neg = n_neg + 1
                             if (n_neg <= MAX_WARN_LINES) print '(A,I0,A,I0,A,I0,A,A,A,ES10.3)', &
-                                '[spectral warning] negative Mulliken weight: spin=', ispin, ' k=', ik, &
+                                '[spectral warning] negative ' // trim(mname) // ' weight: spin=', ispin, ' k=', ik, &
                                 ' band=', ib, ' region=', trim(sd%region_name(g)), ' w=', w
                         end if
                     end do
@@ -583,8 +633,13 @@ contains
         else if (sd%nregion > 1) then
             print '(A)', '  sum over regions       : not checked (regions are not a partition)'
         end if
-        print '(A,ES10.3,A,I0,A,ES9.2,A)', '  min Mulliken weight    = ', wmin, &
-            '  (', n_neg, ' below -tol_negative_warn=', -tol_neg, ')'
+        if (lowdin) then
+            print '(A,ES10.3,A,I0,A,ES9.2,A)', '  min Lowdin weight      = ', wmin, &
+                '  (', n_neg, ' below -tol_norm=', -tol_neg, ')'
+        else
+            print '(A,ES10.3,A,I0,A,ES9.2,A)', '  min Mulliken weight    = ', wmin, &
+                '  (', n_neg, ' below -tol_negative_warn=', -tol_neg, ')'
+        end if
     end subroutine check_weights
 
     subroutine compare_hs(A, B, nameA, nameB, ierr, errmsg)
