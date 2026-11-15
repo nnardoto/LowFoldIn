@@ -209,3 +209,8 @@ main       = "test_structure_io.f90"
 name       = "test_regions"
 source-dir = "test"
 main       = "test_regions.f90"
+
+[[test]]
+name       = "test_spectral_data"
+source-dir = "test"
+main       = "test_spectral_data.f90"
