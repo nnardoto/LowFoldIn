@@ -73,13 +73,16 @@ fpm build --flag "-std=f2023 -O0 -g -Wall -Wextra -fcheck=all -fbacktrace -fopen
 
 ## Executables
 
-The package builds three command-line programs.
+The package builds the following command-line programs.
 
 | Executable | Purpose |
 |---|---|
 | `LowFoldIn` | Conventional band-structure calculation. Reads its input from standard input. |
 | `openmx2hsio` | Converts an OpenMX `.scfout` file into the internal `.hsio` format. |
 | `unfold` | Unfolds a supercell band structure into the primitive-cell Brillouin zone. |
+| `atomselect` | Creates and validates named atomic regions (`regions.nml`); see [Surface spectral analysis](#análise-espectral-de-superfícies--surface-spectral-analysis). |
+| `spectral` | Band energies and per-region projection weights along a k-path (`.spectral.bin`). |
+| `specmap` | Broadened spectral maps A_P(k,E) and region combinations from a `.spectral.bin` file. |
 
 They can be launched through fpm:
 
@@ -87,6 +90,9 @@ They can be launched through fpm:
 fpm run LowFoldIn < bands.nml
 fpm run openmx2hsio -- calculation.scfout
 fpm run unfold -- unfold.nml
+fpm run atomselect -- inspect slab.nml
+fpm run spectral -- spectral.nml
+fpm run specmap -- specmap.nml
 ```
 
 After building, the corresponding binaries are also available inside the fpm build directory.
@@ -384,6 +390,53 @@ The largest observed deviation is printed after the calculation. A large deviati
 
 ---
 
+## Análise espectral de superfícies / Surface spectral analysis
+
+Three tools resolve the electronic states of a slab by atomic region (for example top surface, bottom surface and interior) along a k-path. They are independent of `unfold`.
+
+| Step | Tool | Role | Main input | Main output |
+|---|---|---|---|---|
+| Select | `atomselect` | Defines named atomic regions by index lists, projection ranges along an arbitrary Cartesian normal, Cartesian boxes, detected layers or top/bottom surface layers; validates them against the structure (fingerprint). | structure file (same format as `unfold`) | `regions.nml` |
+| Compute | `spectral` | Solves `H(k)c = E S(k)c` along a k-path and computes Mulliken (default) or Löwdin weights of every band on every region; never shifts energies. OpenMP over k-points. | `spectral.nml` (`&SPECTRAL` + `&KPATH`), HSIO files, structure, `regions.nml` | `<prefix>.spectral.bin` (+ optional `.spectral.txt`) |
+| Represent | `specmap` | Broadens the weights into maps A_P(k,E) (Lorentzian or Gaussian), forms region combinations such as `top-bottom`, optional Fermi–Dirac occupation. No diagonalisation: re-run it freely to change width or window. | `specmap.nml`, `.spectral.bin` | `<prefix>.<map>.map.dat`, `<prefix>.kticks.gp` |
+
+Data flow:
+
+```text
+OpenMX .scfout ── openmx2hsio ──> <prefix>_H.hsio, <prefix>_S.hsio ─────┐
+structure.nml ─── atomselect ───> regions.nml ──────────────────────────┤
+                                                                         ├─> spectral ─> <prefix>.spectral.bin
+spectral.nml (&SPECTRAL, &KPATH) ───────────────────────────────────────┘
+<prefix>.spectral.bin ── specmap (specmap.nml) ──> *.map.dat + *.kticks.gp ── gnuplot (tools/gnuplot/*.gp)
+```
+
+Important conventions:
+
+- Energies in eV, positions in Å, k-points in fractional reciprocal coordinates, k-distance in 1/Å.
+- `spectral` never shifts energies, and HSIO files store no Fermi level. `openmx2hsio` shifts H by −E_F·S by default, so for default conversions set `energy_reference = 'fermi'`; for `--no-fermi-shift` conversions use `'absolute'`. The default `'unknown'` is always safe.
+- Mulliken weights are populations, not probabilities, and can be slightly negative in a non-orthogonal basis. The `total` group equals 1 per band by construction (a numerical check).
+- The maps are broadened projection weights, **not** simulated ARPES intensities: no photoemission matrix elements, final states or many-body effects are included. Only k-path maps are produced (no kx × ky maps).
+- The tools have been exercised on synthetic models and small test fixtures only.
+
+Build and test:
+
+```bash
+fpm build                      # serial build
+fpm test                       # all unit tests
+bash test/test_atomselect_cli.sh   # atomselect command-line tests
+fpm build --profile release    # adds -fopenmp: k-point loop of spectral in parallel
+```
+
+Documentation:
+
+- [`docs/atomselect.md`](docs/atomselect.md) — subcommands, options, `regions.nml` syntax, fingerprint;
+- [`docs/spectral.md`](docs/spectral.md) — `spectral.nml`, equations, spin handling, binary format;
+- [`docs/specmap.md`](docs/specmap.md) — `specmap.nml`, kernels, map expressions, output files, gnuplot scripts;
+- [`docs/performance.md`](docs/performance.md) — OpenMP, thread settings and measured timings;
+- [`examples/surface_spectral`](examples/surface_spectral/README.md) — complete pipeline on a synthetic slab (`bash examples/surface_spectral/run_example.sh`).
+
+---
+
 ## Build profiles
 
 LowFoldIn requires `fpm` 0.13 or newer and is configured for GNU Fortran 14 or newer. The compiler version is not automatically enforced by the manifest, so select it explicitly when needed.
@@ -444,7 +497,11 @@ LowFoldIn/
 │   └── mod_unfold.f90            # Unfolding implementation
 ├── tools/
 │   ├── openmx2hsio.f90          # OpenMX conversion CLI
-│   └── unfold.f90               # Unfolding CLI
+│   ├── unfold.f90               # Unfolding CLI
+│   ├── atomselect.f90           # Named atomic regions CLI
+│   ├── spectral.f90             # Region-projected bands along a k-path
+│   ├── specmap.f90              # Broadened spectral maps
+│   └── gnuplot/                 # map_positive.gp, map_difference.gp, map_compare.gp
 ├── fpm.toml
 ├── LICENSE
 └── README.md

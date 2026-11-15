@@ -374,12 +374,15 @@ atomselect fingerprint <structure.nml>
 atomselect select   <structure.nml> --regions <regions.nml> --name NAME --atoms "LIST"
 atomselect validate <structure.nml> <regions.nml> [--allow-no-fingerprint]
 # F8:
-atomselect layers   <structure.nml> --normal nx ny nz [--tol T] [--table out] [--regions file]
-atomselect select   ... --normal nx ny nz --smin A --smax B     (geometric)
-atomselect surface  <structure.nml> --regions <file> --normal nx ny nz --tol T --top N --bottom N [--top-name top] [--bottom-name bottom]
+atomselect layers   <structure.nml> --normal nx ny nz [--tol T] [--refs ...] [--table out] [--regions file]
+atomselect select   ... --normal nx ny nz [--smin A] [--smax B]  (geometric; at least one bound)
+atomselect surface  <structure.nml> --regions <file> --normal nx ny nz [--tol T] [--refs ...] [--top N] [--bottom N] [--top-name top] [--bottom-name bottom]   # at least one of --top/--bottom
 ```
 - `inspect` table: `Index Element X Y Z` (Å), original order. XYZ export uses
   the labels as given.
+- Values shown in §3 for file names are examples; in code `h_file`, `s_file`,
+  `structure_file` default to `''` (s_file and structure_file required).
+- Extending an existing regions file requires it to carry a fingerprint.
 - `select` adds one region to `--regions` file: if the file does not exist it
   is created with a header (format_version, natoms, fingerprint, species from
   the structure); if it exists it is read, validated against the structure,
@@ -417,7 +420,7 @@ atomselect surface  <structure.nml> --regions <file> --normal nx ny nz --tol T -
     mu_ev         = 0.0
     mu_set        = .false.            ! required true unless energy_ref = fermi (then μ=0 default);
                                        ! E_F is never used as an implicit μ
-    output_prefix = 'slab'
+    output_prefix = 'specmap'          ! default 'specmap'
 /
 ```
 - Map expression: region names joined by `+`/`-` (e.g. `top-bottom`,
@@ -433,7 +436,8 @@ atomselect surface  <structure.nml> --regions <file> --normal nx ny nz --tol T -
   separated by a blank line (pm3d). `#` header: source file, map expression,
   method, kernel+width, energy window, occupation (T, μ), units, energy
   reference, E_F if known.
-- Also writes `<prefix>.kticks.gp` containing a gnuplot `set xtics (...)`
+- Also writes `<prefix>.kticks.gp` (also `ELABEL`, dashed vertex lines with
+  `VLINE_COLOR`, G/Gamma shown as Γ) containing a gnuplot `set xtics (...)`
   command with vertex labels at their kdist, `set xrange`, and, if the Fermi
   level is known in the file's reference, `EF = <value>` (else `EF = NaN`).
 - specmap uses only `spectral_data`, `spectral_broadening`, `spectral_map`
@@ -460,7 +464,8 @@ function map_file_tag(expr) result(tag)
 ## §8. Default tolerances
 
 `tol_norm = 1e-8`, `tol_negative_warn = 1e-3`, `tol_s_min = 1e-10`
-(configurable in `spectral.nml`). Normalisation (total and, if partition,
+(configurable in `spectral.nml`). For Löwdin, weights below `-tol_norm` are
+reported (they must be ≥ 0); `tol_negative_warn` applies to Mulliken only. Normalisation (total and, if partition,
 Σ regions) violations above `tol_norm` print a warning with spin, k and band
 (at most 20 lines, then a count).
 
