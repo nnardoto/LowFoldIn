@@ -7,13 +7,7 @@
 
 Pós-processamento de estrutura eletrônica em bases localizadas (LCAO), escrito em Fortran 2023.
 
-Em cálculos de supercélula (defeitos, ligas, interfaces), a estrutura de bandas aparece dobrada numa zona de Brillouin reduzida, o que dificulta a comparação com o material de referência e com medidas de ARPES. Em slabs, é preciso ainda distinguir estados de superfície e de volume. O LowFoldIn opera sobre o Hamiltoniano `H(R)` e a matriz de sobreposição `S(R)` de um cálculo já convergido e implementa:
-
-- **Unfolding de bandas:** projeção dos estados da supercélula na zona de Brillouin da célula primitiva e cálculo da função espectral desdobrada `A(k,E)`.
-- **Análise espectral por região:** pesos de projeção dos estados em regiões atômicas definidas pelo usuário (superfícies, interior, camadas, sub-redes), em mapas `A(k,E)` e em mapas `kx × ky` de energia constante.
-- **Estrutura de bandas:** solução do problema de autovalores generalizado `H(k)c = εS(k)c` em bases não ortogonais.
-
-Os dados do OpenMX (`.scfout`) são lidos por um conversor nativo. Nenhuma etapa exige refazer o cálculo autoconsistente.
+O LowFoldIn é composto por seis programas de linha de comando e por uma biblioteca de módulos Fortran compartilhada entre eles. Os programas recebem o Hamiltoniano `H(R)` e a matriz de sobreposição `S(R)` no formato `.hsio`, constroem `H(k)` e `S(k)`, resolvem o problema de autovalores generalizado e produzem estruturas de bandas, bandas desdobradas (unfolding) e mapas espectrais projetados em regiões atômicas. Arquivos `.scfout` do OpenMX são convertidos para `.hsio` pelo programa `openmx2hsio`. A configuração de todos os programas é feita por namelists Fortran.
 
 <p align="center">
   <img src="docs/images/unfold_conceito_2x2.png" width="820" alt="Supercélula 2x2 de grafeno: bandas dobradas e resultado do unfolding">
@@ -21,13 +15,76 @@ Os dados do OpenMX (`.scfout`) são lidos por um conversor nativo. Nenhuma etapa
 </p>
 
 <p align="center">
+  <a href="#programas">Programas</a> ·
+  <a href="#módulos">Módulos</a> ·
   <a href="#instalação">Instalação</a> ·
-  <a href="#ferramentas">Ferramentas</a> ·
   <a href="#uso">Uso</a> ·
   <a href="#formulação">Formulação</a> ·
   <a href="#exemplos">Exemplos</a> ·
   <a href="#documentação">Documentação</a>
 </p>
+
+## Programas
+
+| Programa | Fonte | Função |
+|---|---|---|
+| `openmx2hsio` | [`tools/openmx2hsio.f90`](tools/openmx2hsio.f90) | Converte o `.scfout` do OpenMX nas matrizes `H(R)` e `S(R)` (formato `.hsio`); com `--write-structure`, extrai também a estrutura |
+| `LowFoldIn` | [`app/main.f90`](app/main.f90) | Estrutura de bandas ao longo de um caminho k |
+| `unfold` | [`tools/unfold.f90`](tools/unfold.f90) | Unfolding das bandas da supercélula para a célula primitiva |
+| `atomselect` | [`tools/atomselect.f90`](tools/atomselect.f90) | Definição de regiões atômicas nomeadas por índices, camadas, superfícies ou caixas |
+| `spectral` | [`tools/spectral.f90`](tools/spectral.f90) | Energias e pesos de projeção por região, num caminho k ou numa grade 2D |
+| `specmap` | [`tools/specmap.f90`](tools/specmap.f90) | Mapas espectrais alargados, combinações de regiões (`top-bottom`) e mapas de energia constante |
+
+```text
+OpenMX .scfout ──► openmx2hsio ──► H.hsio, S.hsio (+ estrutura)
+                                        │
+             ┌──────────────────────────┼──────────────────────────────┐
+             ▼                          ▼                              ▼
+        LowFoldIn                    unfold                  atomselect → spectral → specmap
+     (bandas comuns)       (bandas desdobradas, A(k,E))      (mapas por região, contornos de Fermi)
+```
+
+## Módulos
+
+Os módulos ficam em [`src/`](src). As rotinas de biblioteca não interrompem a execução: erros são devolvidos ao programa chamador por códigos de status.
+
+| Módulo | Arquivo | Conteúdo |
+|---|---|---|
+| **Base** | | |
+| `types` | [`mod_types.f90`](src/mod_types.f90) | Parâmetros de precisão (`dp`) |
+| `terminal_ui` | [`mod_terminal_ui.f90`](src/mod_terminal_ui.f90) | Formatação da saída no terminal |
+| `kpath` | [`mod_kpath.f90`](src/mod_kpath.f90) | Caminhos k lineares por partes e grades k 2D, com distância acumulada em 1/Å |
+| **Entrada e saída** | | |
+| `HS_io` | [`mod_hs_io.f90`](src/mod_hs_io.f90) | Leitura e escrita do formato `.hsio` (v2): container versionado com blocos átomo-átomo esparsos de `H(R)` e `S(R)` |
+| `scfout_io` | [`mod_scfout_io.f90`](src/mod_scfout_io.f90) | Leitor do binário `.scfout` do OpenMX 3.9/4.0 |
+| `openmx_convert` | [`mod_openmx_convert.f90`](src/mod_openmx_convert.f90) | Montagem de `H(R)` e `S(R)` a partir do `.scfout`, conversão Hartree → eV e deslocamento `H − E_F·S` |
+| `structure_io` | [`mod_structure_io.f90`](src/mod_structure_io.f90) | Leitura da estrutura (`&STRUCTURE`, `&SPECIES`, `&ATOMS`), auxiliares de rede e fingerprint da geometria |
+| `config` | [`mod_config.f90`](src/mod_config.f90) | Leitura da configuração do programa `LowFoldIn` |
+| `bands_io` | [`mod_bands_io.f90`](src/mod_bands_io.f90) | Escrita das bandas em texto, blocos para gnuplot e binário |
+| **Cálculo** | | |
+| `core` | [`mod_core.f90`](src/mod_core.f90) | Construção de `H(k)` e `S(k)` e diagonalização via LAPACK (`zheev[d]`, `zhegv[d]`) |
+| `unfold` | [`mod_unfold.f90`](src/mod_unfold.f90) | Unfolding: ortogonalização de Löwdin, pesos para `M` diagonal (forma fechada) e geral (projetor de grupo), mapeamento de átomos |
+| `spectral_projection` | [`mod_spectral_projection.f90`](src/mod_spectral_projection.f90) | Pesos de Mulliken e Löwdin por grupo de orbitais e autoresolvedor hermitiano generalizado |
+| `spectral_engine` | [`mod_spectral_engine.f90`](src/mod_spectral_engine.f90) | Laço sobre pontos k do programa `spectral`: leitura das entradas, diagonalização e projeção por região |
+| **Regiões e mapas** | | |
+| `atomic_regions` | [`mod_atomic_regions.f90`](src/mod_atomic_regions.f90) | Leitura, escrita e validação de `regions.nml`, incluindo o teste de partição |
+| `atomic_selection` | [`mod_atomic_selection.f90`](src/mod_atomic_selection.f90) | Seleção de átomos por listas de índices, camadas, fatias ao longo de uma normal e caixas |
+| `spectral_data` | [`mod_spectral_data.f90`](src/mod_spectral_data.f90) | Formato intermediário `.spectral.bin` (energias e pesos), que dispensa o Hamiltoniano no pós-processamento |
+| `spectral_broadening` | [`mod_spectral_broadening.f90`](src/mod_spectral_broadening.f90) | Alargamento lorentziano ou gaussiano e ocupação de Fermi–Dirac |
+| `spectral_map` | [`mod_spectral_map.f90`](src/mod_spectral_map.f90) | Expressões de combinação de regiões (`a+b-c`) e escrita dos mapas |
+
+Dependências dos programas:
+
+| Programa | Módulos utilizados |
+|---|---|
+| `openmx2hsio` | `scfout_io`, `openmx_convert`, `HS_io` |
+| `LowFoldIn` | `config`, `core`, `bands_io` |
+| `unfold` | `HS_io`, `unfold` |
+| `atomselect` | `structure_io`, `atomic_regions`, `atomic_selection` |
+| `spectral` | `spectral_engine`, `spectral_data` |
+| `specmap` | `spectral_data`, `spectral_broadening`, `spectral_map` |
+
+Os testes unitários de cada módulo estão em [`test/`](test), e os contratos de interface entre as etapas estão descritos em [`docs/design/contracts.md`](docs/design/contracts.md).
 
 ## Características
 
@@ -100,28 +157,6 @@ bash examples/surface_spectral/run_example.sh
 ```
 
 O script gera um slab sintético com estados de superfície, executa o fluxo completo de análise por região e produz os mapas em PNG e PDF.
-
-## Ferramentas
-
-| Programa | Função |
-|---|---|
-| `openmx2hsio` | Converte o `.scfout` do OpenMX nas matrizes `H(R)` e `S(R)` (formato `.hsio`); com `--write-structure`, extrai também a estrutura |
-| `LowFoldIn` | Estrutura de bandas ao longo de um caminho k |
-| `unfold` | Unfolding das bandas da supercélula para a célula primitiva |
-| `atomselect` | Definição de regiões atômicas nomeadas por índices, camadas, superfícies ou caixas |
-| `spectral` | Energias e pesos de projeção por região, num caminho k ou numa grade 2D |
-| `specmap` | Mapas espectrais alargados, combinações de regiões (`top-bottom`) e mapas de energia constante |
-
-Todos os programas leem a entrada em namelists Fortran.
-
-```text
-OpenMX .scfout ──► openmx2hsio ──► H.hsio, S.hsio (+ estrutura)
-                                        │
-             ┌──────────────────────────┼──────────────────────────────┐
-             ▼                          ▼                              ▼
-        LowFoldIn                    unfold                  atomselect → spectral → specmap
-     (bandas comuns)       (bandas desdobradas, A(k,E))      (mapas por região, contornos de Fermi)
-```
 
 ## Uso
 
