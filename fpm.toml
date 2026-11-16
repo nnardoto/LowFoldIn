@@ -61,15 +61,6 @@ source-dir = "tools"
 main       = "spectral.f90"
 
 # ==============================================================================
-# TESTES
-# ==============================================================================
-
-[[test]]
-name       = "test_hs_io"
-source-dir = "test"
-main       = "test_hs_io.f90"
-
-# ==============================================================================
 # FEATURES DE COMPILAÇÃO — fpm 0.13+
 #
 # As flags ficam deliberadamente em uma única linha. Strings TOML multilinhas
@@ -228,6 +219,11 @@ ryzen7950x-fast = [
 # ==============================================================================
 # TESTES (fpm test)
 # ==============================================================================
+
+[[test]]
+name       = "test_hs_io"
+source-dir = "test"
+main       = "test_hs_io.f90"
 
 [[test]]
 name       = "test_unfold_core"

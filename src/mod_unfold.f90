@@ -849,6 +849,7 @@ contains
         complex(dp) :: g_inner, g_W, g_wrap_phase, g_phase_a, g_phase_b
         integer :: shift_s(3)
         logical, allocatable :: filled(:, :), seen(:, :, :, :)
+        integer :: cdiag(3)
 
         integer :: iAtom, iOrb, gOrb, orbit, L, ik, ic, iN
         integer :: total_kpoints, max_threads, thread_id, completed_count, progress_width
@@ -964,11 +965,14 @@ contains
                 stop 1
             end if
             if (cfg%DiagonalM) then
-                if (seen(OrbitCell(1, gOrb), OrbitCell(2, gOrb), OrbitCell(3, gOrb), orbit)) then
+                ! Rotulos podem estar fora de 0..MDiag-1 (representantes deslocados
+                ! por um vetor da SC): reduz modulo MDiag antes de indexar seen.
+                cdiag = modulo(OrbitCell(:, gOrb), cfg%MDiag)
+                if (seen(cdiag(1), cdiag(2), cdiag(3), orbit)) then
                     print '(A, I0)', "[Unfold Error] Rotulo de celula duplicado dentro do orbital-PC ", orbit
                     stop 1
                 end if
-                seen(OrbitCell(1, gOrb), OrbitCell(2, gOrb), OrbitCell(3, gOrb), orbit) = .true.
+                seen(cdiag(1), cdiag(2), cdiag(3), orbit) = .true.
             end if
             OrbitMemberOrb(fillcount(orbit), orbit)    = gOrb
             OrbitMemberCell(:, fillcount(orbit), orbit) = OrbitCell(:, gOrb)
