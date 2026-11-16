@@ -31,6 +31,7 @@
 ! ----------------------------------------------------------------------------------------------------------
 module scfout_io
     use types, only: dp
+    use, intrinsic :: iso_fortran_env, only: int64
     implicit none
     private
 
@@ -119,7 +120,8 @@ contains
         ! Cabecalho: atomnum, SpinP_switch+versao*4, Catomnum, Latomnum,
         ! Ratomnum, TCpyCell (6 inteiros)
         ! -------------------------------------------------------------
-        read(iunit) i_vec
+        read(iunit, iostat=ios) i_vec
+        call check_io(ios, 'cabecalho')
         this%atomnum  = i_vec(1)
         packed        = i_vec(2)
         this%SpinP_switch = mod(packed, 4)
@@ -136,12 +138,19 @@ contains
             stop 1
         end if
 
+        ! Valida o cabecalho antes de usa-lo como tamanho/indice
+        if (this%atomnum < 1) call fail_header('atomnum', this%atomnum)
+        if (this%TCpyCell < 0) call fail_header('TCpyCell', this%TCpyCell)
+        if (this%SpinP_switch /= 0 .and. this%SpinP_switch /= 1 .and. this%SpinP_switch /= 3) &
+            call fail_header('SpinP_switch', this%SpinP_switch)
+
         ! -------------------------------------------------------------
         ! order_max
         ! -------------------------------------------------------------
         block
             integer :: tmp(1)
-            read(iunit) tmp
+            read(iunit, iostat=ios) tmp
+            call check_io(ios, 'order_max')
             this%order_max = tmp(1)
         end block
 
@@ -153,7 +162,8 @@ contains
         ! -------------------------------------------------------------
         block
             real(dp) :: atv_junk(4, ncell)
-            read(iunit) atv_junk
+            read(iunit, iostat=ios) atv_junk
+            call check_io(ios, 'atv')
         end block
 
         ! -------------------------------------------------------------
@@ -163,7 +173,8 @@ contains
         ! -------------------------------------------------------------
         block
             integer :: atv_ijk_raw(4, ncell)
-            read(iunit) atv_ijk_raw
+            read(iunit, iostat=ios) atv_ijk_raw
+            call check_io(ios, 'atv_ijk')
             allocate(this%atv_ijk(3, 0:this%TCpyCell))
             do Rn = 0, this%TCpyCell
                 this%atv_ijk(:, Rn) = atv_ijk_raw(2:4, Rn + 1)
@@ -174,10 +185,14 @@ contains
         ! Total_NumOrbs[1..atomnum], FNAN[1..atomnum]
         ! -------------------------------------------------------------
         allocate(this%TotalNumOrbs(this%atomnum))
-        read(iunit) this%TotalNumOrbs
+        read(iunit, iostat=ios) this%TotalNumOrbs
+        call check_io(ios, 'Total_NumOrbs')
+        if (any(this%TotalNumOrbs < 1)) call fail_header('Total_NumOrbs', minval(this%TotalNumOrbs))
 
         allocate(this%FNAN(this%atomnum))
-        read(iunit) this%FNAN
+        read(iunit, iostat=ios) this%FNAN
+        call check_io(ios, 'FNAN')
+        if (any(this%FNAN < 0)) call fail_header('FNAN', minval(this%FNAN))
 
         ! -------------------------------------------------------------
         ! natn[][], ncn[][] -- ragged, guardados em formato flat (CSR)
@@ -193,13 +208,21 @@ contains
         allocate(this%natn_flat(this%n_pairs))
         do ct_AN = 1, this%atomnum
             off = this%neighbor_offset(ct_AN)
-            read(iunit) this%natn_flat(off + 1 : off + this%FNAN(ct_AN) + 1)
+            read(iunit, iostat=ios) this%natn_flat(off + 1 : off + this%FNAN(ct_AN) + 1)
+            call check_io(ios, 'natn')
+            if (any(this%natn_flat(off + 1 : off + this%FNAN(ct_AN) + 1) < 1 .or. &
+                    this%natn_flat(off + 1 : off + this%FNAN(ct_AN) + 1) > this%atomnum)) &
+                call fail_header('natn (indice de vizinho fora de 1..atomnum), atomo', ct_AN)
         end do
 
         allocate(this%ncn_flat(this%n_pairs))
         do ct_AN = 1, this%atomnum
             off = this%neighbor_offset(ct_AN)
-            read(iunit) this%ncn_flat(off + 1 : off + this%FNAN(ct_AN) + 1)
+            read(iunit, iostat=ios) this%ncn_flat(off + 1 : off + this%FNAN(ct_AN) + 1)
+            call check_io(ios, 'ncn')
+            if (any(this%ncn_flat(off + 1 : off + this%FNAN(ct_AN) + 1) < 0 .or. &
+                    this%ncn_flat(off + 1 : off + this%FNAN(ct_AN) + 1) > this%TCpyCell)) &
+                call fail_header('ncn (indice de celula fora de 0..TCpyCell), atomo', ct_AN)
         end do
 
         ! -------------------------------------------------------------
@@ -208,8 +231,10 @@ contains
         ! -------------------------------------------------------------
         block
             real(dp) :: tv_raw(4, 3), rtv_junk(4, 3)
-            read(iunit) tv_raw
-            read(iunit) rtv_junk
+            read(iunit, iostat=ios) tv_raw
+            call check_io(ios, 'tv')
+            read(iunit, iostat=ios) rtv_junk
+            call check_io(ios, 'rtv')
             do Rn = 1, 3
                 this%lattice_bohr(Rn, :) = tv_raw(2:4, Rn)
             end do
@@ -221,7 +246,8 @@ contains
         ! -------------------------------------------------------------
         block
             real(dp) :: gxyz_raw(4, this%atomnum)
-            read(iunit) gxyz_raw
+            read(iunit, iostat=ios) gxyz_raw
+            call check_io(ios, 'Gxyz')
             allocate(this%cart_bohr(3, this%atomnum))
             this%cart_bohr = gxyz_raw(2:4, :)
         end block
@@ -258,7 +284,8 @@ contains
         block
             integer :: spin
             do spin = 0, this%SpinP_switch
-                read(iunit) this%Hks_flat(:, spin)
+                read(iunit, iostat=ios) this%Hks_flat(:, spin)
+                call check_io(ios, 'Hks')
             end do
         end block
 
@@ -270,7 +297,8 @@ contains
             block
                 integer :: spin
                 do spin = 0, 2
-                    read(iunit) this%iHks_flat(:, spin)
+                    read(iunit, iostat=ios) this%iHks_flat(:, spin)
+                    call check_io(ios, 'iHks')
                 end do
             end block
         end if
@@ -279,7 +307,8 @@ contains
         ! OLP[ct_AN][h_AN][TNO1][TNO2] -- um unico canal, mesma logica
         ! -------------------------------------------------------------
         allocate(this%OLP_flat(this%n_scalar))
-        read(iunit) this%OLP_flat
+        read(iunit, iostat=ios) this%OLP_flat
+        call check_io(ios, 'OLP')
 
         ! -------------------------------------------------------------
         ! Blocos que NAO precisamos materializar, mas que ficam no meio
@@ -290,23 +319,24 @@ contains
         ! -------------------------------------------------------------
 
         ! OLPpo: 3 direcoes * order_max ordens * n_scalar (vazio se order_max==0)
-        call skip_doubles(iunit, 3_8 * int(this%order_max, 8) * int(this%n_scalar, 8))
+        call skip_doubles(iunit, 3_int64 * int(this%order_max, int64) * int(this%n_scalar, int64))
 
         ! OLPmo: 3 direcoes * n_scalar -- SEMPRE presente, independente de order_max
-        call skip_doubles(iunit, 3_8 * int(this%n_scalar, 8))
+        call skip_doubles(iunit, 3_int64 * int(this%n_scalar, int64))
 
         ! DM: (SpinP_switch+1) * n_scalar
-        call skip_doubles(iunit, int(this%SpinP_switch + 1, 8) * int(this%n_scalar, 8))
+        call skip_doubles(iunit, int(this%SpinP_switch + 1, int64) * int(this%n_scalar, int64))
 
         ! iDM: 2 * n_scalar
-        call skip_doubles(iunit, 2_8 * int(this%n_scalar, 8))
+        call skip_doubles(iunit, 2_int64 * int(this%n_scalar, int64))
 
         ! -------------------------------------------------------------
         ! Solver
         ! -------------------------------------------------------------
         block
             integer :: tmp(1)
-            read(iunit) tmp
+            read(iunit, iostat=ios) tmp
+            call check_io(ios, 'Solver')
             this%Solver = tmp(1)
         end block
 
@@ -314,7 +344,8 @@ contains
         ! ChemP, E_Temp, dipolos, Valence_Electrons, Total_SpinS
         ! (10 doubles, ordem exata de read_scfout.c: d_vec[0..9])
         ! -------------------------------------------------------------
-        read(iunit) d_vec
+        read(iunit, iostat=ios) d_vec
+        call check_io(ios, 'ChemP/E_Temp')
         this%ChemP  = d_vec(1)
         this%E_Temp = d_vec(2)
         ! d_vec(3:5) = dipole_moment_core, d_vec(6:8) = dipole_moment_background,
@@ -352,7 +383,11 @@ contains
             end if
         end block
 
-        close(iunit)
+        close(iunit, iostat=ios)
+        if (ios /= 0) then
+            print *, "[scfout_io] Erro: falha ao fechar ", trim(filename)
+            stop 1
+        end if
     end subroutine ReadScfoutFile
 
     !> Extracts per-atom species labels from the embedded OpenMX input text.
@@ -433,23 +468,44 @@ contains
         end do
     end function to_lower
 
+    ! Aborta com mensagem se uma leitura do stream falhou (EOF/arquivo truncado).
+    subroutine check_io(ios, what)
+        integer,          intent(in) :: ios
+        character(len=*), intent(in) :: what
+
+        if (ios /= 0) then
+            print '(A)', "[scfout_io] Erro: falha lendo " // what // " (EOF/arquivo truncado?)"
+            stop 1
+        end if
+    end subroutine check_io
+
+    ! Aborta com mensagem se um valor do cabecalho/vizinhanca e' invalido.
+    subroutine fail_header(what, val)
+        character(len=*), intent(in) :: what
+        integer,          intent(in) :: val
+
+        print '(A,I0)', "[scfout_io] Erro: valor invalido em " // what // " = ", val
+        print '(A)',    "[scfout_io] (arquivo corrompido ou nao e' um .scfout valido?)"
+        stop 1
+    end subroutine fail_header
+
     ! Le-e-descarta n doubles do stream, em blocos, sem alocar um buffer
     ! do tamanho total (que pode ser grande: OLPmo/DM/iDM sao O(NOrbs^2)).
     ! Usa iostat para detectar EOF inesperado (calculo de offset errado)
     ! em vez de falhar silenciosamente lendo ChemP do lugar errado.
     subroutine skip_doubles(iunit, n)
         integer,            intent(in) :: iunit
-        integer(kind=8),    intent(in) :: n
+        integer(int64),     intent(in) :: n
 
         real(dp) :: buf(SKIP_CHUNK)
-        integer(kind=8) :: remaining
+        integer(int64) :: remaining
         integer :: this_chunk, ios
 
-        if (n <= 0_8) return
+        if (n <= 0_int64) return
 
         remaining = n
-        do while (remaining > 0_8)
-            this_chunk = int(min(remaining, int(SKIP_CHUNK, 8)))
+        do while (remaining > 0_int64)
+            this_chunk = int(min(remaining, int(SKIP_CHUNK, int64)))
             read(iunit, iostat=ios) buf(1:this_chunk)
             if (ios /= 0) then
                 print *, "[scfout_io] Erro: EOF inesperado pulando blocos " // &
