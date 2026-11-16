@@ -10,7 +10,7 @@
 !
 ! Uso:
 !   openmx2hsio <arquivo.scfout> [--out-prefix PREFIXO] [--fermi E_F_HARTREE]
-!               [--no-fermi-shift]
+!               [--no-fermi-shift] [--write-structure]
 !
 ! Gera:
 !   PREFIXO_S.hsio
@@ -52,9 +52,11 @@ program openmx2hsio
     use HS_io,          only: HSDataFormat
     implicit none
 
-    character(len=1024) :: scfout_path, out_prefix, arg
+    real(dp), parameter :: BOHR_TO_ANG = 0.529177210903_dp
+
+    character(len=1024) :: scfout_path, out_prefix, structure_path, arg
     real(dp) :: fermi_hartree
-    logical  :: has_fermi_override, no_fermi_shift
+    logical  :: has_fermi_override, no_fermi_shift, write_structure, custom_structure_path
     integer  :: nargs, iarg, ios
 
     type(ScfoutData) :: scfout
@@ -78,6 +80,8 @@ program openmx2hsio
     out_prefix = default_prefix(trim(scfout_path))
     has_fermi_override = .false.
     no_fermi_shift = .false.
+    write_structure = .false.
+    custom_structure_path = .false.
     fermi_hartree = 0.0_dp
 
     iarg = 2
@@ -106,6 +110,17 @@ program openmx2hsio
             has_fermi_override = .true.
         case ("--no-fermi-shift")
             no_fermi_shift = .true.
+        case ("--write-structure")
+            write_structure = .true.
+        case ("--structure-file")
+            iarg = iarg + 1
+            if (iarg > nargs) then
+                print *, "Erro: --structure-file precisa de um caminho"
+                stop 1
+            end if
+            call get_command_argument(iarg, structure_path)
+            write_structure = .true.
+            custom_structure_path = .true.
         case ("-h", "--help")
             call print_usage()
             stop 0
@@ -115,10 +130,16 @@ program openmx2hsio
         iarg = iarg + 1
     end do
 
+    if (write_structure .and. .not. custom_structure_path) then
+        structure_path = trim(out_prefix) // ".structure.nml"
+    end if
+
     ! -------------------------------------------------------------
     ! 2. Le o .scfout
     ! -------------------------------------------------------------
     call ReadScfoutFile(scfout, trim(scfout_path))
+    if (write_structure) call ValidateStructurePath(trim(structure_path), trim(scfout_path), &
+                                                    trim(out_prefix))
 
     ! -------------------------------------------------------------
     ! 3. Decide o nivel de Fermi: --fermi (override) > ChemP do
@@ -205,6 +226,8 @@ program openmx2hsio
         stop 1
     end select
 
+    if (write_structure) call WriteStructureFile(trim(structure_path), scfout)
+
     ! -------------------------------------------------------------
     ! 5. Resumo no console
     ! -------------------------------------------------------------
@@ -229,13 +252,15 @@ contains
 
     subroutine print_usage()
         print '(A)', "Uso: openmx2hsio <arquivo.scfout> [--out-prefix PREFIXO] " // &
-                      "[--fermi E_F_HARTREE] [--no-fermi-shift]"
+                      "[--fermi E_F_HARTREE] [--no-fermi-shift] [--write-structure]"
         print '(A)', ""
         print '(A)', "  --out-prefix PREFIXO   prefixo dos arquivos de saida " // &
                       "(padrao: nome do .scfout sem extensao)"
         print '(A)', "  --fermi E_F_HARTREE    sobrescreve o nivel de Fermi (por padrao, " // &
                       "lido automaticamente do ChemP do .scfout)"
         print '(A)', "  --no-fermi-shift       desliga o deslocamento do nivel de Fermi"
+        print '(A)', "  --write-structure      escreve PREFIXO.structure.nml a partir da geometria e do input embutido"
+        print '(A)', "  --structure-file FILE  escreve a estrutura em FILE (tambem ativa --write-structure)"
     end subroutine print_usage
 
     function default_prefix(path) result(prefix)
@@ -265,6 +290,100 @@ contains
             prefix = path(slash_pos + 1 : len_trim(path))
         end if
     end function default_prefix
+
+    subroutine ValidateStructurePath(path, source_path, prefix)
+        character(len=*), intent(in) :: path, source_path, prefix
+        character(len=1024) :: reserved(4)
+        integer :: i
+
+        reserved(1) = source_path
+        reserved(2) = trim(prefix) // '_S.hsio'
+        reserved(3) = trim(prefix) // '_H.hsio'
+        reserved(4) = trim(prefix) // '_H_up.hsio'
+        do i = 1, size(reserved)
+            if (trim(path) == trim(reserved(i))) then
+                print '(A,A)', 'Erro: --structure-file colide com um arquivo de entrada/saida: ', trim(path)
+                stop 1
+            end if
+        end do
+        if (trim(path) == trim(prefix) // '_H_dn.hsio') then
+            print '(A,A)', 'Erro: --structure-file colide com um arquivo de saida: ', trim(path)
+            stop 1
+        end if
+    end subroutine ValidateStructurePath
+
+    subroutine WriteStructureFile(filename, scf)
+        character(len=*), intent(in) :: filename
+        type(ScfoutData), intent(in) :: scf
+
+        character(len=8), allocatable :: species_label(:)
+        integer, allocatable :: species_norb(:)
+        integer :: iu, ios_local, iatom, ispecies, nspecies, norb_factor
+        logical :: known_species
+
+        if (.not. scf%has_atom_labels) then
+            print '(A)', "Erro: nao foi possivel recuperar Atoms.SpeciesAndCoordinates do input embutido."
+            print '(A)', "       Use um .scfout com o input OpenMX completo ou forneca a estrutura manualmente."
+            stop 1
+        end if
+        if (.not. allocated(scf%cart_bohr)) then
+            print '(A)', "Erro: coordenadas atomicas ausentes no .scfout."
+            stop 1
+        end if
+
+        norb_factor = merge(2, 1, scf%SpinP_switch == 3)
+        allocate(species_label(scf%atomnum), species_norb(scf%atomnum))
+        nspecies = 0
+        do iatom = 1, scf%atomnum
+            known_species = .false.
+            do ispecies = 1, nspecies
+                if (trim(species_label(ispecies)) == trim(scf%atom_label(iatom))) then
+                    known_species = .true.
+                    if (species_norb(ispecies) /= norb_factor * scf%TotalNumOrbs(iatom)) then
+                        print '(A,A)', "Erro: contagem de orbitais inconsistente para a especie ", &
+                                      trim(scf%atom_label(iatom))
+                        stop 1
+                    end if
+                    exit
+                end if
+            end do
+            if (.not. known_species) then
+                nspecies = nspecies + 1
+                species_label(nspecies) = scf%atom_label(iatom)
+                species_norb(nspecies) = norb_factor * scf%TotalNumOrbs(iatom)
+            end if
+        end do
+
+        open(newunit=iu, file=filename, status='replace', action='write', iostat=ios_local)
+        if (ios_local /= 0) then
+            print '(A,A)', "Erro: nao foi possivel escrever a estrutura: ", trim(filename)
+            stop 1
+        end if
+
+        write(iu, '(A)') '&STRUCTURE'
+        do iatom = 1, 3
+            write(iu, '(A,I0,A,3(1X,ES24.16))') '    LatticeVectors(', iatom, ',:) =', &
+                                                scf%lattice_bohr(iatom, :) * BOHR_TO_ANG
+        end do
+        write(iu, '(A)') '/'
+        write(iu, '(A)') ''
+        write(iu, '(A)') '&SPECIES'
+        write(iu, '(I0)') nspecies
+        do ispecies = 1, nspecies
+            write(iu, '(A,1X,I0)') trim(species_label(ispecies)), species_norb(ispecies)
+        end do
+        write(iu, '(A)') '/'
+        write(iu, '(A)') ''
+        write(iu, '(A)') '&ATOMS'
+        write(iu, '(I0)') scf%atomnum
+        do iatom = 1, scf%atomnum
+            write(iu, '(A,3(1X,ES24.16))') trim(scf%atom_label(iatom)), &
+                                           scf%cart_bohr(:, iatom) * BOHR_TO_ANG
+        end do
+        write(iu, '(A)') '/'
+        close(iu)
+        print '(A,A)', "  Escrito: ", trim(filename)
+    end subroutine WriteStructureFile
 
     ! Monta um objeto HSDataFormat e chama WriteFile (o MESMO codigo que
     ! o Fortran usa para ler depois -- garante compatibilidade binaria

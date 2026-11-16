@@ -29,7 +29,7 @@ module scfout_io
     implicit none
     private
 
-    public :: ScfoutData, ReadScfoutFile
+    public :: ScfoutData, ReadScfoutFile, ParseEmbeddedAtomLabels
 
     integer, parameter :: SCFOUT_VERSION = 3
     integer, parameter :: SKIP_CHUNK = 65536   ! doubles por bloco ao descartar OLPpo/OLPmo/DM/iDM
@@ -46,6 +46,13 @@ module scfout_io
         integer :: Solver        = 0
         real(dp) :: ChemP        = 0.0_dp
         real(dp) :: E_Temp       = 0.0_dp
+
+        ! OpenMX stores both quantities in Bohr.  Rows of lattice_bohr are
+        ! the direct lattice vectors; columns of cart_bohr are atoms.
+        real(dp) :: lattice_bohr(3, 3) = 0.0_dp
+        real(dp), allocatable :: cart_bohr(:, :)       ! (3, atomnum)
+        character(len=8), allocatable :: atom_label(:)
+        logical :: has_atom_labels = .false.
 
         integer, allocatable :: TotalNumOrbs(:)     ! 1:atomnum
         integer, allocatable :: FNAN(:)             ! 1:atomnum
@@ -183,21 +190,27 @@ contains
         end do
 
         ! -------------------------------------------------------------
-        ! tv[1..3][4], rtv[1..3][4] -- nao usados, mas precisam ser
-        ! consumidos do stream
+        ! tv[1..3][4], rtv[1..3][4]. OpenMX stores the direct lattice
+        ! vectors as rows in Bohr; the first value of each row is unused.
         ! -------------------------------------------------------------
         block
-            real(dp) :: tv_junk(4, 3), rtv_junk(4, 3)
-            read(iunit) tv_junk
+            real(dp) :: tv_raw(4, 3), rtv_junk(4, 3)
+            read(iunit) tv_raw
             read(iunit) rtv_junk
+            do Rn = 1, 3
+                this%lattice_bohr(Rn, :) = tv_raw(2:4, Rn)
+            end do
         end block
 
         ! -------------------------------------------------------------
-        ! Gxyz[1..atomnum][0..3] -- nao usado, mas precisa ser consumido
+        ! Gxyz[1..atomnum][0..3]: Cartesian coordinates in Bohr. The first
+        ! value of each atom record is unused.
         ! -------------------------------------------------------------
         block
-            real(dp) :: gxyz_junk(4, this%atomnum)
-            read(iunit) gxyz_junk
+            real(dp) :: gxyz_raw(4, this%atomnum)
+            read(iunit) gxyz_raw
+            allocate(this%cart_bohr(3, this%atomnum))
+            this%cart_bohr = gxyz_raw(2:4, :)
         end block
 
         ! -------------------------------------------------------------
@@ -294,11 +307,101 @@ contains
         ! d_vec(3:5) = dipole_moment_core, d_vec(6:8) = dipole_moment_background,
         ! d_vec(9) = Valence_Electrons, d_vec(10) = Total_SpinS -- nao usados aqui.
 
-        close(iunit)
+        ! -------------------------------------------------------------
+        ! Embedded OpenMX input: num_lines followed by fixed 256-byte
+        ! records. It supplies species labels, which are not present in the
+        ! binary geometry records themselves. Missing/malformed input does
+        ! not prevent H/S conversion; has_atom_labels remains false.
+        ! -------------------------------------------------------------
+        block
+            integer :: num_lines, iline, alloc_stat
+            character(len=256), allocatable :: input_lines(:)
 
-        ! Paramos aqui: o arquivo de input embutido (texto) que vem a
-        ! seguir nao interessa para a conversao H/S.
+            num_lines = 0
+            read(iunit, iostat=ios) num_lines
+            if (ios == 0) then
+                if (num_lines > 0 .and. num_lines <= 100000) then
+                    allocate(input_lines(num_lines), stat=alloc_stat)
+                    if (alloc_stat == 0) then
+                        do iline = 1, num_lines
+                            read(iunit, iostat=ios) input_lines(iline)
+                            if (ios /= 0) exit
+                        end do
+                        if (ios == 0) then
+                            allocate(this%atom_label(this%atomnum))
+                            call ParseEmbeddedAtomLabels(input_lines, this%atomnum, this%atom_label, &
+                                                         this%has_atom_labels)
+                        end if
+                    end if
+                end if
+            end if
+        end block
+
+        close(iunit)
     end subroutine ReadScfoutFile
+
+    subroutine ParseEmbeddedAtomLabels(lines, nat, labels, found)
+        character(len=*), intent(in) :: lines(:)
+        integer, intent(in) :: nat
+        character(len=8), intent(out) :: labels(nat)
+        logical, intent(out) :: found
+
+        character(len=256) :: line
+        character(len=64) :: label
+        logical, allocatable :: seen(:)
+        logical :: in_atoms, closed
+        integer :: i, idx, ios, nul
+
+        labels = ''
+        found = .false.
+        in_atoms = .false.
+        closed = .false.
+        allocate(seen(nat))
+        seen = .false.
+
+        do i = 1, size(lines)
+            line = lines(i)
+            nul = index(line, achar(0))
+            if (nul > 0) line(nul:) = ' '
+            line = adjustl(line)
+            if (len_trim(line) == 0) cycle
+            if (line(1:1) == '#' .or. line(1:1) == '!') cycle
+
+            if (.not. in_atoms) then
+                if (index(to_lower(line), '<atoms.speciesandcoordinates') > 0) in_atoms = .true.
+                cycle
+            end if
+
+            if (index(to_lower(line), 'atoms.speciesandcoordinates>') > 0) then
+                closed = .true.
+                exit
+            end if
+
+            idx = 0
+            label = ''
+            read(line, *, iostat=ios) idx, label
+            if (ios /= 0) return
+            if (idx < 1 .or. idx > nat) return
+            if (seen(idx)) return
+            if (len_trim(label) < 1 .or. len_trim(label) > len(labels(idx))) return
+            labels(idx) = trim(label)
+            seen(idx) = .true.
+        end do
+
+        found = closed .and. all(seen)
+    end subroutine ParseEmbeddedAtomLabels
+
+    pure function to_lower(text) result(lower)
+        character(len=*), intent(in) :: text
+        character(len=len(text)) :: lower
+        integer :: i, code
+
+        lower = text
+        do i = 1, len(text)
+            code = iachar(text(i:i))
+            if (code >= iachar('A') .and. code <= iachar('Z')) lower(i:i) = achar(code + 32)
+        end do
+    end function to_lower
 
     ! Le-e-descarta n doubles do stream, em blocos, sem alocar um buffer
     ! do tamanho total (que pode ser grande: OLPmo/DM/iDM sao O(NOrbs^2)).

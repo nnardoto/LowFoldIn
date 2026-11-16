@@ -104,8 +104,8 @@ After building, the corresponding binaries are also available inside the fpm bui
 A typical workflow is:
 
 1. Run an OpenMX calculation and retain the `.scfout` file.
-2. Convert the Hamiltonian and overlap matrices with `openmx2hsio`.
-3. Prepare primitive- and supercell structure files.
+2. Convert the Hamiltonian, overlap and structure with `openmx2hsio --write-structure`.
+3. Inspect or adjust the generated structure file if needed.
 4. Define the primitive-cell k-path in `unfold.nml`.
 5. Run `unfold`.
 6. Plot either the discrete spectral weights or the broadened spectral function.
@@ -124,7 +124,8 @@ Available options:
 
 ```text
 openmx2hsio <file.scfout> [--out-prefix PREFIX] \
-             [--fermi E_F_HARTREE] [--no-fermi-shift]
+             [--fermi E_F_HARTREE] [--no-fermi-shift] \
+             [--write-structure] [--structure-file FILE]
 ```
 
 Example:
@@ -132,6 +133,23 @@ Example:
 ```bash
 fpm run openmx2hsio -- supercell.scfout --out-prefix data/supercell
 ```
+
+To also extract the lattice, atomic coordinates, labels and HSIO-compatible
+orbital counts into the structure format used by `atomselect`, `spectral` and
+`unfold`, add:
+
+```bash
+fpm run openmx2hsio -- calculation.scfout --write-structure
+```
+
+This writes `calculation.structure.nml` next to the HSIO files. Use
+`--structure-file structures/slab.nml` to choose another path. Geometry is
+read from the binary `.scfout` records (Bohr converted to Å); labels are read
+from the OpenMX input embedded in the `.scfout`. For non-collinear calculations
+the `&SPECIES` orbital counts are doubled automatically to match the atom-major
+spinor HSIO files. Structure extraction stops with an explicit error if the
+embedded atom block is missing or inconsistent, while ordinary H/S conversion
+without `--write-structure` remains available.
 
 For a non-spin-polarized calculation, the converter generates:
 
