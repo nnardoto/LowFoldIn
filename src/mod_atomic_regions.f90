@@ -85,11 +85,15 @@ contains
         character(len=*),   intent(out) :: errmsg
 
         ! variáveis do namelist (buffers alocados antes de cada leitura)
-        integer                               :: format_version, natoms
-        character(len=64)                     :: fingerprint
-        character(len=LABEL_LEN), allocatable :: species(:)
+        ! &REGION_FILE: cabeçalho
+        integer                               :: format_version      ! deve ser 1
+        integer                               :: natoms              ! número de átomos da estrutura
+        character(len=64)                     :: fingerprint         ! até 16 caracteres significativos
+        character(len=LABEL_LEN), allocatable :: species(:)          ! opcional; se dado, tem natoms entradas
+        ! &REGION: um bloco por região
         character(len=256)                    :: name
-        integer,                  allocatable :: atoms(:)
+        integer,                  allocatable :: atoms(:)            ! índices (1-based) dos átomos da região
+
         namelist /REGION_FILE/ format_version, natoms, fingerprint, species
         namelist /REGION/ name, atoms
 
@@ -97,115 +101,93 @@ contains
         character(len=512) :: msg
         logical            :: ok
 
-        ierr = 0
+        ierr   = 0
         errmsg = ''
+        msg    = ''   ! falhou() monta a mensagem mesmo sem erro: msg precisa estar definido
 
         ! 1. Pré-varredura: a leitura de namelist não informa onde está o cabeçalho
         call check_header_position(filename, ok, ierr, errmsg)
         if (ierr /= 0) return
 
         open(newunit=iu, file=filename, status='old', action='read', iostat=ios, iomsg=msg)
-        if (ios /= 0) then
-            call fail('cannot open regions file "' // trim(filename) // '": ' // trim(msg))
-            return
-        end if
+        if (falhou(ios /= 0, 'cannot open regions file "' // trim(filename) // '": ' // trim(msg))) return
 
         allocate(species(MAX_REGION_ATOMS), atoms(MAX_REGION_ATOMS))
 
-        ! 2. Cabeçalho &REGION_FILE. Os valores padrão são sentinelas, para que uma
-        !    chave ausente seja detectada (natoms < 1, format_version /= 1).
-        format_version = -huge(0)
-        natoms = -huge(0)
-        fingerprint = ''
-        species = ''
-        read(iu, nml=REGION_FILE, iostat=ios, iomsg=msg)
-        if (ios /= 0) then
-            call fail('regions file "' // trim(filename) // '": error reading &REGION_FILE: ' // trim(msg))
-            close(iu)
-            return
-        end if
-        if (format_version /= 1) then
-            call fail('regions file: format_version must be 1 (got ' // itoa(format_version) // ')')
-            close(iu)
-            return
-        end if
-        if (natoms < 1) then
-            call fail('regions file: natoms must be >= 1 (got ' // itoa(natoms) // ')')
-            close(iu)
-            return
-        end if
-        if (len_trim(fingerprint) > len(rs%fingerprint)) then
-            call fail('regions file: fingerprint longer than 16 characters: "' // trim(fingerprint) // '"')
-            close(iu)
-            return
-        end if
-        rs%format_version = format_version
-        rs%natoms = natoms
-        rs%fingerprint = fingerprint(1:len(rs%fingerprint))
+        leitura: block
+            ! 2. Cabeçalho &REGION_FILE. Os valores padrão são sentinelas, para que uma
+            !    chave ausente seja detectada (natoms < 1, format_version /= 1).
+            format_version = -huge(0)
+            natoms         = -huge(0)
+            fingerprint    = ''
+            species        = ''
+            read(iu, nml=REGION_FILE, iostat=ios, iomsg=msg)
+            if (falhou(ios /= 0, 'regions file "' // trim(filename) // '": error reading &REGION_FILE: ' // &
+                       trim(msg))) exit leitura
+            if (falhou(format_version /= 1, &
+                       'regions file: format_version must be 1 (got ' // itoa(format_version) // ')')) exit leitura
+            if (falhou(natoms < 1, 'regions file: natoms must be >= 1 (got ' // itoa(natoms) // ')')) exit leitura
+            if (falhou(len_trim(fingerprint) > len(rs%fingerprint), &
+                       'regions file: fingerprint longer than 16 characters: "' // trim(fingerprint) // '"')) exit leitura
+            rs%format_version = format_version
+            rs%natoms         = natoms
+            rs%fingerprint    = fingerprint(1:len(rs%fingerprint))
 
-        n = count_leading_species(species)
-        if (n < 0) then
-            call fail('regions file: gap in species list')
-            close(iu)
-            return
-        end if
-        if (n > 0) then
-            if (n /= natoms) then
-                call fail('regions file: species has ' // itoa(n) // ' entries, natoms = ' // itoa(natoms))
-                close(iu)
-                return
+            n = count_leading_species(species)
+            if (falhou(n < 0, 'regions file: gap in species list')) exit leitura
+            if (n > 0) then
+                if (falhou(n /= natoms, &
+                           'regions file: species has ' // itoa(n) // ' entries, natoms = ' // itoa(natoms))) exit leitura
+                rs%has_species = .true.
+                rs%species     = species(1:n)
             end if
-            rs%has_species = .true.
-            rs%species = species(1:n)
-        end if
 
-        ! 3. Blocos &REGION, lidos em sequência até o fim do arquivo. O buffer de
-        !    átomos volta à sentinela antes de cada leitura, de modo que o tamanho
-        !    da lista é o número de entradas iniciais não sentinela; add_region
-        !    então aplica as checagens por região.
-        allocate(rs%regions(0))
-        rs%nregion = 0
-        iblock = 0
-        do
-            iblock = iblock + 1
-            name = ''
-            atoms = ATOM_SENTINEL
-            read(iu, nml=REGION, iostat=ios, iomsg=msg)
-            if (ios == iostat_end) exit
-            if (ios /= 0) then
-                call fail('regions file: error reading &REGION block ' // itoa(iblock) // ': ' // trim(msg))
-                close(iu)
-                return
-            end if
-            if (len_trim(name) == 0) then
-                call fail('regions file: &REGION block ' // itoa(iblock) // ' has no name')
-                close(iu)
-                return
-            end if
-            n = count_leading_atoms(atoms)
-            if (n < 0) then
-                call fail('regions file: region "' // trim(name) // '" (block ' // itoa(iblock) // &
-                          '): gap in atoms list')
-                close(iu)
-                return
-            end if
-            call add_region(rs, trim(name), atoms(1:n), ierr, errmsg)
-            if (ierr /= 0) then
-                errmsg = 'regions file: block ' // itoa(iblock) // ': ' // trim(errmsg)
-                close(iu)
-                return
-            end if
-        end do
+            ! 3. Blocos &REGION, lidos em sequência até o fim do arquivo. O buffer de
+            !    átomos volta à sentinela antes de cada leitura, de modo que o tamanho
+            !    da lista é o número de entradas iniciais não sentinela; add_region
+            !    então aplica as checagens por região.
+            allocate(rs%regions(0))
+            rs%nregion = 0
+            iblock = 0
+            do
+                iblock = iblock + 1
+                name = ''
+                atoms = ATOM_SENTINEL
+                read(iu, nml=REGION, iostat=ios, iomsg=msg)
+                if (ios == iostat_end) exit
+                if (falhou(ios /= 0, &
+                           'regions file: error reading &REGION block ' // itoa(iblock) // ': ' // trim(msg))) exit leitura
+                if (falhou(len_trim(name) == 0, &
+                           'regions file: &REGION block ' // itoa(iblock) // ' has no name')) exit leitura
+                n = count_leading_atoms(atoms)
+                if (falhou(n < 0, 'regions file: region "' // trim(name) // '" (block ' // itoa(iblock) // &
+                                  '): gap in atoms list')) exit leitura
+                ! add_region preenche ierr/errmsg; a mensagem ganha o prefixo do bloco
+                call add_region(rs, trim(name), atoms(1:n), ierr, errmsg)
+                if (ierr /= 0) then
+                    errmsg = 'regions file: block ' // itoa(iblock) // ': ' // trim(errmsg)
+                    exit leitura
+                end if
+            end do
+        end block leitura
         close(iu)
 
     contains
 
-        !> Define o estado de erro (o arquivo é fechado pelo chamador).
+        !> Define o estado de erro (o arquivo é fechado após o bloco de leitura).
         subroutine fail(m)
             character(len=*), intent(in) :: m
             ierr = 1
             errmsg = m
         end subroutine fail
+
+        !> Se `cond` é verdadeira, registra a falha `m`; devolve `cond`.
+        logical function falhou(cond, m)
+            logical,          intent(in) :: cond
+            character(len=*), intent(in) :: m
+            falhou = cond
+            if (cond) call fail(m)
+        end function falhou
 
     end subroutine read_regions_file
 

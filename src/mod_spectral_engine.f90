@@ -124,19 +124,34 @@ contains
         integer,                intent(out) :: ierr
         character(len=*),       intent(out) :: errmsg
 
-        character(len=SPEC_PATH_LEN) :: h_file, h_up_file, h_dn_file, s_file, structure_file, &
-                                        regions_file, output_prefix
-        logical                      :: allow_no_fingerprint, fermi_known, write_text
-        character(len=16)            :: spin_mode, method, energy_reference
-        real(dp)                     :: fermi_energy_ev, tol_norm, tol_negative_warn, tol_s_min
+        ! --- variáveis do namelist &SPECTRAL ---
+        ! arquivos de entrada
+        character(len=SPEC_PATH_LEN) :: h_file, h_up_file, h_dn_file    ! hamiltonianos: sem spin ou não colinear | up | down
+        character(len=SPEC_PATH_LEN) :: s_file                          ! matriz de overlap
+        character(len=SPEC_PATH_LEN) :: structure_file, regions_file    ! estrutura e regiões atômicas
+        logical                      :: allow_no_fingerprint            ! aceita regiões sem fingerprint
+        ! modo / método
+        character(len=16)            :: spin_mode, method               ! 'none'|'collinear'|'noncollinear'; 'mulliken'|'lowdin'
+        ! nível de Fermi
+        character(len=16)            :: energy_reference                ! 'fermi'|'absolute'|'unknown'
+        real(dp)                     :: fermi_energy_ev                 ! E_F (eV)
+        logical                      :: fermi_known
+        ! saída
+        character(len=SPEC_PATH_LEN) :: output_prefix
+        logical                      :: write_text
+        ! tolerâncias
+        real(dp)                     :: tol_norm, tol_negative_warn, tol_s_min
+        ! --- variáveis do namelist &KPATH ---
         integer                      :: nvertex
         real(dp)                     :: vertex(3, MAX_KVERTEX)
         character(len=64)            :: label(MAX_KVERTEX)   ! mais largo que o armazenado (16) para detectar truncamento
         integer                      :: npoints(MAX_KVERTEX - 1)
 
         namelist /SPECTRAL/ h_file, h_up_file, h_dn_file, s_file, structure_file, regions_file, &
-                            allow_no_fingerprint, spin_mode, method, energy_reference, &
-                            fermi_energy_ev, fermi_known, output_prefix, write_text, &
+                            allow_no_fingerprint, &
+                            spin_mode, method, &
+                            energy_reference, fermi_energy_ev, fermi_known, &
+                            output_prefix, write_text, &
                             tol_norm, tol_negative_warn, tol_s_min
         namelist /KPATH/ nvertex, vertex, label, npoints
 
@@ -144,91 +159,97 @@ contains
         character(len=512) :: iomsg
         logical            :: exists
 
-        ierr = 0
+        ierr   = 0
         errmsg = ''
+        iomsg  = ''   ! falhou() monta a mensagem mesmo sem erro: iomsg precisa estar definido
 
         ! 1. A leitura de namelist só sobrescreve as variáveis presentes no arquivo, então
         ! inicializa as variáveis locais do namelist com os padrões de spectral_input_t
         ! (inp é intent(out): sua inicialização padrão se aplica na entrada).
-        h_file = inp%h_file;                 h_up_file = inp%h_up_file
-        h_dn_file = inp%h_dn_file;           s_file = inp%s_file
-        structure_file = inp%structure_file; regions_file = inp%regions_file
+        h_file               = inp%h_file
+        h_up_file            = inp%h_up_file
+        h_dn_file            = inp%h_dn_file
+        s_file               = inp%s_file
+        structure_file       = inp%structure_file
+        regions_file         = inp%regions_file
         allow_no_fingerprint = inp%allow_no_fingerprint
-        spin_mode = inp%spin_mode;           method = inp%method
-        energy_reference = inp%energy_reference
-        fermi_energy_ev = inp%fermi_energy_ev; fermi_known = inp%fermi_known
-        output_prefix = inp%output_prefix;   write_text = inp%write_text
-        tol_norm = inp%tol_norm;             tol_negative_warn = inp%tol_negative_warn
-        tol_s_min = inp%tol_s_min
-        nvertex = inp%nvertex;               vertex = inp%vertex
-        label = inp%label;                   npoints = inp%npoints
+
+        spin_mode            = inp%spin_mode
+        method               = inp%method
+
+        energy_reference     = inp%energy_reference
+        fermi_energy_ev      = inp%fermi_energy_ev
+        fermi_known          = inp%fermi_known
+
+        output_prefix        = inp%output_prefix
+        write_text           = inp%write_text
+
+        tol_norm             = inp%tol_norm
+        tol_negative_warn    = inp%tol_negative_warn
+        tol_s_min            = inp%tol_s_min
+
+        nvertex              = inp%nvertex
+        vertex               = inp%vertex
+        label                = inp%label
+        npoints              = inp%npoints
 
         ! 2. Abre o arquivo e lê os dois namelists (rewind: independe da ordem).
         inquire(file=filename, exist=exists)
-        if (.not. exists) then
-            call fail("input file not found: '" // trim(filename) // "'")
-            return
-        end if
+        if (falhou(.not. exists, "input file not found: '" // trim(filename) // "'")) return
         open(newunit=iu, file=filename, status='old', action='read', iostat=ios, iomsg=iomsg)
-        if (ios /= 0) then
-            call fail("cannot open '" // trim(filename) // "': " // trim(iomsg))
-            return
-        end if
+        if (falhou(ios /= 0, "cannot open '" // trim(filename) // "': " // trim(iomsg))) return
 
-        read(iu, nml=SPECTRAL, iostat=ios, iomsg=iomsg)
-        if (ios == iostat_end) then
-            close(iu)
-            call fail("namelist &SPECTRAL not found in '" // trim(filename) // "'")
-            return
-        else if (ios /= 0) then
-            close(iu)
-            call fail("error reading &SPECTRAL: " // trim(iomsg))
-            return
-        end if
-        rewind(iu)
-        read(iu, nml=KPATH, iostat=ios, iomsg=iomsg)
-        if (ios == iostat_end) then
-            close(iu)
-            call fail("namelist &KPATH not found in '" // trim(filename) // "'")
-            return
-        else if (ios /= 0) then
-            close(iu)
-            call fail("error reading &KPATH: " // trim(iomsg))
-            return
-        end if
+        leitura: block
+            read(iu, nml=SPECTRAL, iostat=ios, iomsg=iomsg)
+            if (falhou(ios == iostat_end, "namelist &SPECTRAL not found in '" // trim(filename) // "'")) exit leitura
+            if (falhou(ios /= 0, "error reading &SPECTRAL: " // trim(iomsg))) exit leitura
+            rewind(iu)
+            read(iu, nml=KPATH, iostat=ios, iomsg=iomsg)
+            if (falhou(ios == iostat_end, "namelist &KPATH not found in '" // trim(filename) // "'")) exit leitura
+            if (falhou(ios /= 0, "error reading &KPATH: " // trim(iomsg))) exit leitura
+        end block leitura
         close(iu)
+        if (ierr /= 0) return
 
         ! 3. Copia de volta para inp (normalizando as strings de enumeração) e valida.
-        inp%h_file = h_file;                 inp%h_up_file = h_up_file
-        inp%h_dn_file = h_dn_file;           inp%s_file = s_file
-        inp%structure_file = structure_file; inp%regions_file = regions_file
+        inp%h_file               = h_file
+        inp%h_up_file            = h_up_file
+        inp%h_dn_file            = h_dn_file
+        inp%s_file               = s_file
+        inp%structure_file       = structure_file
+        inp%regions_file         = regions_file
         inp%allow_no_fingerprint = allow_no_fingerprint
-        inp%spin_mode = lower(adjustl(spin_mode))
-        inp%method = lower(adjustl(method))
-        inp%energy_reference = lower(adjustl(energy_reference))
-        inp%fermi_energy_ev = fermi_energy_ev; inp%fermi_known = fermi_known
-        inp%output_prefix = output_prefix;   inp%write_text = write_text
-        inp%tol_norm = tol_norm;             inp%tol_negative_warn = tol_negative_warn
-        inp%tol_s_min = tol_s_min
-        inp%nvertex = nvertex;               inp%vertex = vertex
-        if (any(len_trim(label) > len(inp%label))) then
-            call fail('&KPATH label longer than 16 characters')
-            return
-        end if
-        inp%label = label;                   inp%npoints = npoints
+
+        ! normalização das strings de enumeração
+        inp%spin_mode            = lower(adjustl(spin_mode))
+        inp%method               = lower(adjustl(method))
+        inp%energy_reference     = lower(adjustl(energy_reference))
+
+        inp%fermi_energy_ev      = fermi_energy_ev
+        inp%fermi_known          = fermi_known
+
+        inp%output_prefix        = output_prefix
+        inp%write_text           = write_text
+
+        inp%tol_norm             = tol_norm
+        inp%tol_negative_warn    = tol_negative_warn
+        inp%tol_s_min            = tol_s_min
+
+        inp%nvertex              = nvertex
+        inp%vertex               = vertex
+        ! label é lido mais largo (64) que o armazenado (16): detecta truncamento
+        if (falhou(any(len_trim(label) > len(inp%label)), '&KPATH label longer than 16 characters')) return
+        inp%label                = label
+        inp%npoints              = npoints
 
         ! --- enumerações -------------------------------------------------
         select case (trim(inp%spin_mode))
         case ('none', 'noncollinear')
-            if (len_trim(inp%h_file) == 0) then
-                call fail("h_file is required for spin_mode='" // trim(inp%spin_mode) // "'")
-                return
-            end if
+            if (falhou(len_trim(inp%h_file) == 0, &
+                       "h_file is required for spin_mode='" // trim(inp%spin_mode) // "'")) return
         case ('collinear')
-            if (len_trim(inp%h_up_file) == 0 .or. len_trim(inp%h_dn_file) == 0) then
-                call fail("h_up_file and h_dn_file are required for spin_mode='collinear'")
-                return
-            end if
+            if (falhou(len_trim(inp%h_up_file) == 0 .or. len_trim(inp%h_dn_file) == 0, &
+                       "h_up_file and h_dn_file are required for spin_mode='collinear'")) return
         case default
             call fail("invalid spin_mode '" // trim(inp%spin_mode) // &
                       "' (expected 'none', 'collinear' or 'noncollinear')")
@@ -255,54 +276,41 @@ contains
         end select
 
         ! --- arquivos obrigatórios ---------------------------------------
-        if (len_trim(inp%s_file) == 0) then
-            call fail('s_file is required')
-            return
-        end if
-        if (len_trim(inp%structure_file) == 0) then
-            call fail('structure_file is required')
-            return
-        end if
-        if (len_trim(inp%output_prefix) == 0) then
-            call fail('output_prefix must not be empty')
-            return
-        end if
+        if (falhou(len_trim(inp%s_file) == 0, 's_file is required')) return
+        if (falhou(len_trim(inp%structure_file) == 0, 'structure_file is required')) return
+        if (falhou(len_trim(inp%output_prefix) == 0, 'output_prefix must not be empty')) return
 
         ! --- tolerâncias -------------------------------------------------
-        if (.not. (inp%tol_norm > 0.0_dp)) then
-            call fail('tol_norm must be > 0')
-            return
-        end if
-        if (.not. (inp%tol_negative_warn > 0.0_dp)) then
-            call fail('tol_negative_warn must be > 0')
-            return
-        end if
-        if (.not. (inp%tol_s_min > 0.0_dp)) then
-            call fail('tol_s_min must be > 0')
-            return
-        end if
+        if (falhou(.not. (inp%tol_norm > 0.0_dp), 'tol_norm must be > 0')) return
+        if (falhou(.not. (inp%tol_negative_warn > 0.0_dp), 'tol_negative_warn must be > 0')) return
+        if (falhou(.not. (inp%tol_s_min > 0.0_dp), 'tol_s_min must be > 0')) return
 
         ! --- caminho k ---------------------------------------------------
-        if (inp%nvertex < 2 .or. inp%nvertex > MAX_KVERTEX) then
-            call fail('&KPATH nvertex must be in 2..' // itoa(MAX_KVERTEX) // &
-                      ' (got ' // itoa(inp%nvertex) // ')')
-            return
-        end if
+        if (falhou(inp%nvertex < 2 .or. inp%nvertex > MAX_KVERTEX, &
+                   '&KPATH nvertex must be in 2..' // itoa(MAX_KVERTEX) // &
+                   ' (got ' // itoa(inp%nvertex) // ')')) return
         do is = 1, inp%nvertex - 1
-            if (inp%npoints(is) < 1) then
-                call fail('&KPATH npoints(' // itoa(is) // ') must be >= 1 (got ' // &
-                          itoa(inp%npoints(is)) // ')')
-                return
-            end if
+            if (falhou(inp%npoints(is) < 1, &
+                       '&KPATH npoints(' // itoa(is) // ') must be >= 1 (got ' // &
+                       itoa(inp%npoints(is)) // ')')) return
         end do
 
     contains
 
+        !> Define o estado de erro.
         subroutine fail(m)
             character(len=*), intent(in) :: m
             ierr = 1
             errmsg = m
         end subroutine fail
+
+        !> Se `cond` é verdadeira, registra a falha `m`; devolve `cond`.
+        logical function falhou(cond, m)
+            logical,          intent(in) :: cond
+            character(len=*), intent(in) :: m
+            falhou = cond
+            if (cond) call fail(m)
+        end function falhou
 
     end subroutine read_spectral_input
 
