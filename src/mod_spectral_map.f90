@@ -196,7 +196,7 @@ contains
         integer,               intent(out) :: ierr
         character(len=*),      intent(out) :: errmsg
 
-        integer :: u, ios, ik, ie, i
+        integer :: u, ios, ios2, ik, ie, i
         character(len=*), parameter :: ROWFMT = '(ES17.9E3, 1X, ES17.9E3, 1X, ES18.10E3)'
 
         ierr = 0
@@ -254,7 +254,7 @@ contains
         if (ios /= 0) then
             ierr = 3
             errmsg = "error writing map file: " // trim(filename)
-            close(u)
+            close(u, iostat=ios2)
             return
         end if
         close(u, iostat=ios)
@@ -281,7 +281,8 @@ contains
         integer,               intent(out) :: ierr
         character(len=*),      intent(out) :: errmsg
 
-        integer  :: u, ios, iv, ik
+        integer  :: u, ios, ios2, iv, ik
+        logical  :: first
         real(dp) :: kmax, kd
         character(len=:), allocatable :: line
         character(len=32) :: num
@@ -303,27 +304,29 @@ contains
             return
         end if
 
-        write(u, '(A)') '# gnuplot include written by specmap: k-path ticks, Fermi level, energy label'
-        write(u, '(A)') 'set xrange [0:' // fmt_real(kmax) // ']'
+        if (ios == 0) write(u, '(A)', iostat=ios) '# gnuplot include written by specmap: k-path ticks, Fermi level, energy label'
+        if (ios == 0) write(u, '(A)', iostat=ios) 'set xrange [0:' // fmt_real(kmax) // ']'
 
         if (sd%nvertex > 0 .and. allocated(sd%vertex_k) .and. allocated(sd%vertex_label)) then
             line = 'set xtics ('
+            first = .true.
             do iv = 1, sd%nvertex
                 ik = sd%vertex_k(iv)
                 if (ik < 1 .or. ik > sd%nk) cycle
-                if (iv > 1) line = line // ', '
+                if (.not. first) line = line // ', '
+                first = .false.
                 line = line // '"' // gp_label(sd%vertex_label(iv)) // '" ' // fmt_real(sd%kdist(ik))
             end do
             line = line // ')'
-            write(u, '(A)') line
-            write(u, '(A)') 'if (!exists("VLINE_COLOR")) VLINE_COLOR = "white"'
+            if (ios == 0) write(u, '(A)', iostat=ios) line
+            if (ios == 0) write(u, '(A)', iostat=ios) 'if (!exists("VLINE_COLOR")) VLINE_COLOR = "white"'
             do iv = 1, sd%nvertex
                 ik = sd%vertex_k(iv)
                 if (ik < 1 .or. ik > sd%nk) cycle
                 kd = sd%kdist(ik)
                 if (kd <= 0.0_dp .or. kd >= kmax) cycle
                 num = fmt_real(kd)
-                write(u, '(A)') 'set arrow from ' // trim(num) // ', graph 0 to ' // trim(num) // &
+                if (ios == 0) write(u, '(A)', iostat=ios) 'set arrow from ' // trim(num) // ', graph 0 to ' // trim(num) // &
                     ', graph 1 nohead dt 2 lw 1 lc rgb VLINE_COLOR front'
             end do
         end if
@@ -331,18 +334,25 @@ contains
         ! Energy reference: with EREF_FERMI the energies are already
         ! relative to E_F, so the Fermi level sits at 0.
         if (sd%energy_ref == EREF_FERMI) then
-            write(u, '(A)') 'EF = 0.0'
-            write(u, '(A)') 'ELABEL = "E - E_F (eV)"'
+            if (ios == 0) write(u, '(A)', iostat=ios) 'EF = 0.0'
+            if (ios == 0) write(u, '(A)', iostat=ios) 'ELABEL = "E - E_F (eV)"'
         else if (sd%energy_ref == EREF_ABSOLUTE) then
             if (sd%fermi_known) then
-                write(u, '(A)') 'EF = ' // fmt_real(sd%fermi_energy_ev)
+                if (ios == 0) write(u, '(A)', iostat=ios) 'EF = ' // fmt_real(sd%fermi_energy_ev)
             else
-                write(u, '(A)') 'EF = NaN'
+                if (ios == 0) write(u, '(A)', iostat=ios) 'EF = NaN'
             end if
-            write(u, '(A)') 'ELABEL = "E (eV)"'
+            if (ios == 0) write(u, '(A)', iostat=ios) 'ELABEL = "E (eV)"'
         else
-            write(u, '(A)') 'EF = NaN'
-            write(u, '(A)') 'ELABEL = "E (eV, reference unknown)"'
+            if (ios == 0) write(u, '(A)', iostat=ios) 'EF = NaN'
+            if (ios == 0) write(u, '(A)', iostat=ios) 'ELABEL = "E (eV, reference unknown)"'
+        end if
+
+        if (ios /= 0) then
+            ierr = 3
+            errmsg = "error writing kticks file: " // trim(filename)
+            close(u, iostat=ios2)
+            return
         end if
 
         close(u, iostat=ios)

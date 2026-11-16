@@ -56,7 +56,7 @@ program specmap_main
                        maps, occupation, temperature_k, mu_ev, mu_set, output_prefix
 
     type(spectral_data_t) :: sd
-    character(len=1024)   :: input_path, errmsg
+    character(len=1024)   :: input_path, errmsg, iomsg
     character(len=:), allocatable :: tag, fname, kname, wmeaning, occ_line, eref_line
     character(len=640)    :: hdr(12)     ! header lines of the .map.dat file (11 used)
     integer  :: u, ios, ierr, im, jm, it, ie, nmaps, kern, map_number
@@ -84,9 +84,10 @@ program specmap_main
 
     open(newunit=u, file=trim(input_path), status='old', action='read', iostat=ios)
     if (ios /= 0) call die("cannot open input file: " // trim(input_path))
-    read(u, nml=SPECMAP, iostat=ios)
+    read(u, nml=SPECMAP, iostat=ios, iomsg=iomsg)
     close(u)
-    if (ios /= 0) call die("error reading &SPECMAP namelist from " // trim(input_path))
+    if (ios /= 0) call die("error reading &SPECMAP namelist from " // trim(input_path) // &
+                           ": " // trim(iomsg))
 
     ! Option validation (cheap checks first, before reading the data file)
     if (len_trim(spectral_file) == 0) call die("spectral_file is required")
