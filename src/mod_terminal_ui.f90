@@ -7,6 +7,7 @@ module terminal_ui
     ! Largura fixa padrão para toda a interface do software
     integer, parameter :: UI_WIDTH = 65
     integer, parameter :: dp       = kind(1.0d0)
+    private :: dp
 
 contains
 
@@ -35,16 +36,16 @@ contains
         right_spaces = total_spaces - left_spaces
 
         call print_box_close()
-        print '(A, A, A, A, A)', "|", repeat(" ", left_spaces), clean_text, repeat(" ", right_spaces), "|"
+        print '(A, A, A, A, A)', "|", repeat(" ", max(0, left_spaces)), clean_text, repeat(" ", max(0, right_spaces)), "|"
         call print_box_close()
     end subroutine print_box
 
     ! 4. NOVA SUBROTINA: Imprime uma linha interna alinhada à esquerda com fechamento automático
     subroutine print_row(label, value)
-        character(len=*), intent(in) :: label
-        character(len=*), intent(in) :: value
+        character(len=*), intent(in)  :: label
+        character(len=*), intent(in)  :: value
         character(len=:), allocatable :: full_line
-        integer                      :: content_len, remaining_spaces
+        integer                       :: content_len, remaining_spaces
 
         ! Monta o texto da linha combinando a chave e o valor
         full_line = "  " // trim(label) // trim(adjustl(value))
@@ -53,14 +54,14 @@ contains
         ! Calcula o preenchimento para bater na borda direita fixa
         remaining_spaces = UI_WIDTH - 2 - content_len
         
-        print '(A, A, A, A)', "|", trim(full_line), repeat(" ", remaining_spaces), "|"
+        print '(A, A, A, A)', "|", trim(full_line), repeat(" ", max(0, remaining_spaces)), "|"
     end subroutine print_row
 
     ! 5. Desenha um CABEÇALHO DE PAINEL (Linhas duplas com texto centralizado)
     subroutine print_header(title)
-        character(len=*), intent(in) :: title
+        character(len=*), intent(in)  :: title
         character(len=:), allocatable :: clean_title
-        integer                      :: title_len, total_spaces, left_spaces, right_spaces
+        integer                       :: title_len, total_spaces, left_spaces, right_spaces
 
         clean_title = trim(adjustl(title))
         title_len   = len_trim(clean_title)
@@ -70,7 +71,7 @@ contains
         right_spaces = total_spaces - left_spaces
 
         call print_line("=")
-        print '(A, A, A, A, A)', "|", repeat(" ", left_spaces), clean_title, repeat(" ", right_spaces), "|"
+        print '(A, A, A, A, A)', "|", repeat(" ", max(0, left_spaces)), clean_title, repeat(" ", max(0, right_spaces)), "|"
         call print_line("=")
     end subroutine print_header
 
@@ -83,19 +84,19 @@ contains
 
     ! 7. Linha de dados da tabela de K-Points
     subroutine print_kpath_row(idx, kpoints, nkpts)
-        integer,      intent(in) :: idx
-        real(dp),     intent(in) :: kpoints(3)
-        integer,      intent(in) :: nkpts
+        integer,  intent(in) :: idx
+        real(dp), intent(in) :: kpoints(3)
+        integer,  intent(in) :: nkpts
         
         print '(I6, " : ", 3F14.8, I11)', idx, kpoints, nkpts
     end subroutine print_kpath_row
 
         ! Imprime uma linha com a Chave alinhada à esquerda e o Valor alinhado à direita
     subroutine print_row_split(label, value)
-        character(len=*), intent(in) :: label
-        character(len=*), intent(in) :: value
+        character(len=*), intent(in)  :: label
+        character(len=*), intent(in)  :: value
         character(len=:), allocatable :: clean_label, clean_value
-        integer                      :: label_len, value_len, middle_spaces
+        integer                       :: label_len, value_len, middle_spaces
 
         ! Limpa os espaços em branco das pontas das strings
         clean_label = trim(adjustl(label))

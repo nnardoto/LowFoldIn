@@ -1,0 +1,12 @@
+! Second broadening of the SAME spectral data (no re-diagonalisation):
+! Gaussian kernel, sigma = 0.10 eV. SYNTHETIC model, NOT DFT. See README.md.
+&SPECMAP
+    spectral_file = 'model.spectral.bin'
+    spin_channel  = 1
+    kernel        = 'gaussian'
+    width_ev      = 0.10
+    emin = -3.5, emax = 3.5, ne = 701
+    maps          = 'total', 'top', 'bottom', 'top-bottom'
+    occupation    = .false.
+    output_prefix = 'model_gauss'
+/

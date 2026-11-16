@@ -31,6 +31,11 @@ source-form       = "free"
 # ==============================================================================
 
 [[executable]]
+name       = "LowFoldIn"
+source-dir = "app"
+main       = "main.f90"
+
+[[executable]]
 name       = "openmx2hsio"
 source-dir = "tools"
 main       = "openmx2hsio.f90"
@@ -39,6 +44,21 @@ main       = "openmx2hsio.f90"
 name       = "unfold"
 source-dir = "tools"
 main       = "unfold.f90"
+
+[[executable]]
+name       = "atomselect"
+source-dir = "tools"
+main       = "atomselect.f90"
+
+[[executable]]
+name       = "specmap"
+source-dir = "tools"
+main       = "specmap.f90"
+
+[[executable]]
+name       = "spectral"
+source-dir = "tools"
+main       = "spectral.f90"
 
 # ==============================================================================
 # FEATURES DE COMPILAÇÃO — fpm 0.13+
@@ -195,3 +215,76 @@ ryzen7950x-fast = [
     "loop-unrolling",
     "fast-math",
 ]
+
+# ==============================================================================
+# TESTES (fpm test)
+# ==============================================================================
+
+[[test]]
+name       = "test_hs_io"
+source-dir = "test"
+main       = "test_hs_io.f90"
+
+[[test]]
+name       = "test_unfold_core"
+source-dir = "test"
+main       = "test_unfold_core.f90"
+
+[[test]]
+name       = "test_unfold_nonsym"
+source-dir = "test"
+main       = "test_unfold_nonsym.f90"
+
+[[test]]
+name       = "test_structure_io"
+source-dir = "test"
+main       = "test_structure_io.f90"
+
+[[test]]
+name       = "test_scfout_io"
+source-dir = "test"
+main       = "test_scfout_io.f90"
+
+[[test]]
+name       = "test_regions"
+source-dir = "test"
+main       = "test_regions.f90"
+
+[[test]]
+name       = "test_selection_geom"
+source-dir = "test"
+main       = "test_selection_geom.f90"
+
+[[test]]
+name       = "test_spectral_data"
+source-dir = "test"
+main       = "test_spectral_data.f90"
+
+[[test]]
+name       = "test_projection"
+source-dir = "test"
+main       = "test_projection.f90"
+
+[[test]]
+name       = "test_kpath"
+source-dir = "test"
+main       = "test_kpath.f90"
+
+[[test]]
+name       = "test_spectral_engine"
+source-dir = "test"
+main       = "test_spectral_engine.f90"
+
+[[test]]
+name       = "test_specmap"
+source-dir = "test"
+main       = "test_specmap.f90"
+
+# ==============================================================================
+# EXEMPLOS (fpm run --example)
+# ==============================================================================
+
+[[example]]
+name       = "surface_model"
+source-dir = "examples/surface_spectral"
+main       = "gen_model.f90"

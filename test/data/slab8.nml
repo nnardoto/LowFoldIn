@@ -1,0 +1,25 @@
+! Tiny slab fixture for atomselect tests: hexagonal (non-orthogonal) cell,
+! two species, 8 atoms in 4 layers along z (2 atoms per layer, top first).
+&STRUCTURE
+    LatticeVectors(1,:) =  3.200000, 0.000000,  0.000000
+    LatticeVectors(2,:) = -1.600000, 2.771281,  0.000000
+    LatticeVectors(3,:) =  0.000000, 0.000000, 20.000000
+/
+
+&SPECIES
+2
+Ga  13
+N    4
+/
+
+&ATOMS
+8
+Ga   0.000000   0.000000   9.500000
+N    1.600000   0.923760   9.500000
+Ga   1.600000   0.923760   7.000000
+N    0.000000   1.847521   7.000000
+Ga   0.000000   0.000000   4.500000
+N    1.600000   0.923760   4.500000
+Ga   1.600000   0.923760   2.000000
+N    0.000000   1.847521   2.000000
+/

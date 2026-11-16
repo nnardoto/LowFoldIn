@@ -9,9 +9,9 @@ program LowFoldIn
     use terminal_ui, only: print_box, print_box_close
     implicit none
 
-    type(AppConfig)        :: cfg
-    type(BandsDataFormat)  :: BandsData
-    character(len=:), allocatable :: BaseName, TextFile, BinFile, BlockFile
+    type(AppConfig)                    :: cfg
+    type(BandsDataFormat)              :: BandsData
+    character(len=:),      allocatable :: BaseName, TextFile, BinFile, BlockFile
 
     ! 1. Lê a configuração de entrada (via stdin) e o bloco &BANDS, se aplicável
     call ReadConfigFromStdin(cfg)
@@ -41,7 +41,8 @@ program LowFoldIn
         call print_box_close()
 
     case default
-        stop "[Calculation Error] Calculation Inexistente"
+        print '(A)', "[Calculation Error] Calculation Inexistente"
+        stop 1
     end select
 
 contains

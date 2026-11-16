@@ -6,3 +6,22 @@
 
 # Project archives
 *.zip
+
+# fpm build tree
+build/
+
+# Claude Code agent worktrees
+.claude/worktrees/
+
+# examples/surface_spectral: generated outputs (only inputs, scripts, README
+# and the reference regions.nml are committed)
+examples/surface_spectral/*.hsio
+examples/surface_spectral/model.nml
+examples/surface_spectral/*.spectral.bin
+examples/surface_spectral/*.spectral.txt
+examples/surface_spectral/*.map.dat
+examples/surface_spectral/*.kticks.gp
+examples/surface_spectral/*.cemap.dat
+examples/surface_spectral/*.cegrid.gp
+examples/surface_spectral/*.png
+examples/surface_spectral/*.pdf

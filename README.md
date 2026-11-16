@@ -73,13 +73,16 @@ fpm build --flag "-std=f2023 -O0 -g -Wall -Wextra -fcheck=all -fbacktrace -fopen
 
 ## Executables
 
-The package builds three command-line programs.
+The package builds the following command-line programs.
 
 | Executable | Purpose |
 |---|---|
 | `LowFoldIn` | Conventional band-structure calculation. Reads its input from standard input. |
 | `openmx2hsio` | Converts an OpenMX `.scfout` file into the internal `.hsio` format. |
 | `unfold` | Unfolds a supercell band structure into the primitive-cell Brillouin zone. |
+| `atomselect` | Creates and validates named atomic regions (`regions.nml`); see [Surface spectral analysis](#análise-espectral-de-superfícies--surface-spectral-analysis). |
+| `spectral` | Band energies and per-region projection weights along a k-path or on a 2D k-grid (`.spectral.bin`). |
+| `specmap` | Broadened spectral maps A_P(k,E), constant-energy kx × ky maps and region combinations from a `.spectral.bin` file. |
 
 They can be launched through fpm:
 
@@ -87,6 +90,9 @@ They can be launched through fpm:
 fpm run LowFoldIn < bands.nml
 fpm run openmx2hsio -- calculation.scfout
 fpm run unfold -- unfold.nml
+fpm run atomselect -- inspect slab.nml
+fpm run spectral -- spectral.nml
+fpm run specmap -- specmap.nml
 ```
 
 After building, the corresponding binaries are also available inside the fpm build directory.
@@ -98,8 +104,8 @@ After building, the corresponding binaries are also available inside the fpm bui
 A typical workflow is:
 
 1. Run an OpenMX calculation and retain the `.scfout` file.
-2. Convert the Hamiltonian and overlap matrices with `openmx2hsio`.
-3. Prepare primitive- and supercell structure files.
+2. Convert the Hamiltonian, overlap and structure with `openmx2hsio --write-structure`.
+3. Inspect or adjust the generated structure file if needed.
 4. Define the primitive-cell k-path in `unfold.nml`.
 5. Run `unfold`.
 6. Plot either the discrete spectral weights or the broadened spectral function.
@@ -118,7 +124,8 @@ Available options:
 
 ```text
 openmx2hsio <file.scfout> [--out-prefix PREFIX] \
-             [--fermi E_F_HARTREE] [--no-fermi-shift]
+             [--fermi E_F_HARTREE] [--no-fermi-shift] \
+             [--write-structure] [--structure-file FILE]
 ```
 
 Example:
@@ -126,6 +133,23 @@ Example:
 ```bash
 fpm run openmx2hsio -- supercell.scfout --out-prefix data/supercell
 ```
+
+To also extract the lattice, atomic coordinates, labels and HSIO-compatible
+orbital counts into the structure format used by `atomselect`, `spectral` and
+`unfold`, add:
+
+```bash
+fpm run openmx2hsio -- calculation.scfout --write-structure
+```
+
+This writes `calculation.structure.nml` next to the HSIO files. Use
+`--structure-file structures/slab.nml` to choose another path. Geometry is
+read from the binary `.scfout` records (Bohr converted to Å); labels are read
+from the OpenMX input embedded in the `.scfout`. For non-collinear calculations
+the `&SPECIES` orbital counts are doubled automatically to match the atom-major
+spinor HSIO files. Structure extraction stops with an explicit error if the
+embedded atom block is missing or inconsistent, while ordinary H/S conversion
+without `--write-structure` remains available.
 
 For a non-spin-polarized calculation, the converter generates:
 
@@ -226,7 +250,7 @@ Automatic atom mapping from structure files is recommended.
     MatchTolerance  = 1.0e-3
 
     WriteSpectralFunction = .true.
-    Broadening = 0.02
+    Broadening = 0.02   ! Lorentzian FWHM (eV)
     Emin = -5.0
     Emax =  5.0
     nE   = 1000
@@ -280,7 +304,7 @@ The program automatically classifies `M`:
 - **Diagonal `M`** uses a specialized closed-form routine (Eqs. 33-38 of the reference paper), cost `O(m)` per primitive-cell orbital per k-point, where `m = |det(M)|`.
 - **General (nondiagonal) `M`** uses a direct group-projector formula (Eq. 14 of the reference paper, proven equivalent to the eigenvector-sum definition in Appendix A), cost `O(m^2)` per primitive-cell orbital per k-point. This is more expensive but requires no eigenvector construction or degenerate-subspace handling.
 
-A message is printed at startup indicating which routine was selected. `LatticeVectors` in the structure files must be given as rows (POSCAR/ASE/CIF convention, see below); the relation used internally is `A_rows = M @ a_rows`, consistent with `F_K = f_k . M` (Eq. 7 of the reference paper).
+A message is printed at startup indicating which routine was selected. `LatticeVectors` in the structure files must be given as rows (POSCAR/ASE/CIF convention, see below); the relation used internally is `A_rows = M @ a_rows`. Fractional positions then transform as `xi_PC = xi_SC . M` (row vector), while fractional k-points transform with the transpose, `F_K = M . f_k` (column vector, Eq. 7 of the reference paper). The two coincide only for symmetric `M`; `test_unfold_nonsym` (graphene-like √3×√3 R30° supercell, non-symmetric `M`) guards this.
 
 ### Structure-file format
 
@@ -372,7 +396,7 @@ x   energy   weight
 
 It is suitable for a scatter plot in which marker intensity, size or color represents the unfolded spectral weight.
 
-`example.unfold_spectral.dat` contains the Lorentzian-broadened spectral function `A(k,E)` on the energy grid defined by `Emin`, `Emax`, `nE` and `Broadening`.
+`example.unfold_spectral.dat` contains the Lorentzian-broadened spectral function `A(k,E)` on the energy grid defined by `Emin`, `Emax`, `nE` and `Broadening` (the Lorentzian FWHM, in eV).
 
 The code also reports the unfolding sum rule. For `p` primitive-cell orbitals, the expected value is:
 
@@ -381,6 +405,54 @@ sum_N W = p
 ```
 
 The largest observed deviation is printed after the calculation. A large deviation generally indicates an inconsistent transformation matrix, atom mapping, structure ordering or orbital count.
+
+---
+
+## Análise espectral de superfícies / Surface spectral analysis
+
+Three tools resolve the electronic states of a slab by atomic region (for example top surface, bottom surface and interior) along a k-path. They are independent of `unfold`.
+
+| Step | Tool | Role | Main input | Main output |
+|---|---|---|---|---|
+| Select | `atomselect` | Defines named atomic regions by index lists, projection ranges along an arbitrary Cartesian normal, Cartesian boxes, detected layers or top/bottom surface layers; validates them against the structure (fingerprint). | structure file (same format as `unfold`) | `regions.nml` |
+| Compute | `spectral` | Solves `H(k)c = E S(k)c` along a k-path (`&KPATH`) or on a 2D k-grid (`&KGRID`) and computes Mulliken (default) or Löwdin weights of every band on every region; never shifts energies. OpenMP over k-points. | `spectral.nml` (`&SPECTRAL` + `&KPATH` or `&KGRID`), HSIO files, structure, `regions.nml` | `<prefix>.spectral.bin` (+ optional `.spectral.txt`) |
+| Represent | `specmap` | Broadens the weights into maps A_P(k,E) (Lorentzian or Gaussian), forms region combinations such as `top-bottom`, optional Fermi–Dirac occupation. For k-grid files, constant-energy maps at the energies listed in `energies`. No diagonalisation: re-run it freely to change width or window. | `specmap.nml`, `.spectral.bin` | `<prefix>.<map>.map.dat` + `<prefix>.kticks.gp`, or `<prefix>.<map>.E<±x.xxx>.cemap.dat` + `<prefix>.cegrid.gp` |
+
+Data flow:
+
+```text
+OpenMX .scfout ── openmx2hsio ──> <prefix>_H.hsio, <prefix>_S.hsio ─────┐
+structure.nml ─── atomselect ───> regions.nml ──────────────────────────┤
+                                                                         ├─> spectral ─> <prefix>.spectral.bin
+spectral.nml (&SPECTRAL, &KPATH|&KGRID) ────────────────────────────────┘
+<prefix>.spectral.bin ── specmap (specmap.nml) ──> *.map.dat + *.kticks.gp      ── gnuplot (tools/gnuplot/*.gp)
+                                                   or *.cemap.dat + *.cegrid.gp (k-grid: constant-energy maps)
+```
+
+Important conventions:
+
+- Energies in eV, positions in Å, k-points in fractional reciprocal coordinates, k-distance in 1/Å.
+- `spectral` never shifts energies, and HSIO files store no Fermi level. `openmx2hsio` shifts H by −E_F·S by default, so for default conversions set `energy_reference = 'fermi'`; for `--no-fermi-shift` conversions use `'absolute'`. The default `'unknown'` is always safe.
+- Mulliken weights are populations, not probabilities, and can be slightly negative in a non-orthogonal basis. The `total` group equals 1 per band by construction (a numerical check).
+- The maps are broadened projection weights, **not** simulated ARPES intensities: no photoemission matrix elements, final states or many-body effects are included. Constant-energy kx × ky maps are evaluated directly on the k-grid given to `spectral` (no interpolation or symmetrisation).
+- The tools have been exercised on synthetic models and small test fixtures only.
+
+Build and test:
+
+```bash
+fpm build                      # serial build
+fpm test                       # all unit tests
+bash test/test_atomselect_cli.sh   # atomselect command-line tests
+fpm build --profile release    # adds -fopenmp: k-point loop of spectral in parallel
+```
+
+Documentation:
+
+- [`docs/atomselect.md`](docs/atomselect.md) — subcommands, options, `regions.nml` syntax, fingerprint;
+- [`docs/spectral.md`](docs/spectral.md) — `spectral.nml`, equations, spin handling, binary format;
+- [`docs/specmap.md`](docs/specmap.md) — `specmap.nml`, kernels, map expressions, output files, gnuplot scripts;
+- [`docs/performance.md`](docs/performance.md) — OpenMP, thread settings and measured timings;
+- [`examples/surface_spectral`](examples/surface_spectral/README.md) — complete pipeline on a synthetic slab (`bash examples/surface_spectral/run_example.sh`).
 
 ---
 
@@ -444,7 +516,11 @@ LowFoldIn/
 │   └── mod_unfold.f90            # Unfolding implementation
 ├── tools/
 │   ├── openmx2hsio.f90          # OpenMX conversion CLI
-│   └── unfold.f90               # Unfolding CLI
+│   ├── unfold.f90               # Unfolding CLI
+│   ├── atomselect.f90           # Named atomic regions CLI
+│   ├── spectral.f90             # Region-projected bands along a k-path or k-grid
+│   ├── specmap.f90              # Broadened spectral maps and constant-energy maps
+│   └── gnuplot/                 # map_positive.gp, map_difference.gp, map_compare.gp
 ├── fpm.toml
 ├── LICENSE
 └── README.md

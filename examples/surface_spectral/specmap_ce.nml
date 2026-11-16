@@ -1,0 +1,11 @@
+! Constant-energy maps from model_kgrid.spectral.bin (written by spectral_kgrid.nml).
+! One file per (map expression, energy): model_ce.<tag>.E<+-x.xxx>.cemap.dat
+&SPECMAP
+    spectral_file = 'model_kgrid.spectral.bin'
+    spin_channel  = 1
+    kernel        = 'lorentzian'
+    width_ev      = 0.05
+    energies      = -1.0, 0.0, 1.0
+    maps          = 'total', 'top', 'top-bottom'
+    output_prefix = 'model_ce'
+/

@@ -1,0 +1,28 @@
+! Tilted slab fixture for atomselect tests: non-orthogonal cell whose in-plane
+! vectors a1, a2 (hexagonal, 120 deg) are perpendicular to n = (1,1,0)/sqrt(2);
+! a3 is tilted (20 A along n plus 1.5 A in-plane). 8 atoms in 4 layers along n
+! at s = 2.0, 4.5, 7.0, 9.5 A (second atom of each layer buckled by +0.1 A),
+! top layer first. Along z the atoms are NOT layered like that.
+&STRUCTURE
+    LatticeVectors(1,:) =   2.262742,  -2.262742,   0.000000
+    LatticeVectors(2,:) =  -1.131371,   1.131371,   2.771281
+    LatticeVectors(3,:) =  15.202796,  13.081475,   0.000000
+/
+
+&SPECIES
+2
+Ga  13
+N    4
+/
+
+&ATOMS
+8
+Ga     6.717514    6.717514    0.000000
+N      7.919596    5.656854    0.923760
+Ga     5.232590    4.666905    0.000000
+N      6.434672    3.606245    0.923760
+Ga     3.747666    2.616295    0.000000
+N      4.949747    1.555635    0.923760
+Ga     2.262742    0.565685    0.000000
+N      3.464823   -0.494975    0.923760
+/
