@@ -61,8 +61,8 @@ atomselect help        (also -h, --help; running without arguments prints the sa
 The structure file (and, for `validate`, the regions file) are positional
 arguments right after the subcommand; options may follow in any order.
 Exit code is 0 on success and 1 on any error; error messages are printed on
-standard output prefixed with `[atomselect error]`. Warnings are prefixed
-with `[atomselect warning]`.
+standard error prefixed with `[atomselect error]`. Warnings are prefixed
+with `[atomselect warning]` and go to standard output.
 
 ### `inspect`
 

@@ -27,11 +27,13 @@
 ! Atom indices are 1-based; lengths are in Angstrom.
 !
 ! Exit code: 0 on success (also for `help` or no arguments); 1 on any error.
-! Errors are printed as "[atomselect error] ..." on standard output (not stderr).
+! Errors are printed as "[atomselect error] ..." on standard error; warnings
+! ("[atomselect warning] ...") go to standard output.
 !
 ! User documentation: docs/atomselect.md
 ! ----------------------------------------------------------------------------------------------------------
 program atomselect
+    use, intrinsic :: iso_fortran_env, only: error_unit
     use types,            only: dp
     use structure_io,     only: structure_t, read_structure, structure_fingerprint
     use atomic_regions,   only: region_set_t, read_regions_file, write_regions_file, &
@@ -498,7 +500,7 @@ contains
         integer, intent(in) :: l
         character(len=:), allocatable :: name
         character(len=16) :: buf
-        write(buf, '(I3.3)') l
+        write(buf, '(I0.3)') l
         name = 'layer_' // trim(buf)
     end function layer_name
 
@@ -968,7 +970,7 @@ contains
     !> Print the error and exit with code 1.
     subroutine die(msg)
         character(len=*), intent(in) :: msg
-        print '(A)', '[atomselect error] ' // msg
+        write(error_unit, '(A)') '[atomselect error] ' // msg
         stop 1
     end subroutine die
 

@@ -42,7 +42,9 @@ expect_error() {
     local name=$1; shift
     local out rc
     out=$("$@" 2>&1); rc=$?
-    if [ "$rc" -eq 1 ] && grep -q '^\[atomselect error\]' <<<"$out"; then
+    # the error line must be on stderr: it may not appear on stdout
+    if [ "$rc" -eq 1 ] && grep -q '^\[atomselect error\]' <<<"$out" \
+        && ! "$@" 2>/dev/null | grep -q '^\[atomselect error\]'; then
         pass "$name"
     else
         fail "$name (rc=$rc)"; echo "$out" | sed 's/^/       | /'
