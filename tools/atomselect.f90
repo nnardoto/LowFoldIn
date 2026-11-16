@@ -4,13 +4,13 @@
 ! ----------------------------------------------------------------------------------------------------------
 ! tools/atomselect.f90
 !
-! Command-line tool for named atomic regions (docs/design/contracts.md §6):
-! inspects a structure file, prints its fingerprint, creates/extends a
-! regions.nml file with numeric or geometric atom selections, detects layers
-! along an arbitrary (Cartesian) normal, builds top/bottom surface regions and
-! validates a regions file against a structure.
+! Ferramenta de linha de comando para regiões atômicas nomeadas (docs/design/contracts.md §6):
+! inspeciona um arquivo de estrutura, imprime seu fingerprint, cria/estende um
+! arquivo regions.nml com seleções de átomos numéricas ou geométricas, detecta
+! camadas ao longo de uma normal (cartesiana) arbitrária, constrói regiões de
+! superfície (topo/base) e valida um arquivo de regiões contra uma estrutura.
 !
-! Usage:
+! Uso:
 !   atomselect inspect     <structure.nml> [--xyz out.xyz] [--table out.txt]
 !   atomselect fingerprint <structure.nml>
 !   atomselect select      <structure.nml> --regions <regions.nml> --name NAME --atoms "LIST"
@@ -22,15 +22,15 @@
 !   atomselect validate    <structure.nml> <regions.nml> [--allow-no-fingerprint]
 !   atomselect help
 !
-! Regions files (regions.nml) are created on first use and extended afterwards;
-! an existing file is validated against the structure before a region is added.
-! Atom indices are 1-based; lengths are in Angstrom.
+! Os arquivos de regiões (regions.nml) são criados no primeiro uso e estendidos
+! depois; um arquivo existente é validado contra a estrutura antes de uma região
+! ser adicionada. Os índices de átomos começam em 1; os comprimentos estão em Angstrom.
 !
-! Exit code: 0 on success (also for `help` or no arguments); 1 on any error.
-! Errors are printed as "[atomselect error] ..." on standard error; warnings
-! ("[atomselect warning] ...") go to standard output.
+! Código de saída: 0 em sucesso (também para `help` ou sem argumentos); 1 em qualquer erro.
+! Os erros são impressos como "[atomselect error] ..." na saída de erro padrão; os avisos
+! ("[atomselect warning] ...") vão para a saída padrão.
 !
-! User documentation: docs/atomselect.md
+! Documentação para o usuário: docs/atomselect.md
 ! ----------------------------------------------------------------------------------------------------------
 program atomselect
     use, intrinsic :: iso_fortran_env, only: error_unit
@@ -47,17 +47,17 @@ program atomselect
         character(len=:), allocatable :: s
     end type str_t
 
-    integer, parameter :: MSG_LEN = 1024
-    integer, parameter :: OPT_NAME_LEN = 32
+    integer,  parameter :: MSG_LEN = 1024
+    integer,  parameter :: OPT_NAME_LEN = 32
     real(dp), parameter :: DEFAULT_LAYER_TOL = 0.5_dp   ! Å
 
-    type(str_t), allocatable :: args(:)       ! all command-line arguments
-    type(str_t), allocatable :: opt_key(:)    ! parsed options (after positionals)
-    type(str_t), allocatable :: opt_val(:)
-    integer :: nargs, nopt
+    type(str_t),      allocatable :: args(:)     ! todos os argumentos da linha de comando
+    type(str_t),      allocatable :: opt_key(:)  ! opções processadas (após os posicionais)
+    type(str_t),      allocatable :: opt_val(:)
+    integer                       :: nargs, nopt
     character(len=:), allocatable :: cmd
 
-    ! 1. Collect arguments (options are parsed per subcommand, see parse_options)
+    ! 1. Coleta os argumentos (as opções são processadas por subcomando, ver parse_options)
     call collect_arguments()
 
     if (nargs < 1) then
@@ -65,7 +65,7 @@ program atomselect
         stop
     end if
 
-    ! 2. Dispatch on the subcommand
+    ! 2. Despacha conforme o subcomando
     cmd = args(1)%s
     select case (cmd)
     case ('help', '-h', '--help')
@@ -89,15 +89,15 @@ program atomselect
 contains
 
     ! ==================================================================
-    ! Subcommands
+    ! Subcomandos
     ! ==================================================================
 
-    !> inspect: print header (cell, fingerprint) and atom table; optionally
-    !> save the table (--table) and an extended-XYZ file (--xyz).
+    !> inspect: imprime o cabeçalho (célula, fingerprint) e a tabela de átomos; opcionalmente
+    !> salva a tabela (--table) e um arquivo XYZ estendido (--xyz).
     subroutine cmd_inspect()
         type(structure_t) :: st
         character(len=16) :: fp
-        integer :: iu, ios
+        integer           :: iu, ios
 
         call require_positionals(1, 'inspect <structure.nml>')
         call parse_options(3, [character(len=OPT_NAME_LEN) :: '--xyz', '--table'], &
@@ -127,7 +127,7 @@ contains
     end subroutine cmd_inspect
 
     ! ------------------------------------------------------------------
-    !> fingerprint: print only the structure fingerprint (links regions/spectral files to a structure).
+    !> fingerprint: imprime apenas o fingerprint da estrutura (vincula regiões/arquivos espectrais a uma estrutura).
     subroutine cmd_fingerprint()
         type(structure_t) :: st
 
@@ -138,20 +138,20 @@ contains
     end subroutine cmd_fingerprint
 
     ! ------------------------------------------------------------------
-    !> select: add one named region to a regions file. Exactly one selection mode:
-    !> explicit index list (--atoms), projection range along a normal
-    !> (--normal with --smin/--smax) or Cartesian box (--box). An empty
-    !> geometric selection is an error.
+    !> select: adiciona uma região nomeada a um arquivo de regiões. Exatamente um modo de seleção:
+    !> lista explícita de índices (--atoms), intervalo de projeção ao longo de uma normal
+    !> (--normal com --smin/--smax) ou caixa cartesiana (--box). Uma seleção
+    !> geométrica vazia é um erro.
     subroutine cmd_select()
-        type(structure_t)  :: st
-        type(region_set_t) :: rs
-        integer, allocatable :: list(:)
-        real(dp), allocatable :: s(:)
-        real(dp) :: normal(3), smin, smax, lo(3), hi(3)
-        character(len=:), allocatable :: rfile, rname, how
-        character(len=MSG_LEN) :: errmsg
-        integer :: ierr, nmode
-        logical :: exists
+        type(structure_t)                   :: st
+        type(region_set_t)                  :: rs
+        integer,                allocatable :: list(:)
+        real(dp),               allocatable :: s(:)
+        real(dp)                            :: normal(3), smin, smax, lo(3), hi(3)
+        character(len=:),       allocatable :: rfile, rname, how
+        character(len=MSG_LEN)              :: errmsg
+        integer                             :: ierr, nmode
+        logical                             :: exists
 
         call require_positionals(1, 'select <structure.nml> --regions <regions.nml> --name NAME ' // &
                                     '(--atoms "LIST" | --normal nx ny nz [--smin A] [--smax B] | --box "...")')
@@ -205,20 +205,20 @@ contains
     end subroutine cmd_select
 
     ! ------------------------------------------------------------------
-    !> layers: detect (or assign to --refs) layers along a normal, print the
-    !> per-atom table and layer summary; with --regions also store each layer
-    !> as a region named layer_001, layer_002, ... (ascending projection).
+    !> layers: detecta camadas ao longo de uma normal (ou atribui a --refs), imprime a
+    !> tabela por átomo e o resumo das camadas; com --regions também armazena cada camada
+    !> como uma região chamada layer_001, layer_002, ... (projeção crescente).
     subroutine cmd_layers()
-        type(structure_t)  :: st
-        type(region_set_t) :: rs
-        real(dp), allocatable :: s(:), center(:)
-        integer,  allocatable :: layer_of(:), list(:)
-        real(dp) :: normal(3), tol
-        character(len=MSG_LEN) :: errmsg
-        character(len=:), allocatable :: rfile
-        character(len=16) :: fp
-        integer :: ierr, nlayer, l, iu, ios, i
-        logical :: exists
+        type(structure_t)                   :: st
+        type(region_set_t)                  :: rs
+        real(dp),               allocatable :: s(:), center(:)
+        integer,                allocatable :: layer_of(:), list(:)
+        real(dp)                            :: normal(3), tol
+        character(len=MSG_LEN)              :: errmsg
+        character(len=:),       allocatable :: rfile
+        character(len=16)                   :: fp
+        integer                             :: ierr, nlayer, l, iu, ios, i
+        logical                             :: exists
 
         call require_positionals(1, 'layers <structure.nml> --normal nx ny nz [--tol T] [--refs "c1,..."] ' // &
                                     '[--table out] [--regions file]')
@@ -264,18 +264,18 @@ contains
     end subroutine cmd_layers
 
     ! ------------------------------------------------------------------
-    !> surface: build `top` (highest-projection layers) and/or `bottom`
-    !> (lowest-projection layers) regions from the N outermost layers.
+    !> surface: constrói as regiões `top` (camadas de maior projeção) e/ou `bottom`
+    !> (camadas de menor projeção) a partir das N camadas mais externas.
     subroutine cmd_surface()
-        type(structure_t)  :: st
-        type(region_set_t) :: rs
-        real(dp), allocatable :: s(:), center(:)
-        integer,  allocatable :: layer_of(:), top_list(:), bot_list(:)
-        real(dp) :: normal(3), tol
-        character(len=MSG_LEN) :: errmsg
-        character(len=:), allocatable :: rfile, tname, bname
-        integer :: ierr, nlayer, ntop, nbot
-        logical :: exists
+        type(structure_t)                   :: st
+        type(region_set_t)                  :: rs
+        real(dp),               allocatable :: s(:), center(:)
+        integer,                allocatable :: layer_of(:), top_list(:), bot_list(:)
+        real(dp)                            :: normal(3), tol
+        character(len=MSG_LEN)              :: errmsg
+        character(len=:),       allocatable :: rfile, tname, bname
+        integer                             :: ierr, nlayer, ntop, nbot
+        logical                             :: exists
 
         call require_positionals(1, 'surface <structure.nml> --regions <file> --normal nx ny nz [--tol T] ' // &
                                     '[--refs "c1,..."] [--top N] [--bottom N] [--top-name top] [--bottom-name bottom]')
@@ -334,18 +334,18 @@ contains
     end subroutine cmd_surface
 
     ! ------------------------------------------------------------------
-    !> Shared by layers/surface: reads --normal/--tol/--refs, projects, warns
-    !> about periodic splitting and assigns layers (detected or references).
+    !> Compartilhada por layers/surface: lê --normal/--tol/--refs, projeta, avisa
+    !> sobre divisão periódica e atribui as camadas (detectadas ou por referências).
     subroutine compute_layers(st, normal, tol, s, layer_of, nlayer, center)
-        type(structure_t),     intent(in)  :: st
-        real(dp),              intent(out) :: normal(3), tol
-        real(dp), allocatable, intent(out) :: s(:), center(:)
-        integer,  allocatable, intent(out) :: layer_of(:)
-        integer,               intent(out) :: nlayer
-        real(dp), allocatable :: refs(:)
-        character(len=MSG_LEN) :: errmsg
-        integer :: ierr
-        logical :: warn
+        type(structure_t),      intent(in)               :: st
+        real(dp),               intent(out)              :: normal(3), tol
+        real(dp),               allocatable, intent(out) :: s(:), center(:)
+        integer,                allocatable, intent(out) :: layer_of(:)
+        integer,                intent(out)              :: nlayer
+        real(dp),               allocatable              :: refs(:)
+        character(len=MSG_LEN)                           :: errmsg
+        integer                                          :: ierr
+        logical                                          :: warn
 
         normal = opt_real3('--normal')
         tol = DEFAULT_LAYER_TOL
@@ -368,7 +368,7 @@ contains
             call assign_to_references(s, refs, tol, layer_of, ierr, errmsg)
             if (ierr /= 0) call die(trim(errmsg))
             nlayer = size(refs)
-            center = sorted_real(refs)       ! summary reports the reference centers
+            center = sorted_real(refs)       ! o resumo reporta os centros de referência
         else
             call detect_layers(s, tol, layer_of, nlayer, center, ierr, errmsg)
             if (ierr /= 0) call die(trim(errmsg))
@@ -376,16 +376,16 @@ contains
     end subroutine compute_layers
 
     ! ------------------------------------------------------------------
-    !> validate: check a regions file against a structure (fingerprint, atom
-    !> counts/indices) and report overlaps, uncovered atoms and whether the
-    !> regions form a partition. Reaching the last line means "valid".
+    !> validate: confere um arquivo de regiões contra uma estrutura (fingerprint, contagens/índices
+    !> de átomos) e reporta sobreposições, átomos não cobertos e se as regiões formam
+    !> uma partição. Chegar à última linha significa "válido".
     subroutine cmd_validate()
-        type(structure_t)  :: st
-        type(region_set_t) :: rs
-        character(len=MSG_LEN) :: errmsg
-        integer, allocatable :: cnt(:)
-        logical, allocatable :: in_i(:)
-        integer :: ierr, ir, jr, a, nshared, noverlap, nuncovered
+        type(structure_t)                   :: st
+        type(region_set_t)                  :: rs
+        character(len=MSG_LEN)              :: errmsg
+        integer,                allocatable :: cnt(:)
+        logical,                allocatable :: in_i(:)
+        integer                             :: ierr, ir, jr, a, nshared, noverlap, nuncovered
 
         call require_positionals(2, 'validate <structure.nml> <regions.nml>')
         call parse_options(4, [character(len=OPT_NAME_LEN) :: ''], &
@@ -444,18 +444,18 @@ contains
     end subroutine cmd_validate
 
     ! ==================================================================
-    ! Regions file helpers (shared create/append logic, contract §6)
+    ! Auxiliares do arquivo de regiões (lógica compartilhada de criar/acrescentar, contract §6)
     ! ==================================================================
 
-    !> Reads and validates an existing regions file, or starts a new one with
-    !> the header taken from the structure.
+    !> Lê e valida um arquivo de regiões existente, ou inicia um novo com o
+    !> cabeçalho tirado da estrutura.
     subroutine open_regions(rfile, st, rs, exists)
-        character(len=*),   intent(in)  :: rfile
-        type(structure_t),  intent(in)  :: st
-        type(region_set_t), intent(out) :: rs
-        logical,            intent(out) :: exists
-        character(len=MSG_LEN) :: errmsg
-        integer :: ierr
+        character(len=*),       intent(in)  :: rfile
+        type(structure_t),      intent(in)  :: st
+        type(region_set_t),     intent(out) :: rs
+        logical,                intent(out) :: exists
+        character(len=MSG_LEN)              :: errmsg
+        integer                             :: ierr
 
         inquire(file=rfile, exist=exists)
         if (exists) then
@@ -474,19 +474,19 @@ contains
         end if
     end subroutine open_regions
 
-    !> Writes the region set to disk; dies on I/O error.
+    !> Grava o conjunto de regiões em disco; encerra com erro em caso de falha de E/S.
     subroutine save_regions(rfile, rs)
-        character(len=*),   intent(in) :: rfile
-        type(region_set_t), intent(in) :: rs
-        character(len=MSG_LEN) :: errmsg
-        integer :: ierr
+        character(len=*),       intent(in) :: rfile
+        type(region_set_t),     intent(in) :: rs
+        character(len=MSG_LEN)             :: errmsg
+        integer                            :: ierr
         call write_regions_file(rfile, rs, ierr, errmsg)
         if (ierr /= 0) call die(trim(errmsg))
     end subroutine save_regions
 
-    !> Suffix for the log line: whether the regions file was created or updated.
+    !> Sufixo da linha de log: indica se o arquivo de regiões foi criado ou atualizado.
     function status_word(exists) result(w)
-        logical, intent(in) :: exists
+        logical,          intent(in)  :: exists
         character(len=:), allocatable :: w
         if (exists) then
             w = ' (updated)'
@@ -495,20 +495,20 @@ contains
         end if
     end function status_word
 
-    !> Region name for layer l: layer_001, layer_002, ...
+    !> Nome da região da camada l: layer_001, layer_002, ...
     function layer_name(l) result(name)
-        integer, intent(in) :: l
-        character(len=:), allocatable :: name
-        character(len=16) :: buf
+        integer,           intent(in)  :: l
+        character(len=:),  allocatable :: name
+        character(len=16)              :: buf
         write(buf, '(I0.3)') l
         name = 'layer_' // trim(buf)
     end function layer_name
 
     ! ==================================================================
-    ! Layer output
+    ! Saída das camadas
     ! ==================================================================
 
-    !> '#'-prefixed comment lines describing how layers were obtained.
+    !> Linhas de comentário prefixadas com '#' descrevendo como as camadas foram obtidas.
     subroutine write_layer_info(iu, normal, tol)
         integer,  intent(in) :: iu
         real(dp), intent(in) :: normal(3), tol
@@ -521,13 +521,13 @@ contains
         end if
     end subroutine write_layer_info
 
-    !> Per-atom table: index, element, Cartesian position, projection s, layer.
+    !> Tabela por átomo: índice, elemento, posição cartesiana, projeção s, camada.
     subroutine write_layer_table(iu, st, s, layer_of)
         integer,           intent(in) :: iu
         type(structure_t), intent(in) :: st
         real(dp),          intent(in) :: s(:)
         integer,           intent(in) :: layer_of(:)
-        integer :: i
+        integer                       :: i
 
         write(iu, '(A6,2X,A8,4A12,A8)') 'Index', 'Element', 'X', 'Y', 'Z', 'Projected', 'Layer'
         do i = 1, st%nat
@@ -535,13 +535,13 @@ contains
         end do
     end subroutine write_layer_table
 
-    !> Per-layer centre, atom count and compressed atom list ('#'-prefixed).
+    !> Centro, contagem de átomos e lista comprimida de átomos por camada (prefixada com '#').
     subroutine write_layer_summary(iu, layer_of, nlayer, center)
-        integer,  intent(in) :: iu
-        integer,  intent(in) :: layer_of(:), nlayer
-        real(dp), intent(in) :: center(:)
-        integer, allocatable :: list(:)
-        integer :: l, i
+        integer,  intent(in)  :: iu
+        integer,  intent(in)  :: layer_of(:), nlayer
+        real(dp), intent(in)  :: center(:)
+        integer,  allocatable :: list(:)
+        integer               :: l, i
 
         write(iu, '(A)') ''
         write(iu, '(A)') '# nlayer      : ' // itoa(nlayer)
@@ -553,16 +553,16 @@ contains
     end subroutine write_layer_summary
 
     ! ==================================================================
-    ! Output helpers
+    ! Auxiliares de saída
     ! ==================================================================
 
-    !> '#'-prefixed header: file name, atom count, lattice vectors, fingerprint.
+    !> Cabeçalho prefixado com '#': nome do arquivo, número de átomos, vetores de rede, fingerprint.
     subroutine write_header(iu, filename, st, fp)
         integer,           intent(in) :: iu
         character(len=*),  intent(in) :: filename
         type(structure_t), intent(in) :: st
         character(len=16), intent(in) :: fp
-        integer :: i
+        integer                       :: i
 
         write(iu, '(A)') '# file        : ' // filename
         write(iu, '(A)') '# nat         : ' // itoa(st%nat)
@@ -575,7 +575,7 @@ contains
     subroutine write_table(iu, st)
         integer,           intent(in) :: iu
         type(structure_t), intent(in) :: st
-        integer :: i
+        integer                       :: i
 
         write(iu, '(A6,2X,A8,3A12)') 'Index', 'Element', 'X', 'Y', 'Z'
         do i = 1, st%nat
@@ -583,14 +583,14 @@ contains
         end do
     end subroutine write_table
 
-    !> Extended XYZ (lattice + fingerprint on the comment line), for visualisation.
+    !> XYZ estendido (rede + fingerprint na linha de comentário), para visualização.
     subroutine write_xyz(iu, st, fp)
-        integer,           intent(in) :: iu
-        type(structure_t), intent(in) :: st
-        character(len=16), intent(in) :: fp
-        character(len=:), allocatable :: lat
-        character(len=24) :: buf
-        integer :: i, j
+        integer,           intent(in)  :: iu
+        type(structure_t), intent(in)  :: st
+        character(len=16), intent(in)  :: fp
+        character(len=:),  allocatable :: lat
+        character(len=24)              :: buf
+        integer                        :: i, j
 
         lat = ''
         do i = 1, 3
@@ -607,7 +607,7 @@ contains
         end do
     end subroutine write_xyz
 
-    !> Usage text; keep in sync with the synopsis in the file header.
+    !> Texto de uso; manter em sincronia com a sinopse do cabeçalho do arquivo.
     subroutine print_usage()
         print '(A)', 'atomselect - inspect structures and manage named atomic regions (regions.nml)'
         print '(A)', ''
@@ -635,10 +635,10 @@ contains
     end subroutine print_usage
 
     ! ==================================================================
-    ! Argument handling
+    ! Tratamento de argumentos
     ! ==================================================================
 
-    !> Stores all command-line arguments in args(:) and resets the option store.
+    !> Guarda todos os argumentos da linha de comando em args(:) e reinicia o armazenamento de opções.
     subroutine collect_arguments()
         integer :: i, n
 
@@ -653,12 +653,12 @@ contains
         allocate(opt_key(0), opt_val(0))
     end subroutine collect_arguments
 
-    !> Requires `npos` positional arguments after the subcommand (args(2:npos+1)),
-    !> none of which may look like an option.
+    !> Exige `npos` argumentos posicionais após o subcomando (args(2:npos+1)),
+    !> nenhum dos quais pode parecer uma opção.
     subroutine require_positionals(npos, synopsis)
         integer,          intent(in) :: npos
         character(len=*), intent(in) :: synopsis
-        integer :: i
+        integer                      :: i
 
         if (nargs < npos + 1) call die('missing arguments; usage: atomselect ' // synopsis)
         do i = 2, npos + 1
@@ -666,15 +666,15 @@ contains
         end do
     end subroutine require_positionals
 
-    !> Parses args(istart:) as options. `valued` lists options taking one value,
-    !> `flags` lists value-less switches (blank entries ignored). Any other
-    !> argument, or a repeated option, is an error.
+    !> Processa args(istart:) como opções. `valued` lista as opções que recebem um valor,
+    !> `flags` lista as chaves sem valor (entradas em branco são ignoradas). Qualquer outro
+    !> argumento, ou uma opção repetida, é um erro.
     subroutine parse_options(istart, valued, flags, triples)
-        integer,          intent(in) :: istart
-        character(len=*), intent(in) :: valued(:), flags(:)
-        character(len=*), intent(in), optional :: triples(:)   ! options taking 3 tokens
-        integer :: i
-        character(len=:), allocatable :: a
+        integer,          intent(in)           :: istart
+        character(len=*), intent(in)           :: valued(:), flags(:)
+        character(len=*), intent(in), optional :: triples(:)   ! opções que recebem 3 tokens
+        integer                                :: i
+        character(len=:), allocatable          :: a
 
         i = istart
         do while (i <= nargs)
@@ -700,10 +700,10 @@ contains
         end do
     end subroutine parse_options
 
-    !> Appends a parsed option (key/value) to the option store.
+    !> Acrescenta uma opção processada (chave/valor) ao armazenamento de opções.
     subroutine push_opt(key, val)
-        character(len=*), intent(in) :: key, val
-        type(str_t), allocatable :: tk(:), tv(:)
+        character(len=*), intent(in)  :: key, val
+        type(str_t),      allocatable :: tk(:), tv(:)
 
         allocate(tk(nopt + 1), tv(nopt + 1))
         tk(1:nopt) = opt_key
@@ -717,7 +717,7 @@ contains
 
     logical function has_opt(key)
         character(len=*), intent(in) :: key
-        integer :: i
+        integer                      :: i
         has_opt = .false.
         do i = 1, nopt
             if (opt_key(i)%s == key) then
@@ -728,9 +728,9 @@ contains
     end function has_opt
 
     function opt_value(key) result(val)
-        character(len=*), intent(in) :: key
+        character(len=*), intent(in)  :: key
         character(len=:), allocatable :: val
-        integer :: i
+        integer                       :: i
         val = ''
         do i = 1, nopt
             if (opt_key(i)%s == key) then
@@ -742,7 +742,7 @@ contains
 
     logical function in_list(a, list)
         character(len=*), intent(in) :: a, list(:)
-        integer :: i
+        integer                      :: i
         in_list = .false.
         do i = 1, size(list)
             if (len_trim(list(i)) == 0) cycle
@@ -760,14 +760,14 @@ contains
     end function is_option
 
     ! ==================================================================
-    ! Misc helpers
+    ! Auxiliares diversos
     ! ==================================================================
 
-    !> Parses a real number token; dies with a message naming the option.
+    !> Converte um token em número real; encerra com uma mensagem que nomeia a opção.
     function to_real(tok, what) result(x)
         character(len=*), intent(in) :: tok, what
-        real(dp) :: x
-        integer :: ios
+        real(dp)                     :: x
+        integer                      :: ios
         x = 0.0_dp
         if (len_trim(tok) == 0 .or. scan(trim(adjustl(tok)), ' ,/') > 0) &
             call die(what // ": not a number: '" // tok // "'")
@@ -776,19 +776,19 @@ contains
         if (x /= x .or. abs(x) > huge(1.0_dp)) call die(what // ": not a finite number: '" // tok // "'")
     end function to_real
 
-    !> Value of option `key` as a finite real.
+    !> Valor da opção `key` como real finito.
     function opt_real(key) result(x)
         character(len=*), intent(in) :: key
-        real(dp) :: x
+        real(dp)                     :: x
         x = to_real(opt_value(key), key)
     end function opt_real
 
-    !> Value of option `key` as a non-negative integer (max 9 digits).
+    !> Valor da opção `key` como inteiro não negativo (no máximo 9 dígitos).
     function opt_int(key) result(n)
-        character(len=*), intent(in) :: key
-        integer :: n
+        character(len=*), intent(in)  :: key
+        integer                       :: n
         character(len=:), allocatable :: v
-        integer :: ios
+        integer                       :: ios
         v = trim(adjustl(opt_value(key)))
         n = 0
         if (len(v) == 0 .or. len(v) > 9 .or. verify(v, '0123456789') /= 0) &
@@ -797,12 +797,12 @@ contains
         if (ios /= 0) call die(key // ": not an integer: '" // v // "'")
     end function opt_int
 
-    !> Three whitespace-separated numbers stored by parse_options for a triple option.
+    !> Três números separados por espaço, guardados por parse_options para uma opção tripla.
     function opt_real3(key) result(x)
         character(len=*), intent(in) :: key
-        real(dp) :: x(3)
-        type(str_t) :: tok(6)
-        integer :: ntok, k
+        real(dp)                     :: x(3)
+        type(str_t)                  :: tok(6)
+        integer                      :: ntok, k
         call split_ws(opt_value(key), tok, ntok)
         if (ntok /= 3) call die(key // ': expected three numbers')
         do k = 1, 3
@@ -810,12 +810,12 @@ contains
         end do
     end function opt_real3
 
-    !> "c1,c2,..." -> real list (at least one value).
+    !> "c1,c2,..." -> lista de reais (ao menos um valor).
     subroutine parse_real_list(text, vals)
-        character(len=*),      intent(in)  :: text
-        real(dp), allocatable, intent(out) :: vals(:)
-        integer :: pos, next
-        character(len=:), allocatable :: item
+        character(len=*), intent(in)               :: text
+        real(dp),         allocatable, intent(out) :: vals(:)
+        integer                                    :: pos, next
+        character(len=:), allocatable              :: item
 
         allocate(vals(0))
         if (len_trim(text) == 0) call die('--refs: empty list')
@@ -835,13 +835,13 @@ contains
         end do
     end subroutine parse_real_list
 
-    !> "xlo xhi ylo yhi zlo zhi" with '*' for unbounded limits.
+    !> "xlo xhi ylo yhi zlo zhi" com '*' para limites sem restrição.
     subroutine parse_box(text, lo, hi)
         character(len=*), intent(in)  :: text
         real(dp),         intent(out) :: lo(3), hi(3)
-        type(str_t) :: tok(7)
-        integer :: ntok, k
-        real(dp) :: v(6)
+        type(str_t)                   :: tok(7)
+        integer                       :: ntok, k
+        real(dp)                      :: v(6)
 
         call split_ws(text, tok, ntok)
         if (ntok /= 6) call die('--box: expected six limits "xlo xhi ylo yhi zlo zhi" (use * for unbounded)')
@@ -861,12 +861,12 @@ contains
         if (any(lo > hi)) call die('--box: lower limit greater than upper limit')
     end subroutine parse_box
 
-    !> Splits on blanks; ntok may exceed size(tok) (extra tokens are counted, not stored).
+    !> Divide em espaços; ntok pode exceder size(tok) (tokens extras são contados, não armazenados).
     subroutine split_ws(text, tok, ntok)
         character(len=*), intent(in)    :: text
         type(str_t),      intent(inout) :: tok(:)
         integer,          intent(out)   :: ntok
-        integer :: i, j, n
+        integer                         :: i, j, n
         n = len(text)
         ntok = 0
         i = 1
@@ -886,12 +886,12 @@ contains
         end do
     end subroutine split_ws
 
-    !> Ascending copy (insertion sort; used for the small --refs list).
+    !> Cópia em ordem crescente (insertion sort; usada para a pequena lista --refs).
     function sorted_real(v) result(r)
-        real(dp), intent(in) :: v(:)
+        real(dp), intent(in)  :: v(:)
         real(dp), allocatable :: r(:)
-        real(dp) :: x
-        integer :: i, j
+        real(dp)              :: x
+        integer               :: i, j
         r = v
         do i = 2, size(r)
             x = r(i)
@@ -905,22 +905,22 @@ contains
         end do
     end function sorted_real
 
-    !> Reads the structure file; dies with the reader's message on failure.
+    !> Lê o arquivo de estrutura; em caso de falha, encerra com a mensagem do leitor.
     subroutine load_structure(filename, st)
-        character(len=*),  intent(in)  :: filename
-        type(structure_t), intent(out) :: st
-        character(len=MSG_LEN) :: errmsg
-        integer :: ierr
+        character(len=*),       intent(in)  :: filename
+        type(structure_t),      intent(out) :: st
+        character(len=MSG_LEN)              :: errmsg
+        integer                             :: ierr
 
         call read_structure(filename, st, ierr, errmsg)
         if (ierr /= 0) call die(trim(errmsg))
     end subroutine load_structure
 
-    !> Compresses an ascending index list into ranges: [1,2,3,5] -> "1-3,5".
+    !> Comprime uma lista crescente de índices em intervalos: [1,2,3,5] -> "1-3,5".
     function compress_list(list) result(s)
-        integer, intent(in) :: list(:)
+        integer,          intent(in)  :: list(:)
         character(len=:), allocatable :: s
-        integer :: i, j
+        integer                       :: i, j
 
         s = ''
         i = 1
@@ -940,11 +940,11 @@ contains
         end do
     end function compress_list
 
-    !> Returns an ascending copy (insertion sort; lists are small and mostly sorted).
+    !> Retorna uma cópia em ordem crescente (insertion sort; as listas são pequenas e quase ordenadas).
     function sorted(list) result(r)
-        integer, intent(in) :: list(:)
+        integer, intent(in)  :: list(:)
         integer, allocatable :: r(:)
-        integer :: i, j, v
+        integer              :: i, j, v
 
         r = list
         do i = 2, size(r)
@@ -960,14 +960,14 @@ contains
     end function sorted
 
     pure function itoa(i) result(s)
-        integer, intent(in) :: i
-        character(len=:), allocatable :: s
-        character(len=16) :: buf
+        integer,           intent(in)  :: i
+        character(len=:),  allocatable :: s
+        character(len=16)              :: buf
         write(buf, '(I0)') i
         s = trim(buf)
     end function itoa
 
-    !> Print the error and exit with code 1.
+    !> Imprime o erro e encerra com código 1.
     subroutine die(msg)
         character(len=*), intent(in) :: msg
         write(error_unit, '(A)') '[atomselect error] ' // msg

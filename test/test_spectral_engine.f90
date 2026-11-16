@@ -1,21 +1,21 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Tests for module spectral_engine (contracts §3, §3.2, §4, §5) on the
-!> example HSIO fixtures (Diatomic and Spinor non-collinear chains).
+!> Testes do módulo spectral_engine (contracts §3, §3.2, §4, §5) sobre os
+!> fixtures HSIO de exemplo (cadeias Diatomic e Spinor não colinear).
 program test_spectral_engine
-    use types, only: dp
-    use hs_io, only: HSDataFormat
-    use core, only: compute_Hk_at_kpoint
-    use structure_io, only: structure_t, read_structure, structure_fingerprint, species_norb_of
-    use atomic_regions, only: region_set_t, add_region, write_regions_file
+    use types,               only: dp
+    use hs_io,               only: HSDataFormat
+    use core,                only: compute_Hk_at_kpoint
+    use structure_io,        only: structure_t, read_structure, structure_fingerprint, species_norb_of
+    use atomic_regions,      only: region_set_t, add_region, write_regions_file
     use spectral_projection, only: orbital_groups_t, build_orbital_groups
-    use spectral_data, only: spectral_data_t, write_spectral_file, read_spectral_file, &
-                             write_spectral_text, find_region, &
-                             SPIN_NONE, SPIN_COLLINEAR, SPIN_NONCOLLINEAR, METHOD_MULLIKEN, METHOD_LOWDIN, &
-                             EREF_FERMI, EREF_UNKNOWN
-    use spectral_engine, only: spectral_input_t, spectral_timing_t, read_spectral_input, run_spectral
-    use testing, only: check, check_close, test_summary
+    use spectral_data,       only: spectral_data_t, write_spectral_file, read_spectral_file, &
+                                   write_spectral_text, find_region, &
+                                   SPIN_NONE, SPIN_COLLINEAR, SPIN_NONCOLLINEAR, METHOD_MULLIKEN, METHOD_LOWDIN, &
+                                   EREF_FERMI, EREF_UNKNOWN
+    use spectral_engine,     only: spectral_input_t, spectral_timing_t, read_spectral_input, run_spectral
+    use testing,             only: check, check_close, test_summary
     !$ use omp_lib, only: omp_get_max_threads, omp_set_num_threads
     implicit none
 
@@ -54,7 +54,7 @@ program test_spectral_engine
 contains
 
     ! ------------------------------------------------------------------
-    ! Helpers
+    ! Rotinas auxiliares
     ! ------------------------------------------------------------------
 
     subroutine base_input(inp, h, s, st)
@@ -73,7 +73,7 @@ contains
     subroutine write_lines(fname, lines)
         character(len=*), intent(in) :: fname
         character(len=*), intent(in) :: lines(:)
-        integer :: iu, i
+        integer                      :: iu, i
         open(newunit=iu, file=fname, status='replace', action='write')
         do i = 1, size(lines)
             write(iu, '(A)') trim(lines(i))
@@ -83,25 +83,25 @@ contains
 
     subroutine remove_file(fname)
         character(len=*), intent(in) :: fname
-        integer :: iu, ios
-        logical :: ex
+        integer                      :: iu, ios
+        logical                      :: ex
         inquire(file=fname, exist=ex)
         if (.not. ex) return
         open(newunit=iu, file=fname, status='old', iostat=ios)
         if (ios == 0) close(iu, status='delete')
     end subroutine remove_file
 
-    !> Writes a regions file for the structure in st_file with the given
-    !> CSR lists; fingerprint: 'auto' = correct one, else used verbatim.
+    !> Escreve um arquivo de regiões para a estrutura em st_file com as
+    !> listas CSR dadas; fingerprint: 'auto' = o correto, senão usado literalmente.
     subroutine make_regions(fname, st_file, names, start, atoms, fp)
         character(len=*), intent(in) :: fname, st_file
         character(len=*), intent(in) :: names(:)
         integer,          intent(in) :: start(:), atoms(:)
         character(len=*), intent(in) :: fp
-        type(structure_t) :: st
-        type(region_set_t) :: rs
-        integer :: ierr, i
-        character(len=256) :: msg
+        type(structure_t)            :: st
+        type(region_set_t)           :: rs
+        integer                      :: ierr, i
+        character(len=256)           :: msg
         call read_structure(st_file, st, ierr, msg)
         rs%natoms = st%nat
         if (fp == 'auto') then
@@ -132,9 +132,9 @@ contains
     ! ------------------------------------------------------------------
 
     subroutine test_read_input()
-        type(spectral_input_t) :: inp
-        integer :: ierr
-        character(len=512) :: msg
+        type(spectral_input_t)      :: inp
+        integer                     :: ierr
+        character(len=512)          :: msg
         character(len=*), parameter :: f = TMP // 'input.nml'
 
         call write_lines(f, [character(len=120) :: &
@@ -190,7 +190,7 @@ contains
         call check(.not. inp%allow_no_fingerprint, 'allow_no_fingerprint default')
         call check(trim(inp%output_prefix) == 'slab', 'output_prefix default')
 
-        ! collinear without h_dn_file
+        ! colinear sem h_dn_file
         call write_lines(f, [character(len=120) :: &
             '&SPECTRAL', "  h_up_file = 'u.hsio'", "  s_file = 's.hsio'", &
             "  structure_file = 'st.nml'", "  spin_mode = 'collinear'", '/', &
@@ -198,7 +198,7 @@ contains
         call read_spectral_input(f, inp, ierr, msg)
         call check(ierr /= 0, 'collinear without h_dn_file rejected')
 
-        ! nvertex out of range
+        ! nvertex fora do intervalo
         call write_lines(f, [character(len=120) :: &
             '&SPECTRAL', "  h_file = 'h.hsio'", "  s_file = 's.hsio'", &
             "  structure_file = 'st.nml'", '/', &
@@ -206,7 +206,7 @@ contains
         call read_spectral_input(f, inp, ierr, msg)
         call check(ierr /= 0, 'nvertex = 1 rejected')
 
-        ! lowdin accepted by the parser; bad tolerance rejected
+        ! lowdin aceito pelo analisador; tolerância inválida rejeitada
         call write_lines(f, [character(len=120) :: &
             '&SPECTRAL', "  h_file = 'h.hsio'", "  s_file = 's.hsio'", &
             "  structure_file = 'st.nml'", "  method = 'lowdin'", '/', &
@@ -224,19 +224,19 @@ contains
     end subroutine test_read_input
 
     ! ------------------------------------------------------------------
-    ! Test 7: energies vs independent zhegv('N'), total = 1
+    ! Teste 7: energias vs zhegv('N') independente, total = 1
     ! ------------------------------------------------------------------
 
     subroutine test_consistency_diatomic()
-        type(spectral_input_t) :: inp
-        type(spectral_data_t) :: sd
-        type(spectral_timing_t) :: tm
-        type(HSDataFormat) :: hd, sdat
+        type(spectral_input_t)   :: inp
+        type(spectral_data_t)    :: sd
+        type(spectral_timing_t)  :: tm
+        type(HSDataFormat)       :: hd, sdat
         complex(dp), allocatable :: Hk(:,:), Sk(:,:), work(:)
-        real(dp), allocatable :: w(:), rwork(:)
-        integer :: ierr, ik, n, info, lwork
-        real(dp) :: maxdiff
-        character(len=512) :: msg
+        real(dp), allocatable    :: w(:), rwork(:)
+        integer                  :: ierr, ik, n, info, lwork
+        real(dp)                 :: maxdiff
+        character(len=512)       :: msg
 
         call base_input(inp, DIA_H, DIA_S, DIA_ST)
         call run_spectral(inp, sd, tm, ierr, msg)
@@ -274,15 +274,15 @@ contains
     end subroutine test_consistency_diatomic
 
     ! ------------------------------------------------------------------
-    ! Lowdin on Diatomic: total = 1, partition = 1, energies = Mulliken run
+    ! Lowdin em Diatomic: total = 1, partição = 1, energias = execução Mulliken
     ! ------------------------------------------------------------------
 
     subroutine test_lowdin_diatomic()
-        type(spectral_input_t) :: inp
-        type(spectral_data_t) :: sdm, sdl
-        type(spectral_timing_t) :: tm
-        integer :: ierr
-        character(len=512) :: msg
+        type(spectral_input_t)      :: inp
+        type(spectral_data_t)       :: sdm, sdl
+        type(spectral_timing_t)     :: tm
+        integer                     :: ierr
+        character(len=512)          :: msg
         character(len=*), parameter :: rf = TMP // 'regions_lowdin.nml'
 
         call make_regions(rf, DIA_ST, ['A_atoms', 'B_atoms'], [1, 4, 7], [1, 3, 5, 2, 4, 6], 'auto')
@@ -305,15 +305,15 @@ contains
     end subroutine test_lowdin_diatomic
 
     ! ------------------------------------------------------------------
-    ! Test 2b: regions partition / overlap
+    ! Teste 2b: partição / sobreposição de regiões
     ! ------------------------------------------------------------------
 
     subroutine test_regions_partition()
-        type(spectral_input_t) :: inp
-        type(spectral_data_t) :: sd
-        type(spectral_timing_t) :: tm
-        integer :: ierr
-        character(len=512) :: msg
+        type(spectral_input_t)      :: inp
+        type(spectral_data_t)       :: sd
+        type(spectral_timing_t)     :: tm
+        integer                     :: ierr
+        character(len=512)          :: msg
         character(len=*), parameter :: rf = TMP // 'regions_ab.nml'
 
         call make_regions(rf, DIA_ST, ['A_atoms', 'B_atoms'], [1, 4, 7], [1, 3, 5, 2, 4, 6], 'auto')
@@ -330,7 +330,7 @@ contains
             call check_close(max_total_dev(sd), 0.0_dp, 1e-10_dp, 'total = 1 (with regions)')
         end if
 
-        ! overlapping regions are accepted
+        ! regiões sobrepostas são aceitas
         call make_regions(rf, DIA_ST, ['left ', 'right'], [1, 4, 7], [1, 2, 3, 3, 4, 5], 'auto')
         call run_spectral(inp, sd, tm, ierr, msg)
         call check(ierr == 0, 'run_spectral with overlapping regions: ' // trim(msg))
@@ -340,18 +340,18 @@ contains
     end subroutine test_regions_partition
 
     ! ------------------------------------------------------------------
-    ! Test 8a: non-collinear spinor
+    ! Teste 8a: spinor não colinear
     ! ------------------------------------------------------------------
 
     subroutine test_spin_noncollinear()
-        type(spectral_input_t) :: inp
-        type(spectral_data_t) :: sd
-        type(spectral_timing_t) :: tm
-        type(HSDataFormat) :: sdat
-        type(structure_t) :: st
-        type(orbital_groups_t) :: groups
-        integer :: ierr, ia
-        character(len=512) :: msg
+        type(spectral_input_t)      :: inp
+        type(spectral_data_t)       :: sd
+        type(spectral_timing_t)     :: tm
+        type(HSDataFormat)          :: sdat
+        type(structure_t)           :: st
+        type(orbital_groups_t)      :: groups
+        integer                     :: ierr, ia
+        character(len=512)          :: msg
         character(len=*), parameter :: rf = TMP // 'regions_atoms.nml'
 
         call make_regions(rf, SPI_ST, ['at1', 'at2', 'at3', 'at4', 'at5', 'at6'], &
@@ -369,7 +369,7 @@ contains
             call check_close(max_regsum_dev(sd), 0.0_dp, 1e-10_dp, 'spinor per-atom regions sum = 1')
         end if
 
-        ! orbital counts per atom = species table (4/2 alternating)
+        ! contagem de orbitais por átomo = tabela de espécies (4/2 alternados)
         call sdat%ReadFile(SPI_S)
         call read_structure(SPI_ST, st, ierr, msg)
         call build_orbital_groups(sdat%Orbs, 6, [1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, 6], groups)
@@ -384,15 +384,15 @@ contains
     end subroutine test_spin_noncollinear
 
     ! ------------------------------------------------------------------
-    ! Test 8b: collinear with identical up/dn
+    ! Teste 8b: colinear com up/dn idênticos
     ! ------------------------------------------------------------------
 
     subroutine test_spin_collinear()
-        type(spectral_input_t) :: inp
-        type(spectral_data_t) :: sd
+        type(spectral_input_t)  :: inp
+        type(spectral_data_t)   :: sd
         type(spectral_timing_t) :: tm
-        integer :: ierr
-        character(len=512) :: msg
+        integer                 :: ierr
+        character(len=512)      :: msg
 
         call base_input(inp, '', DIA_S, DIA_ST)
         inp%spin_mode = 'collinear'
@@ -411,18 +411,18 @@ contains
     end subroutine test_spin_collinear
 
     ! ------------------------------------------------------------------
-    ! Error paths (ierr /= 0, no stop)
+    ! Caminhos de erro (ierr /= 0, sem stop)
     ! ------------------------------------------------------------------
 
     subroutine test_errors()
-        type(spectral_input_t) :: inp
-        type(spectral_data_t) :: sd
-        type(spectral_timing_t) :: tm
-        integer :: ierr
-        character(len=512) :: msg
+        type(spectral_input_t)      :: inp
+        type(spectral_data_t)       :: sd
+        type(spectral_timing_t)     :: tm
+        integer                     :: ierr
+        character(len=512)          :: msg
         character(len=*), parameter :: sf = TMP // 'struct5.nml', rf = TMP // 'regions_bad.nml'
 
-        ! 5-atom structure vs 6-atom HSIO
+        ! estrutura de 5 átomos vs HSIO de 6 átomos
         call write_lines(sf, [character(len=80) :: &
             '&STRUCTURE', &
             '    LatticeVectors(1,:) = 3.0,0.0,0.0', &
@@ -436,25 +436,25 @@ contains
         call check(ierr /= 0, 'structure atom count mismatch rejected')
         call check(index(msg, 'nAtoms') > 0, 'atom count message: ' // trim(msg))
 
-        ! wrong species nOrb (Spinor structure with Diatomic HSIO)
+        ! nOrb de espécie errado (estrutura Spinor com HSIO Diatomic)
         call base_input(inp, DIA_H, DIA_S, SPI_ST)
         call run_spectral(inp, sd, tm, ierr, msg)
         call check(ierr /= 0, 'species nOrb mismatch rejected')
         call check(index(msg, 'atom 1') > 0, 'species mismatch names atom: ' // trim(msg))
 
-        ! H/S mismatch
+        ! H/S inconsistentes
         call base_input(inp, SPI_H, DIA_S, DIA_ST)
         call run_spectral(inp, sd, tm, ierr, msg)
         call check(ierr /= 0, 'H vs S mismatch rejected')
 
-        ! fingerprint mismatch
+        ! fingerprint inconsistente
         call make_regions(rf, DIA_ST, ['r1'], [1, 3], [1, 2], '0123456789abcdef')
         call base_input(inp, DIA_H, DIA_S, DIA_ST)
         inp%regions_file = rf
         call run_spectral(inp, sd, tm, ierr, msg)
         call check(ierr /= 0, 'regions fingerprint mismatch rejected')
 
-        ! missing fingerprint: rejected unless allowed
+        ! fingerprint ausente: rejeitado, a menos que permitido
         call make_regions(rf, DIA_ST, ['r1'], [1, 3], [1, 2], '')
         call run_spectral(inp, sd, tm, ierr, msg)
         call check(ierr /= 0, 'missing fingerprint rejected without allow flag')
@@ -462,7 +462,7 @@ contains
         call run_spectral(inp, sd, tm, ierr, msg)
         call check(ierr == 0, 'missing fingerprint accepted with allow flag: ' // trim(msg))
 
-        ! missing H file
+        ! arquivo H ausente
         call base_input(inp, TMP // 'does_not_exist.hsio', DIA_S, DIA_ST)
         call run_spectral(inp, sd, tm, ierr, msg)
         call check(ierr /= 0, 'missing H file rejected')
@@ -472,15 +472,15 @@ contains
     end subroutine test_errors
 
     ! ------------------------------------------------------------------
-    ! run_spectral -> write -> read round trip
+    ! run_spectral -> escrita -> leitura (ida e volta)
     ! ------------------------------------------------------------------
 
     subroutine test_roundtrip_file()
-        type(spectral_input_t) :: inp
-        type(spectral_data_t) :: sd, sd2
+        type(spectral_input_t)  :: inp
+        type(spectral_data_t)   :: sd, sd2
         type(spectral_timing_t) :: tm
-        integer :: ierr
-        character(len=512) :: msg
+        integer                 :: ierr
+        character(len=512)      :: msg
         character(len=*), parameter :: rf = TMP // 'regions_rt.nml', bf = TMP // 'rt.spectral.bin', &
                                        tf = TMP // 'rt.spectral.txt'
 
@@ -509,17 +509,17 @@ contains
     end subroutine test_roundtrip_file
 
     ! ------------------------------------------------------------------
-    ! Determinism: repeated runs are bitwise identical; under OpenMP, 1 vs 4
-    ! threads are bitwise identical as well (each (spin,k) is computed by one
-    ! thread with the same serial code path; no reductions over k).
+    ! Determinismo: execuções repetidas são idênticas bit a bit; sob OpenMP, 1 vs 4
+    ! threads também são idênticas bit a bit (cada (spin,k) é calculado por uma
+    ! thread com o mesmo caminho de código serial; sem reduções sobre k).
     ! ------------------------------------------------------------------
 
     subroutine test_determinism()
-        type(spectral_input_t) :: inp
-        type(spectral_data_t) :: sd1, sd2
+        type(spectral_input_t)  :: inp
+        type(spectral_data_t)   :: sd1, sd2
         type(spectral_timing_t) :: tm
-        integer :: ierr, max_thr
-        character(len=512) :: msg
+        integer                 :: ierr, max_thr
+        character(len=512)      :: msg
 
         max_thr = 1
         !$ max_thr = omp_get_max_threads()
@@ -537,7 +537,7 @@ contains
             call check(all(sd1%weight == sd2%weight), 'determinism: weights bitwise equal (repeat)')
         end if
 
-        ! OpenMP builds only: 1 thread vs 4 threads.
+        ! Somente em builds com OpenMP: 1 thread vs 4 threads.
         !$ call omp_set_num_threads(1)
         !$ call run_spectral(inp, sd1, tm, ierr, msg)
         !$ call check(ierr == 0 .and. tm%nthreads == 1, 'determinism: 1-thread run: ' // trim(msg))

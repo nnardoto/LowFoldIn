@@ -1,25 +1,25 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Pure numerical building blocks for atom/region-resolved spectral weights
-!> (docs/design/contracts.md §4): orbital groups from atom lists, S·C product,
-!> Mulliken and Löwdin weights and a non-stopping generalized Hermitian
-!> eigensolver.
+!> Blocos numéricos puros para pesos espectrais resolvidos por átomo/região
+!> (docs/design/contracts.md §4): grupos de orbitais a partir de listas de átomos,
+!> produto S·C, pesos de Mulliken e de Löwdin e um autoresolvedor hermitiano
+!> generalizado que nunca para o programa.
 !>
-!> Pipeline position: called per k-point by spectral_engine (`process_kpoint`)
-!> after H(k), S(k) have been built: eigensolve -> (S·C) -> weights W(band, group).
-!> No I/O, no module state; library routines never stop (errors via ierr).
+!> Posição no pipeline: chamado por ponto k pelo spectral_engine (`process_kpoint`)
+!> depois de construídos H(k), S(k): autoproblema -> (S·C) -> pesos W(banda, grupo).
+!> Sem E/S, sem estado de módulo; as rotinas da biblioteca nunca param (erros via ierr).
 !>
-!> Conventions:
-!>   - Matrices are full-storage Hermitian complex(dp), column-major; the upper
-!>     triangle is the one referenced by LAPACK/BLAS here.
-!>   - Eigenvectors are the columns of C: C(mu, b) = coefficient of orbital mu
-!>     in band b; bands ascend in energy and satisfy C^† S C = I.
-!>   - Orbital and atom indices are 1-based; atom a owns the contiguous
-!>     orbitals offset(a)+1 .. offset(a+1) (offset itself is 0-based).
-!>   - Weights are signed: nothing is clipped or abs()'d (see each routine).
-!>   - S passed to the weight routines must be the original S(k), never the
-!>     (destroyed) zhegv workspace.
+!> Convenções:
+!>   - As matrizes são hermitianas complex(dp) em armazenamento completo, ordem de
+!>     colunas; aqui o LAPACK/BLAS referencia o triângulo superior.
+!>   - Os autovetores são as colunas de C: C(mu, b) = coeficiente do orbital mu
+!>     na banda b; as bandas crescem em energia e satisfazem C^† S C = I.
+!>   - Índices de orbitais e de átomos são base 1; o átomo a possui os orbitais
+!>     contíguos offset(a)+1 .. offset(a+1) (o próprio offset é base 0).
+!>   - Os pesos têm sinal: nada é truncado nem passado por abs() (veja cada rotina).
+!>   - O S passado às rotinas de peso deve ser o S(k) original, nunca o espaço de
+!>     trabalho (destruído) do zhegv.
 module spectral_projection
     use types, only: dp
     implicit none
@@ -31,22 +31,22 @@ module spectral_projection
     public :: generalized_eigensolve
 
     ! ==================================================================
-    ! Types
+    ! Tipos
     ! ==================================================================
 
-    !> Groups of orbital indices in CSR layout:
-    !> group g = orb(start(g):start(g+1)-1). norb = total orbitals of the
-    !> system (not the number stored in orb: overlapping groups may repeat
-    !> orbitals, and groups need not cover all of them).
+    !> Grupos de índices de orbitais em layout CSR:
+    !> grupo g = orb(start(g):start(g+1)-1). norb = total de orbitais do
+    !> sistema (não o número armazenado em orb: grupos sobrepostos podem repetir
+    !> orbitais, e os grupos não precisam cobrir todos eles).
     type :: orbital_groups_t
-        integer :: ngroup = 0, norb = 0
-        integer, allocatable :: start(:)   ! (ngroup+1)
+        integer              :: ngroup = 0, norb = 0
+        integer, allocatable :: start(:)             ! (ngroup+1)
         integer, allocatable :: orb(:)
     end type orbital_groups_t
 
     ! ==================================================================
-    ! EXPLICIT INTERFACES FOR BLAS/LAPACK (double complex)
-    ! (no intent in the external signatures, hence the local copies below)
+    ! INTERFACES EXPLÍCITAS PARA BLAS/LAPACK (double complex)
+    ! (as assinaturas externas não têm intent, daí as cópias locais abaixo)
     ! ==================================================================
     interface
         subroutine zhemm(side, uplo, m, n, alpha, a, lda, b, ldb, beta, c, ldc)
@@ -85,16 +85,16 @@ module spectral_projection
 contains
 
     ! ==================================================================
-    ! Orbital bookkeeping
+    ! Contabilidade de orbitais
     ! ==================================================================
 
-    !> Orbital offsets per atom: offset(1) = 0, offset(a+1) = offset(a) + orbs(a).
-    !> Orbitals of atom a are offset(a)+1 .. offset(a+1).
-    !> offset must have size nat+1 (nat = size(orbs_per_atom)).
+    !> Deslocamentos de orbitais por átomo: offset(1) = 0, offset(a+1) = offset(a) + orbs(a).
+    !> Os orbitais do átomo a são offset(a)+1 .. offset(a+1).
+    !> offset deve ter tamanho nat+1 (nat = size(orbs_per_atom)).
     pure subroutine atom_orbital_offsets(orbs_per_atom, offset)
         integer, intent(in)  :: orbs_per_atom(:)
-        integer, intent(out) :: offset(:)          ! (nat+1)
-        integer :: a
+        integer, intent(out) :: offset(:)           ! (nat+1)
+        integer              :: a
 
         offset(1) = 0
         do a = 1, size(orbs_per_atom)
@@ -102,14 +102,14 @@ contains
         end do
     end subroutine atom_orbital_offsets
 
-    !> Generic CSR atom lists -> orbital lists. Group g contains, for each atom
-    !> a in list_atoms(list_start(g):list_start(g+1)-1) (in that order), the
-    !> orbitals offset(a)+1 .. offset(a)+orbs(a). Atoms may appear in several
-    !> groups (overlapping groups are allowed).
-    !> list_start(1:nlist+1) must be 1-based and monotonic (list_start(nlist+1)-1
-    !> = number of entries used in list_atoms). Atom indices are not range
-    !> checked here: callers must pass 1 <= a <= size(orbs_per_atom).
-    !> groups%norb = total orbitals of the system. Never stops.
+    !> Listas CSR genéricas de átomos -> listas de orbitais. O grupo g contém, para cada
+    !> átomo a em list_atoms(list_start(g):list_start(g+1)-1) (nessa ordem), os
+    !> orbitais offset(a)+1 .. offset(a)+orbs(a). Um átomo pode aparecer em vários
+    !> grupos (grupos sobrepostos são permitidos).
+    !> list_start(1:nlist+1) deve ser base 1 e monótono (list_start(nlist+1)-1
+    !> = número de entradas usadas em list_atoms). Os índices de átomos não têm o
+    !> intervalo verificado aqui: o chamador deve passar 1 <= a <= size(orbs_per_atom).
+    !> groups%norb = total de orbitais do sistema. Nunca para o programa.
     subroutine build_orbital_groups(orbs_per_atom, nlist, list_start, list_atoms, groups)
         integer,                intent(in)  :: orbs_per_atom(:)
         integer,                intent(in)  :: nlist
@@ -118,7 +118,7 @@ contains
         type(orbital_groups_t), intent(out) :: groups
 
         integer, allocatable :: offset(:)
-        integer :: nat, g, i, a, mu, pos, ntot
+        integer              :: nat, g, i, a, mu, pos, ntot
 
         nat = size(orbs_per_atom)
         allocate(offset(nat + 1))
@@ -128,7 +128,7 @@ contains
         groups%norb   = offset(nat + 1)
         allocate(groups%start(nlist + 1))
 
-        ! 1. First pass: size of every group -> CSR start pointers.
+        ! 1. Primeira passada: tamanho de cada grupo -> ponteiros de início CSR.
         groups%start(1) = 1
         do g = 1, nlist
             ntot = 0
@@ -138,7 +138,7 @@ contains
             groups%start(g + 1) = groups%start(g) + ntot
         end do
 
-        ! 2. Second pass: expand each atom into its contiguous orbital range.
+        ! 2. Segunda passada: expande cada átomo em seu intervalo contíguo de orbitais.
         allocate(groups%orb(groups%start(nlist + 1) - 1))
         pos = 0
         do g = 1, nlist
@@ -153,12 +153,12 @@ contains
     end subroutine build_orbital_groups
 
     ! ==================================================================
-    ! Weights
+    ! Pesos
     ! ==================================================================
 
-    !> SC = S·C with S Hermitian (full storage, upper triangle referenced).
-    !> S and C are not modified. S(n,n), C(n,nband), SC(n,nband); nband = n
-    !> in the spectral engine. If n <= 0 or nband <= 0, returns with SC untouched.
+    !> SC = S·C com S hermitiana (armazenamento completo, triângulo superior referenciado).
+    !> S e C não são modificados. S(n,n), C(n,nband), SC(n,nband); nband = n
+    !> no motor spectral. Se n <= 0 ou nband <= 0, retorna com SC intacto.
     subroutine overlap_times_vectors(n, nband, S, C, SC)
         integer,     intent(in)  :: n, nband
         complex(dp), intent(in)  :: S(n, n)
@@ -168,8 +168,8 @@ contains
         complex(dp), allocatable :: Swork(:, :), Cwork(:, :)
 
         if (n <= 0 .or. nband <= 0) return
-        ! Local copies keep the intent(in) arguments formally untouched for the
-        ! external call (zhemm does not modify A or B, but its interface has no intent).
+        ! As cópias locais mantêm os argumentos intent(in) formalmente intactos na
+        ! chamada externa (zhemm não modifica A nem B, mas sua interface não tem intent).
         allocate(Swork(n, n), Cwork(n, nband))
         Swork = S
         Cwork = C
@@ -178,17 +178,17 @@ contains
     end subroutine overlap_times_vectors
 
     !> Mulliken weights W(b,g) = Re Σ_{μ∈g} conj(C(μ,b)) · SC(μ,b).
-    !> Negative values are kept as-is (no clipping, no abs): Mulliken weights
-    !> are populations, not probabilities. SC must be S·C from the same S as
-    !> used in the eigensolve (see overlap_times_vectors). The group made of
-    !> all orbitals sums to 1 per band for normalised C (C^† S C = I).
+    !> Valores negativos são mantidos como estão (sem truncar, sem abs): os pesos de
+    !> Mulliken são populações, não probabilidades. SC deve ser S·C com o mesmo S
+    !> usado no autoproblema (veja overlap_times_vectors). O grupo formado por
+    !> todos os orbitais soma 1 por banda para C normalizado (C^† S C = I).
     subroutine mulliken_weights(n, nband, C, SC, groups, W)
         integer,                intent(in)  :: n, nband
         complex(dp),            intent(in)  :: C(n, nband), SC(n, nband)
         type(orbital_groups_t), intent(in)  :: groups
         real(dp),               intent(out) :: W(nband, groups%ngroup)
 
-        integer :: g, b, i, mu
+        integer  :: g, b, i, mu
         real(dp) :: acc
 
         do g = 1, groups%ngroup
@@ -204,12 +204,12 @@ contains
     end subroutine mulliken_weights
 
     !> Löwdin weights W(b,g) = Σ_{μ∈g} |(S^{1/2} C)(μ,b)|².
-    !> Non-negative by construction (orthogonalised basis).
-    !> S^{1/2} = U diag(sqrt(w)) U^† from zheev('V','U') on a COPY of S.
-    !> smin = smallest eigenvalue of S. If smin <= tol_s_min: ierr = 1 and W is
-    !> left undefined (eigenvalues are never floored or clipped).
-    !> zheev failure: ierr = info (< 0, illegal argument) or 1000 + info (> 0,
-    !> no convergence), both distinct from 1. S and C are not modified.
+    !> Não negativos por construção (base ortogonalizada).
+    !> S^{1/2} = U diag(sqrt(w)) U^† obtido de zheev('V','U') sobre uma CÓPIA de S.
+    !> smin = menor autovalor de S. Se smin <= tol_s_min: ierr = 1 e W fica
+    !> indefinido (os autovalores nunca são limitados nem truncados).
+    !> Falha do zheev: ierr = info (< 0, argumento ilegal) ou 1000 + info (> 0,
+    !> sem convergência), ambos distintos de 1. S e C não são modificados.
     subroutine lowdin_weights(n, nband, S, C, groups, W, tol_s_min, smin, ierr)
         integer,                intent(in)  :: n, nband
         complex(dp),            intent(in)  :: S(n, n)
@@ -221,10 +221,10 @@ contains
         integer,                intent(out) :: ierr
 
         complex(dp), allocatable :: U(:, :), US(:, :), Shalf(:, :), Cwork(:, :), Ct(:, :), work(:)
-        complex(dp) :: wquery(1)
+        complex(dp)              :: wquery(1)
         real(dp),    allocatable :: ev(:), rwork(:)
-        real(dp) :: acc
-        integer :: lwork, info, i, g, b, mu
+        real(dp)                 :: acc
+        integer                  :: lwork, info, i, g, b, mu
 
         ierr = 0
         smin = 0.0_dp
@@ -233,8 +233,8 @@ contains
         allocate(U(n, n), ev(n), rwork(max(1, 3 * n - 2)))
         U = S
 
-        ! 1. Diagonalise S (copy in U): S = U diag(ev) U^†.
-        ! LAPACK workspace query (lwork = -1 returns the optimal size in wquery).
+        ! 1. Diagonaliza S (cópia em U): S = U diag(ev) U^†.
+        ! Consulta de espaço de trabalho do LAPACK (lwork = -1 devolve o tamanho ótimo em wquery).
         call zheev('V', 'U', n, U, n, ev, wquery, -1, rwork, info)
         if (info /= 0) then
             ierr = merge(info, 1000 + info, info < 0)
@@ -248,28 +248,28 @@ contains
             return
         end if
 
-        ! 2. Positive-definiteness guard: eigenvalues ascend, but minval is
-        ! used so the check does not depend on the ordering. Caller aborts.
+        ! 2. Guarda de positividade definida: os autovalores crescem, mas usa-se
+        ! minval para que a verificação não dependa da ordenação. O chamador aborta.
         smin = minval(ev)
         if (smin <= tol_s_min) then
             ierr = 1
             return
         end if
 
-        ! 3. S^{1/2} = (U diag(sqrt(ev))) U^H  (column scaling, then zgemm 'N','C')
+        ! 3. S^{1/2} = (U diag(sqrt(ev))) U^H  (escala das colunas, depois zgemm 'N','C')
         allocate(US(n, n), Shalf(n, n))
         do i = 1, n
             US(:, i) = U(:, i) * sqrt(ev(i))
         end do
         call zgemm('N', 'C', n, n, n, (1.0_dp, 0.0_dp), US, n, U, n, (0.0_dp, 0.0_dp), Shalf, n)
 
-        ! 4. Ct = S^{1/2} C (local copy of C keeps the intent(in) argument untouched)
+        ! 4. Ct = S^{1/2} C (a cópia local de C mantém o argumento intent(in) intacto)
         allocate(Cwork(n, nband), Ct(n, nband))
         Cwork = C
         call zgemm('N', 'N', n, nband, n, (1.0_dp, 0.0_dp), Shalf, n, Cwork, n, &
                    (0.0_dp, 0.0_dp), Ct, n)
 
-        ! 5. Sum |Ct|^2 over the orbitals of each group.
+        ! 5. Soma |Ct|^2 sobre os orbitais de cada grupo.
         do g = 1, groups%ngroup
             do b = 1, nband
                 acc = 0.0_dp
@@ -283,15 +283,15 @@ contains
     end subroutine lowdin_weights
 
     ! ==================================================================
-    ! Eigensolver
+    ! Autoresolvedor
     ! ==================================================================
 
-    !> Generalized Hermitian eigenproblem H C = S C diag(E) via
-    !> zhegv(1,'V','U') on internal copies of H and S. Eigenvalues ascending,
-    !> C^† S C = I. Never stops: ierr = info from zhegv (or the workspace query):
-    !> info < 0 illegal argument, 0 < info <= n eigensolver failed to converge,
-    !> info > n S not positive definite (LAPACK convention). On ierr /= 0, E and C
-    !> are undefined. H and S are not modified.
+    !> Autoproblema hermitiano generalizado H C = S C diag(E) via
+    !> zhegv(1,'V','U') sobre cópias internas de H e S. Autovalores crescentes,
+    !> C^† S C = I. Nunca para o programa: ierr = info do zhegv (ou da consulta de espaço):
+    !> info < 0 argumento ilegal, 0 < info <= n o autoresolvedor não convergiu,
+    !> info > n S não é definida positiva (convenção do LAPACK). Com ierr /= 0, E e C
+    !> ficam indefinidos. H e S não são modificados.
     subroutine generalized_eigensolve(n, H, S, E, C, ierr)
         integer,     intent(in)  :: n
         complex(dp), intent(in)  :: H(n, n), S(n, n)
@@ -300,21 +300,21 @@ contains
         integer,     intent(out) :: ierr
 
         complex(dp), allocatable :: Bwork(:, :), work(:)
-        complex(dp) :: wquery(1)
+        complex(dp)              :: wquery(1)
         real(dp),    allocatable :: rwork(:)
-        integer :: lwork, info
+        integer                  :: lwork, info
 
         ierr = 0
         if (n <= 0) return
 
-        ! zhegv overwrites A with the eigenvectors and B with its Cholesky
-        ! factor, so both are passed as copies (C doubles as the A copy).
+        ! O zhegv sobrescreve A com os autovetores e B com seu fator de Cholesky,
+        ! então ambos são passados como cópias (C serve também de cópia de A).
         C = H
         allocate(Bwork(n, n))
         Bwork = S
         allocate(rwork(max(1, 3 * n - 2)))
 
-        ! LAPACK workspace query (lwork = -1)
+        ! Consulta de espaço de trabalho do LAPACK (lwork = -1)
         call zhegv(1, 'V', 'U', n, C, n, Bwork, n, E, wquery, -1, rwork, info)
         if (info /= 0) then
             ierr = info

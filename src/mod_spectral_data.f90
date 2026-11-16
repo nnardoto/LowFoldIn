@@ -1,30 +1,30 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Discrete spectral data (band energies + projection weights per atomic
-!> region along a k-path) and its intermediate on-disk formats
+!> Dados espectrais discretos (energias de banda + pesos de projeção por região
+!> atômica ao longo de um caminho k) e seus formatos intermediários em disco
 !> (docs/design/contracts.md §5).
 !>
-!> Pipeline position: the spectral engine produces a spectral_data_t and
-!> write_spectral_file stores it; downstream tools (specmap) read it back
-!> with read_spectral_file, so they need neither the Hamiltonian nor the
-!> structure.
+!> Posição no pipeline: o motor espectral produz um spectral_data_t e
+!> write_spectral_file o armazena; as ferramentas posteriores (specmap) o leem de
+!> volta com read_spectral_file, portanto não precisam do Hamiltoniano nem da
+!> estrutura.
 !>
-!>   - binary stream file (write_spectral_file / read_spectral_file)
-!>   - text export for debugging (write_spectral_text, never read back)
+!>   - arquivo binário em stream (write_spectral_file / read_spectral_file)
+!>   - exportação em texto para depuração (write_spectral_text, nunca relida)
 !>
-!> Conventions
-!>   - Units are fixed by the format: energies in eV, k distances in 1/Angstrom.
-!>   - Array shapes follow Fortran order, band index first:
+!> Convenções
+!>   - As unidades são fixadas pelo formato: energias em eV, distâncias k em 1/Angstrom.
+!>   - Os formatos dos arrays seguem a ordem Fortran, com o índice de banda primeiro:
 !>     energy(nband,nk,nspin), weight(nband,nk,nregion,nspin).
-!>   - All indices are 1-based. Region 1 is always named 'total'.
-!>   - nspin = 2 only for collinear spin (spin_mode = SPIN_COLLINEAR).
-!>   - Binary files use native byte order; an endian canary detects a
-!>     mismatch. Integers are int32 and reals real64 on disk, independent of
-!>     the default kinds used in memory.
+!>   - Todos os índices são de base 1. A região 1 sempre se chama 'total'.
+!>   - nspin = 2 somente para spin colinear (spin_mode = SPIN_COLLINEAR).
+!>   - Os arquivos binários usam a ordem de bytes nativa; um canário de endianness
+!>     detecta incompatibilidade. No disco, inteiros são int32 e reais são real64,
+!>     independentemente dos kinds padrão usados em memória.
 !>
-!> Library routines never stop: errors are returned through ierr/errmsg
-!> (ierr = 0 means success).
+!> As rotinas da biblioteca nunca param: os erros são devolvidos via ierr/errmsg
+!> (ierr = 0 significa sucesso).
 module spectral_data
     use, intrinsic :: iso_fortran_env, only: int32, int64, real64
     use types, only: dp
@@ -32,65 +32,65 @@ module spectral_data
     private
 
     ! ==================================================================
-    ! Enumerations
+    ! Enumerações
     ! ==================================================================
-    integer, parameter, public :: SPIN_NONE = 0, SPIN_COLLINEAR = 1, SPIN_NONCOLLINEAR = 2
-    integer, parameter, public :: METHOD_MULLIKEN = 1, METHOD_LOWDIN = 2   ! projection scheme
-    integer, parameter, public :: EREF_UNKNOWN = 0, EREF_FERMI = 1, EREF_ABSOLUTE = 2  ! energy zero
+    integer, parameter, public :: SPIN_NONE    = 0, SPIN_COLLINEAR = 1, SPIN_NONCOLLINEAR = 2
+    integer, parameter, public :: METHOD_MULLIKEN = 1, METHOD_LOWDIN = 2                    ! esquema de projeção
+    integer, parameter, public :: EREF_UNKNOWN = 0, EREF_FERMI = 1, EREF_ABSOLUTE = 2       ! zero de energia
 
     ! ==================================================================
-    ! Data type
+    ! Tipo de dados
     ! ==================================================================
 
-    !> In-memory image of a spectral data file. The allocatable arrays must
-    !> be allocated with the shapes given below before writing; read
-    !> allocates them. vertex_k/vertex_label are optional when nvertex = 0.
-    !> fermi_energy_ev is meaningful only if fermi_known; energy_ref tells
-    !> whether energies are already shifted by E_F (EREF_FERMI) or absolute.
+    !> Imagem em memória de um arquivo de dados espectrais. Os arrays alocáveis
+    !> devem ser alocados com os formatos abaixo antes da escrita; a leitura
+    !> os aloca. vertex_k/vertex_label são opcionais quando nvertex = 0.
+    !> fermi_energy_ev só tem significado se fermi_known; energy_ref indica
+    !> se as energias já estão deslocadas por E_F (EREF_FERMI) ou são absolutas.
     type, public :: spectral_data_t
-        integer :: version_major = 1, version_minor = 0
-        integer :: nk = 0, nband = 0, nspin = 1, nregion = 0, nvertex = 0
-        integer :: spin_mode = SPIN_NONE, method = METHOD_MULLIKEN, energy_ref = EREF_UNKNOWN
-        logical :: fermi_known = .false.
-        real(dp) :: fermi_energy_ev = 0
-        character(len=16)  :: fingerprint = ''
-        character(len=512) :: source = ''          ! free text: input file names
-        real(dp), allocatable :: kfrac(:,:)        ! (3,nk)
-        real(dp), allocatable :: kdist(:)          ! (nk) 1/Angstrom
-        integer,  allocatable :: vertex_k(:)       ! (nvertex)
+        integer                        :: version_major = 1, version_minor = 0
+        integer                        :: nk = 0, nband = 0, nspin = 1, nregion = 0, nvertex = 0
+        integer                        :: spin_mode = SPIN_NONE, method = METHOD_MULLIKEN, energy_ref = EREF_UNKNOWN
+        logical                        :: fermi_known = .false.
+        real(dp)                       :: fermi_energy_ev = 0
+        character(len=16)              :: fingerprint = ''
+        character(len=512)             :: source = ''        ! texto livre: nomes dos arquivos de entrada
+        real(dp), allocatable          :: kfrac(:,:)         ! (3,nk)
+        real(dp), allocatable          :: kdist(:)           ! (nk) 1/Angstrom
+        integer,  allocatable          :: vertex_k(:)        ! (nvertex)
         character(len=16), allocatable :: vertex_label(:)    ! (nvertex)
-        character(len=64), allocatable :: region_name(:)     ! (nregion); region 1 = 'total'
-        integer,  allocatable :: region_natoms(:)  ! (nregion)
-        real(dp), allocatable :: energy(:,:,:)     ! (nband, nk, nspin) eV
-        real(dp), allocatable :: weight(:,:,:,:)   ! (nband, nk, nregion, nspin)
+        character(len=64), allocatable :: region_name(:)     ! (nregion); região 1 = 'total'
+        integer,  allocatable          :: region_natoms(:)   ! (nregion)
+        real(dp), allocatable          :: energy(:,:,:)      ! (nband, nk, nspin) eV
+        real(dp), allocatable          :: weight(:,:,:,:)    ! (nband, nk, nregion, nspin)
     end type spectral_data_t
 
     public :: write_spectral_file, read_spectral_file, write_spectral_text, find_region
 
     ! ==================================================================
-    ! Binary format constants (layout table in contracts.md §5)
+    ! Constantes do formato binário (tabela de layout em contracts.md §5)
     ! ==================================================================
     character(len=8), parameter :: SD_MAGIC   = "LFSPECT" // achar(0)
     character(len=8), parameter :: SD_TRAILER = "LFSPEND" // achar(0)
     integer(int32),   parameter :: SD_VER_MAJOR = 1_int32, SD_VER_MINOR = 0_int32
-    integer(int32),   parameter :: SD_CANARY = 168496141_int32   ! 0x0A0B0C0D, byte-order probe
+    integer(int32),   parameter :: SD_CANARY    = 168496141_int32   ! 0x0A0B0C0D, sonda de ordem de bytes
 
-    !> Fixed header size in bytes (items 1..9 of the layout table):
-    !> magic + versions + canary + type sizes + 5 dims + 4 flags + E_F +
+    !> Tamanho fixo do cabeçalho em bytes (itens 1..9 da tabela de layout):
+    !> magic + versões + canário + tamanhos de tipo + 5 dimensões + 4 flags + E_F +
     !> fingerprint + source.
     integer(int64), parameter :: SD_HEADER_BYTES = 8 + 2*4 + 4 + 3*4 + 5*4 + 4*4 + 8 + 16 + 512
 
 contains
 
     ! ==================================================================
-    ! Public API
+    ! API pública
     ! ==================================================================
 
-    !> Index of the region whose trimmed name equals trim(name); 0 if absent.
+    !> Índice da região cujo nome aparado é igual a trim(name); 0 se não existir.
     integer function find_region(sd, name) result(idx)
         type(spectral_data_t), intent(in) :: sd
         character(len=*),      intent(in) :: name
-        integer :: i
+        integer                           :: i
         idx = 0
         if (.not. allocated(sd%region_name)) return
         do i = 1, size(sd%region_name)
@@ -101,19 +101,19 @@ contains
         end do
     end function find_region
 
-    !> Write sd to a binary stream file (layout of contracts.md §5).
-    !> The file is overwritten if it exists. sd is validated first (shapes,
-    !> enumerations, region 1 = 'total'); the same checks apply to the text
-    !> writer.
-    !> ierr: 0 ok; 1 invalid sd or cannot open file; 2 I/O error while
-    !> writing; 3 error on close. errmsg describes the failure.
+    !> Escreve sd em um arquivo binário em stream (layout de contracts.md §5).
+    !> O arquivo é sobrescrito se existir. sd é validado antes (formatos,
+    !> enumerações, região 1 = 'total'); as mesmas verificações valem para o
+    !> escritor de texto.
+    !> ierr: 0 ok; 1 sd inválido ou não abre o arquivo; 2 erro de E/S durante a
+    !> escrita; 3 erro no fechamento. errmsg descreve a falha.
     subroutine write_spectral_file(filename, sd, ierr, errmsg)
         character(len=*),      intent(in)  :: filename
         type(spectral_data_t), intent(in)  :: sd
         integer,               intent(out) :: ierr
         character(len=*),      intent(out) :: errmsg
 
-        integer :: u, ios, i
+        integer        :: u, ios, i
         integer(int32) :: fk
 
         call validate(sd, ierr, errmsg)
@@ -130,9 +130,9 @@ contains
         fk = 0_int32
         if (sd%fermi_known) fk = 1_int32
 
-        ! Records follow the layout table order. Any write error leaves ios
-        ! non-zero, which short-circuits the remaining writes.
-        ! Header (items 1..9)
+        ! Os registros seguem a ordem da tabela de layout. Qualquer erro de escrita
+        ! deixa ios diferente de zero, o que interrompe as escritas restantes.
+        ! Cabeçalho (itens 1..9)
         write(u, iostat=ios) SD_MAGIC, SD_VER_MAJOR, SD_VER_MINOR, SD_CANARY, &
             int(storage_size(0_int32)/8, int32), int(storage_size(0_int64)/8, int32), &
             int(storage_size(0.0_real64)/8, int32), &
@@ -140,7 +140,7 @@ contains
             int(sd%nregion, int32), int(sd%nvertex, int32), &
             int(sd%spin_mode, int32), int(sd%method, int32), int(sd%energy_ref, int32), fk, &
             real(sd%fermi_energy_ev, real64), sd%fingerprint, sd%source
-        ! k-points (item 10), vertices (11-12), regions (13-14)
+        ! Pontos k (item 10), vértices (11-12), regiões (13-14)
         if (ios == 0) write(u, iostat=ios) real(sd%kfrac, real64), real(sd%kdist, real64)
         if (ios == 0 .and. sd%nvertex > 0) then
             write(u, iostat=ios) int(sd%vertex_k, int32)
@@ -152,7 +152,7 @@ contains
             if (ios == 0) write(u, iostat=ios) sd%region_name(i)
         end do
         if (ios == 0) write(u, iostat=ios) int(sd%region_natoms, int32)
-        ! Bulk arrays (15-16), then n_ext = 0 (no extension blocks in v1.0) and trailer
+        ! Arrays volumosos (15-16), depois n_ext = 0 (sem blocos de extensão na v1.0) e trailer
         if (ios == 0) write(u, iostat=ios) real(sd%energy, real64)
         if (ios == 0) write(u, iostat=ios) real(sd%weight, real64)
         if (ios == 0) write(u, iostat=ios) 0_int32, SD_TRAILER
@@ -172,31 +172,31 @@ contains
         errmsg = ''
     end subroutine write_spectral_file
 
-    !> Read a binary spectral file, validating the full layout.
-    !> Every array is allocated by this routine. Before each read the number
-    !> of bytes still available is checked against what is needed, so a
-    !> truncated or corrupted file yields an error rather than a crash.
-    !> On any error sd is reset to its default (empty) state.
-    !> ierr: 0 ok; 1 missing/unopenable file; 2 bad magic; 3 unsupported
-    !> version, endianness or type sizes; 4 invalid dimensions/flags;
-    !> 5 invalid vertex/region content; 6 bad extension block;
-    !> 7 trailer missing or trailing data; 8 file truncated; 9 read I/O error.
-    !> Only version_major = 1 is accepted; any minor version is read, and
-    !> unknown extension blocks are skipped using their size field.
+    !> Lê um arquivo espectral binário, validando o layout completo.
+    !> Todos os arrays são alocados por esta rotina. Antes de cada leitura, o número
+    !> de bytes ainda disponíveis é conferido com o necessário, de modo que um
+    !> arquivo truncado ou corrompido gera um erro em vez de uma falha.
+    !> Em qualquer erro, sd é redefinido para o estado padrão (vazio).
+    !> ierr: 0 ok; 1 arquivo ausente/não abre; 2 magic inválido; 3 versão,
+    !> endianness ou tamanhos de tipo não suportados; 4 dimensões/flags inválidas;
+    !> 5 conteúdo de vértice/região inválido; 6 bloco de extensão inválido;
+    !> 7 trailer ausente ou dados extras; 8 arquivo truncado; 9 erro de E/S na leitura.
+    !> Só version_major = 1 é aceita; qualquer versão minor é lida, e blocos de
+    !> extensão desconhecidos são ignorados usando seu campo de tamanho.
     subroutine read_spectral_file(filename, sd, ierr, errmsg)
         character(len=*),      intent(in)  :: filename
         type(spectral_data_t), intent(out) :: sd
         integer,               intent(out) :: ierr
         character(len=*),      intent(out) :: errmsg
 
-        integer :: u, ios, i
-        logical :: exists
-        integer(int64) :: fsize, pos, nbytes_ext
-        character(len=8)  :: magic, trailer
-        character(len=16) :: tag
-        integer(int32) :: vmaj, vmin, canary, sz(3), dims(5), flags(4), n_ext
+        integer                     :: u, ios, i
+        logical                     :: exists
+        integer(int64)              :: fsize, pos, nbytes_ext
+        character(len=8)            :: magic, trailer
+        character(len=16)           :: tag
+        integer(int32)              :: vmaj, vmin, canary, sz(3), dims(5), flags(4), n_ext
         integer(int32), allocatable :: itmp(:)
-        real(real64) :: ef
+        real(real64)                :: ef
 
         ierr = 0
         errmsg = ''
@@ -218,12 +218,12 @@ contains
             return
         end if
 
-        ! `pos` is the 1-based byte offset of the next unread byte. It is
-        ! advanced by hand after each read so that have() can check the
-        ! remaining size; the reads without pos= continue sequentially from
-        ! the previous one.
+        ! `pos` é o deslocamento em bytes (base 1) do próximo byte não lido. É
+        ! avançado manualmente após cada leitura para que have() possa conferir
+        ! o tamanho restante; as leituras sem pos= continuam sequencialmente a
+        ! partir da anterior.
         pos = 1
-        ! ---- fixed header --------------------------------------------
+        ! ---- cabeçalho fixo ------------------------------------------
         if (.not. have(8_int64, "magic")) return
         read(u, pos=pos, iostat=ios) magic
         if (.not. ok_read("magic")) return
@@ -293,16 +293,16 @@ contains
         end if
         sd%fermi_known = (flags(4) == 1)
 
-        ! ---- k-points ------------------------------------------------
-        ! 8 bytes * (3 kfrac + 1 kdist) per k-point
+        ! ---- pontos k ------------------------------------------------
+        ! 8 bytes * (3 kfrac + 1 kdist) por ponto k
         if (.not. have(8_int64 * 4_int64 * int(sd%nk, int64), "kfrac/kdist")) return
         allocate(sd%kfrac(3, sd%nk), sd%kdist(sd%nk))
         read(u, iostat=ios) sd%kfrac, sd%kdist
         if (.not. ok_read("kfrac/kdist")) return
         pos = pos + 32_int64 * int(sd%nk, int64)
 
-        ! ---- vertices ------------------------------------------------
-        ! 20 bytes per vertex: int32 index + char(16) label
+        ! ---- vértices ------------------------------------------------
+        ! 20 bytes por vértice: índice int32 + rótulo char(16)
         if (.not. have(20_int64 * int(sd%nvertex, int64), "vertices")) return
         allocate(itmp(sd%nvertex), sd%vertex_k(sd%nvertex), sd%vertex_label(sd%nvertex))
         if (sd%nvertex > 0) then
@@ -323,8 +323,8 @@ contains
             end if
         end if
 
-        ! ---- regions -------------------------------------------------
-        ! 68 bytes per region: char(64) name + int32 natoms
+        ! ---- regiões -------------------------------------------------
+        ! 68 bytes por região: nome char(64) + natoms int32
         if (.not. have(68_int64 * int(sd%nregion, int64), "regions")) return
         allocate(sd%region_name(sd%nregion), sd%region_natoms(sd%nregion), itmp(sd%nregion))
         do i = 1, sd%nregion
@@ -341,7 +341,7 @@ contains
             return
         end if
 
-        ! ---- energies and weights --------------------------------------
+        ! ---- energias e pesos ------------------------------------------
         nbytes_ext = 8_int64 * int(sd%nband, int64) * int(sd%nk, int64) * int(sd%nspin, int64)
         if (.not. have(nbytes_ext, "energy")) return
         allocate(sd%energy(sd%nband, sd%nk, sd%nspin))
@@ -356,9 +356,9 @@ contains
         if (.not. ok_read("weight")) return
         pos = pos + nbytes_ext
 
-        ! ---- extension blocks ------------------------------------------
-        ! Forward-compatibility hook: each block is {tag char(16), nbytes
-        ! int64, payload}. Payloads are skipped, never interpreted, here.
+        ! ---- blocos de extensão ----------------------------------------
+        ! Gancho de compatibilidade futura: cada bloco é {tag char(16), nbytes
+        ! int64, payload}. Aqui os payloads são ignorados, nunca interpretados.
         if (.not. have(4_int64, "n_ext")) return
         read(u, iostat=ios) n_ext
         if (.not. ok_read("n_ext")) return
@@ -398,8 +398,8 @@ contains
 
     contains
 
-        !> True if at least n bytes remain from pos; otherwise closes the
-        !> file and sets ierr = 8.
+        !> Verdadeiro se restam pelo menos n bytes a partir de pos; caso contrário
+        !> fecha o arquivo e define ierr = 8.
         logical function have(n, what)
             integer(int64),   intent(in) :: n
             character(len=*), intent(in) :: what
@@ -407,8 +407,8 @@ contains
             if (.not. have) call fail_close(8, "file truncated: not enough bytes for " // what)
         end function have
 
-        !> True if the last read succeeded (ios == 0); otherwise closes the
-        !> file and sets ierr = 9.
+        !> Verdadeiro se a última leitura teve sucesso (ios == 0); caso contrário
+        !> fecha o arquivo e define ierr = 9.
         logical function ok_read(what)
             character(len=*), intent(in) :: what
             ok_read = (ios == 0)
@@ -418,7 +418,7 @@ contains
         subroutine fail_close(code, msg)
             integer,          intent(in) :: code
             character(len=*), intent(in) :: msg
-            integer :: ios2
+            integer                      :: ios2
             close(u, iostat=ios2)
             call fail(code, msg)
         end subroutine fail_close
@@ -433,20 +433,20 @@ contains
 
     end subroutine read_spectral_file
 
-    !> Human-readable export (debugging only, never read back).
-    !> Layout: '#' metadata header, a '#' line naming the columns, then one
-    !> row per (spin, k, band):
+    !> Exportação legível por humanos (somente depuração, nunca relida).
+    !> Layout: cabeçalho de metadados com '#', uma linha '#' nomeando as colunas e
+    !> depois uma linha por (spin, k, banda):
     !>   ispin ik kdist k1 k2 k3 iband energy w(1..nregion)
-    !> kdist in 1/Angstrom, k1..k3 fractional, energy in eV.
-    !> Same validation and ierr convention as write_spectral_file
-    !> (0 ok; 1 invalid sd or cannot open; 2 I/O error; 3 error closing).
+    !> kdist em 1/Angstrom, k1..k3 fracionários, energy em eV.
+    !> Mesma validação e convenção de ierr de write_spectral_file
+    !> (0 ok; 1 sd inválido ou não abre; 2 erro de E/S; 3 erro no fechamento).
     subroutine write_spectral_text(filename, sd, ierr, errmsg)
         character(len=*),      intent(in)  :: filename
         type(spectral_data_t), intent(in)  :: sd
         integer,               intent(out) :: ierr
         character(len=*),      intent(out) :: errmsg
 
-        integer :: u, ios, i, is, ik, ib
+        integer                       :: u, ios, i, is, ik, ib
         character(len=:), allocatable :: line
 
         call validate(sd, ierr, errmsg)
@@ -517,20 +517,21 @@ contains
     end subroutine write_spectral_text
 
     ! ==================================================================
-    ! Internals
+    ! Internos
     ! ==================================================================
 
-    !> Deallocate every array of sd and restore the default scalars, so a
-    !> failed read leaves nothing allocated.
+    !> Desaloca todos os arrays de sd e restaura os escalares padrão, de modo que
+    !> uma leitura que falhou não deixe nada alocado.
     subroutine reset_sd(sd)
         type(spectral_data_t), intent(inout) :: sd
         sd = spectral_data_t()
     end subroutine reset_sd
 
-    !> Consistency checks shared by the writers: dimensions, enumerations,
-    !> nspin/spin_mode agreement, array allocation and shapes, vertex range
-    !> and region 1 = 'total'. Mirrors the checks read_spectral_file applies
-    !> to file contents. Sets ierr = 1 and errmsg on the first failure.
+    !> Verificações de consistência compartilhadas pelos escritores: dimensões,
+    !> enumerações, concordância entre nspin/spin_mode, alocação e formatos dos
+    !> arrays, faixa dos vértices e região 1 = 'total'. Espelha as verificações que
+    !> read_spectral_file aplica ao conteúdo do arquivo. Define ierr = 1 e errmsg
+    !> na primeira falha.
     subroutine validate(sd, ierr, errmsg)
         type(spectral_data_t), intent(in)  :: sd
         integer,               intent(out) :: ierr
@@ -613,9 +614,9 @@ contains
         ierr = 0
     end subroutine validate
 
-    ! Enumeration -> text name, used by the text export ("invalid" if unknown).
+    ! Enumeração -> nome em texto, usado pela exportação em texto ("invalid" se desconhecida).
     pure function spin_mode_name(m) result(s)
-        integer, intent(in) :: m
+        integer, intent(in)           :: m
         character(len=:), allocatable :: s
         select case (m)
         case (SPIN_NONE);         s = "none"
@@ -626,7 +627,7 @@ contains
     end function spin_mode_name
 
     pure function method_name(m) result(s)
-        integer, intent(in) :: m
+        integer, intent(in)           :: m
         character(len=:), allocatable :: s
         select case (m)
         case (METHOD_MULLIKEN); s = "mulliken"
@@ -636,7 +637,7 @@ contains
     end function method_name
 
     pure function eref_name(m) result(s)
-        integer, intent(in) :: m
+        integer, intent(in)           :: m
         character(len=:), allocatable :: s
         select case (m)
         case (EREF_UNKNOWN);  s = "unknown"

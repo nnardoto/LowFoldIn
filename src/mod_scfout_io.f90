@@ -4,27 +4,27 @@
 ! ----------------------------------------------------------------------------------------------------------
 ! mod_scfout_io.f90
 !
-! Leitor do formato binario .scfout do OpenMX (versao SCFOUT_VERSION = 3,
+! Leitor do formato binário .scfout do OpenMX (versão SCFOUT_VERSION = 3,
 ! OpenMX 3.9/4.0), porte direto de read_scfout.c (T. Ozaki / H. Kotaka /
 ! N. Yamaguchi) para Fortran, usado como front-end da ferramenta
 ! tools/openmx2hsio.f90.
 !
 ! A ordem de leitura segue EXATAMENTE a funcao Input() de read_scfout.c:
 !
-!   cabecalho(6 int) -> order_max -> atv -> atv_ijk -> Total_NumOrbs
+!   cabeçalho(6 int) -> order_max -> atv -> atv_ijk -> Total_NumOrbs
 !   -> FNAN -> natn -> ncn -> tv -> rtv -> Gxyz -> Hks -> iHks (se SO)
 !   -> OLP -> OLPpo -> OLPmo -> DM -> iDM -> Solver -> ChemP/E_Temp/...
-!   -> (arquivo de input embutido: so' usado para os rotulos das especies)
+!   -> (arquivo de input embutido: só usado para os rótulos das especies)
 !
 ! Geometria: tv (rede direta, linhas = a1,a2,a3) e Gxyz (posicoes
-! cartesianas) sao guardados em Bohr (lattice_bohr, cart_bohr); a conversao
-! para Angstrom fica a cargo de quem chama. Os rotulos de especie vem do
+! cartesianas) são guardados em Bohr (lattice_bohr, cart_bohr); a conversão
+! para Ångström fica a cargo de quem chama. Os rótulos de espécie vêm do
 ! bloco <Atoms.SpeciesAndCoordinates do input embutido (atom_label).
 !
-! OLPpo, OLPmo, DM e iDM (overlap com operador posicao/momento, matriz de
-! densidade) nao sao usados por este conversor; seus bytes sao pulados
-! via leitura-e-descarte em blocos, sem alocar nada, apos calcular o
-! numero exato de elementos pela mesma estrutura atomo-vizinho usada em
+! OLPpo, OLPmo, DM e iDM (overlap com operador posição/momento, matriz de
+! densidade) não são usados por este conversor; seus bytes são pulados
+! via leitura-e-descarte em blocos, sem alocar nada, após calcular o
+! número exato de elementos pela mesma estrutura átomo-vizinho usada em
 ! Hks/OLP.
 !
 ! Nathanael N. Batista / porte para Fortran, Agosto de 2026
@@ -38,75 +38,75 @@ module scfout_io
     public :: ScfoutData, ReadScfoutFile, ParseEmbeddedAtomLabels
 
     integer, parameter :: SCFOUT_VERSION = 3
-    integer, parameter :: SKIP_CHUNK = 65536   ! doubles por bloco ao descartar OLPpo/OLPmo/DM/iDM
+    integer, parameter :: SKIP_CHUNK     = 65536   ! doubles por bloco ao descartar OLPpo/OLPmo/DM/iDM
 
     type :: ScfoutData
-        integer :: atomnum       = 0
-        integer :: SpinP_switch  = 0
-        integer :: version       = 0
-        integer :: Catomnum      = 0
-        integer :: Latomnum      = 0
-        integer :: Ratomnum      = 0
-        integer :: TCpyCell      = 0
-        integer :: order_max     = 0
-        integer :: Solver        = 0
+        integer  :: atomnum      = 0
+        integer  :: SpinP_switch = 0
+        integer  :: version      = 0
+        integer  :: Catomnum     = 0
+        integer  :: Latomnum     = 0
+        integer  :: Ratomnum     = 0
+        integer  :: TCpyCell     = 0
+        integer  :: order_max    = 0
+        integer  :: Solver       = 0
         real(dp) :: ChemP        = 0.0_dp
         real(dp) :: E_Temp       = 0.0_dp
 
-        ! Geometry from the .scfout (NOT converted: OpenMX stores Bohr).
-        ! Rows of lattice_bohr are the direct lattice vectors a1,a2,a3;
-        ! columns of cart_bohr are atoms (same order as the Hamiltonian blocks).
-        real(dp) :: lattice_bohr(3, 3) = 0.0_dp
-        real(dp), allocatable :: cart_bohr(:, :)       ! (3, atomnum), Bohr
-        ! Species label per atom, parsed from the embedded OpenMX input.
-        ! atom_label is allocated only if that input could be read, and its
-        ! contents are meaningful only when has_atom_labels is .true.
+        ! Geometria do .scfout (NÃO convertida: o OpenMX guarda em Bohr).
+        ! As linhas de lattice_bohr são os vetores da rede direta a1,a2,a3;
+        ! as colunas de cart_bohr são átomos (mesma ordem dos blocos do Hamiltoniano).
+        real(dp)              :: lattice_bohr(3, 3) = 0.0_dp
+        real(dp), allocatable :: cart_bohr(:, :)              ! (3, atomnum), Bohr
+        ! Rótulo de espécie por átomo, extraído do input embutido do OpenMX.
+        ! atom_label só é alocado se esse input pôde ser lido, e seu conteúdo
+        ! só tem significado quando has_atom_labels é .true.
         character(len=8), allocatable :: atom_label(:)
         logical :: has_atom_labels = .false.
 
         integer, allocatable :: TotalNumOrbs(:)     ! 1:atomnum
         integer, allocatable :: FNAN(:)             ! 1:atomnum
 
-        ! Listas de vizinhos em formato "flat" (estilo CSR): o atomo ct_AN
+        ! Listas de vizinhos em formato "flat" (estilo CSR): o átomo ct_AN
         ! tem FNAN(ct_AN)+1 vizinhos (h_AN=0..FNAN(ct_AN)), armazenados em
         ! natn_flat(neighbor_offset(ct_AN)+1 : neighbor_offset(ct_AN)+FNAN(ct_AN)+1)
-        integer, allocatable :: neighbor_offset(:)  ! 1:atomnum (0-based)
+        integer, allocatable :: neighbor_offset(:)  ! 1:atomnum (base 0)
         integer, allocatable :: natn_flat(:)
         integer, allocatable :: ncn_flat(:)
-        integer :: n_pairs = 0
+        integer              :: n_pairs = 0
 
         integer, allocatable :: atv_ijk(:, :)       ! (3, 0:TCpyCell) -> IndexList (h,k,l)
 
         ! Blocos densos H(R)/S(R) por par (ct_AN,h_AN), em formato "flat"
-        ! (CSR de novo): block_offset(p) da' o offset (0-based, em
+        ! (CSR de novo): block_offset(p) dá o offset (0-based, em
         ! elementos escalares) do par p=1..n_pairs dentro de Hks_flat(:,ispin)
-        ! ou OLP_flat(:). block_offset(n_pairs+1) = numero total de
+        ! ou OLP_flat(:). block_offset(n_pairs+1) = número total de
         ! elementos escalares (n_scalar).
         integer, allocatable :: block_offset(:)     ! 1:n_pairs+1
-        integer :: n_scalar = 0
+        integer              :: n_scalar = 0
 
         real(dp), allocatable :: Hks_flat(:, :)     ! (n_scalar, 0:SpinP_switch)
-        real(dp), allocatable :: iHks_flat(:, :)    ! (n_scalar, 0:2), so' se SpinP_switch==3
+        real(dp), allocatable :: iHks_flat(:, :)    ! (n_scalar, 0:2), só se SpinP_switch==3
         real(dp), allocatable :: OLP_flat(:)        ! (n_scalar)
     end type ScfoutData
 
 contains
 
-    ! Le o .scfout inteiro em `this` (stream binario, ordem de Input() de
-    ! read_scfout.c). Nao retorna erro: arquivo ausente, versao /= 3 ou EOF
-    ! inesperado fazem `stop 1` com mensagem. Unica excecao: o input embutido
-    ! no final e' opcional (ver has_atom_labels).
+    ! Lê o .scfout inteiro em `this` (stream binário, ordem de Input() de
+    ! read_scfout.c). Não retorna erro: arquivo ausente, versão /= 3 ou EOF
+    ! inesperado fazem `stop 1` com mensagem. Única exceção: o input embutido
+    ! no final é opcional (ver has_atom_labels).
     subroutine ReadScfoutFile(this, filename)
         type(ScfoutData), intent(inout) :: this
-        character(len=*),  intent(in) :: filename
+        character(len=*), intent(in)    :: filename
 
-        integer :: iunit, ios
-        integer :: i_vec(6)
-        integer :: packed
-        integer :: ct_AN, h_AN, p, off
-        integer :: Rn, ncell
-        integer :: TNO1, TNO2, Gh_AN
-        integer :: n_block
+        integer  :: iunit, ios
+        integer  :: i_vec(6)
+        integer  :: packed
+        integer  :: ct_AN, h_AN, p, off
+        integer  :: Rn, ncell
+        integer  :: TNO1, TNO2, Gh_AN
+        integer  :: n_block
         real(dp) :: d_vec(10)
 
         open(newunit=iunit, file=filename, status='old', action='read', &
@@ -117,19 +117,19 @@ contains
         end if
 
         ! -------------------------------------------------------------
-        ! Cabecalho: atomnum, SpinP_switch+versao*4, Catomnum, Latomnum,
+        ! Cabecalho: atomnum, SpinP_switch+versão*4, Catomnum, Latomnum,
         ! Ratomnum, TCpyCell (6 inteiros)
         ! -------------------------------------------------------------
         read(iunit, iostat=ios) i_vec
         call check_io(ios, 'cabecalho')
-        this%atomnum  = i_vec(1)
-        packed        = i_vec(2)
+        this%atomnum      = i_vec(1)
+        packed            = i_vec(2)
         this%SpinP_switch = mod(packed, 4)
-        this%version       = packed / 4
-        this%Catomnum = i_vec(3)
-        this%Latomnum = i_vec(4)
-        this%Ratomnum = i_vec(5)
-        this%TCpyCell = i_vec(6)
+        this%version      = packed / 4
+        this%Catomnum     = i_vec(3)
+        this%Latomnum     = i_vec(4)
+        this%Ratomnum     = i_vec(5)
+        this%TCpyCell     = i_vec(6)
 
         if (this%version /= SCFOUT_VERSION) then
             print '(A,I0)', "[scfout_io] Erro: versao do .scfout = ", this%version
@@ -138,7 +138,7 @@ contains
             stop 1
         end if
 
-        ! Valida o cabecalho antes de usa-lo como tamanho/indice
+        ! Valida o cabeçalho antes de usá-lo como tamanho/índice
         if (this%atomnum < 1) call fail_header('atomnum', this%atomnum)
         if (this%TCpyCell < 0) call fail_header('TCpyCell', this%TCpyCell)
         if (this%SpinP_switch /= 0 .and. this%SpinP_switch /= 1 .and. this%SpinP_switch /= 3) &
@@ -157,7 +157,7 @@ contains
         ncell = this%TCpyCell + 1
 
         ! -------------------------------------------------------------
-        ! atv[0..TCpyCell][4] (double) -- nao usado por este conversor,
+        ! atv[0..TCpyCell][4] (double) -- não usado por este conversor,
         ! mas precisa ser consumido do stream na ordem certa
         ! -------------------------------------------------------------
         block
@@ -167,8 +167,8 @@ contains
         end block
 
         ! -------------------------------------------------------------
-        ! atv_ijk[0..TCpyCell][4] (int) -- guardamos so' (i,j,k), o
-        ! primeiro elemento de cada linha (indice da propria celula) e'
+        ! atv_ijk[0..TCpyCell][4] (int) -- guardamos só (i,j,k), o
+        ! primeiro elemento de cada linha (índice da propria celula) é
         ! descartado
         ! -------------------------------------------------------------
         block
@@ -226,8 +226,8 @@ contains
         end do
 
         ! -------------------------------------------------------------
-        ! tv[1..3][4], rtv[1..3][4]. OpenMX stores the direct lattice
-        ! vectors as rows in Bohr; the first value of each row is unused.
+        ! tv[1..3][4], rtv[1..3][4]. O OpenMX guarda os vetores da rede direta
+        ! como linhas, em Bohr; o primeiro valor de cada linha não é usado.
         ! -------------------------------------------------------------
         block
             real(dp) :: tv_raw(4, 3), rtv_junk(4, 3)
@@ -241,8 +241,8 @@ contains
         end block
 
         ! -------------------------------------------------------------
-        ! Gxyz[1..atomnum][0..3]: Cartesian coordinates in Bohr. The first
-        ! value of each atom record is unused.
+        ! Gxyz[1..atomnum][0..3]: coordenadas cartesianas em Bohr. O primeiro
+        ! valor de cada registro de átomo não é usado.
         ! -------------------------------------------------------------
         block
             real(dp) :: gxyz_raw(4, this%atomnum)
@@ -255,7 +255,7 @@ contains
         ! -------------------------------------------------------------
         ! block_offset: offset (0-based, em escalares) de cada par
         ! (ct_AN,h_AN) dentro dos blocos Hks/iHks/OLP -- calculado ANTES
-        ! de ler esses blocos, pois so' depende de natn/TotalNumOrbs
+        ! de ler esses blocos, pois só depende de natn/TotalNumOrbs
         ! -------------------------------------------------------------
         allocate(this%block_offset(this%n_pairs + 1))
         p = 0
@@ -275,9 +275,9 @@ contains
 
         ! -------------------------------------------------------------
         ! Hks[spin][ct_AN][h_AN][TNO1][TNO2], spin=0..SpinP_switch
-        ! Cada par (ct_AN,h_AN) e' TNO1*TNO2 doubles CONTIGUOS no stream
+        ! Cada par (ct_AN,h_AN) é TNO1*TNO2 doubles CONTÍGUOS no stream
         ! (loop "for i in TNO1: read TNO2 doubles" = flatten row-major),
-        ! e os pares sao lidos em sequencia -> uma unica leitura de
+        ! e os pares são lidos em sequência -> uma única leitura de
         ! n_scalar doubles cobre o canal de spin inteiro.
         ! -------------------------------------------------------------
         allocate(this%Hks_flat(this%n_scalar, 0:this%SpinP_switch))
@@ -290,7 +290,7 @@ contains
         end block
 
         ! -------------------------------------------------------------
-        ! iHks[spin][...], spin=0..2 -- so' existe se SpinP_switch==3
+        ! iHks[spin][...], spin=0..2 -- só existe se SpinP_switch==3
         ! -------------------------------------------------------------
         if (this%SpinP_switch == 3) then
             allocate(this%iHks_flat(this%n_scalar, 0:2))
@@ -304,24 +304,24 @@ contains
         end if
 
         ! -------------------------------------------------------------
-        ! OLP[ct_AN][h_AN][TNO1][TNO2] -- um unico canal, mesma logica
+        ! OLP[ct_AN][h_AN][TNO1][TNO2] -- um único canal, mesma logica
         ! -------------------------------------------------------------
         allocate(this%OLP_flat(this%n_scalar))
         read(iunit, iostat=ios) this%OLP_flat
         call check_io(ios, 'OLP')
 
         ! -------------------------------------------------------------
-        ! Blocos que NAO precisamos materializar, mas que ficam no meio
-        ! do caminho ate ChemP: OLPpo, OLPmo, DM, iDM. Todos seguem a
-        ! MESMA estrutura atomo-vizinho (n_scalar elementos por "canal"),
-        ! soh que repetida por direcao (x,y,z), por ordem (OLPpo), ou por
+        ! Blocos que NÃO precisamos materializar, mas que ficam no meio
+        ! do caminho até ChemP: OLPpo, OLPmo, DM, iDM. Todos seguem a
+        ! MESMA estrutura átomo-vizinho (n_scalar elementos por "canal"),
+        ! só que repetida por direção (x,y,z), por ordem (OLPpo), ou por
         ! canal de spin (DM/iDM). Pulamos lendo-e-descartando em blocos.
         ! -------------------------------------------------------------
 
-        ! OLPpo: 3 direcoes * order_max ordens * n_scalar (vazio se order_max==0)
+        ! OLPpo: 3 direções * order_max ordens * n_scalar (vazio se order_max==0)
         call skip_doubles(iunit, 3_int64 * int(this%order_max, int64) * int(this%n_scalar, int64))
 
-        ! OLPmo: 3 direcoes * n_scalar -- SEMPRE presente, independente de order_max
+        ! OLPmo: 3 direções * n_scalar -- SEMPRE presente, independente de order_max
         call skip_doubles(iunit, 3_int64 * int(this%n_scalar, int64))
 
         ! DM: (SpinP_switch+1) * n_scalar
@@ -349,15 +349,15 @@ contains
         this%ChemP  = d_vec(1)
         this%E_Temp = d_vec(2)
         ! d_vec(3:5) = dipole_moment_core, d_vec(6:8) = dipole_moment_background,
-        ! d_vec(9) = Valence_Electrons, d_vec(10) = Total_SpinS -- nao usados aqui.
+        ! d_vec(9) = Valence_Electrons, d_vec(10) = Total_SpinS -- não usados aqui.
 
         ! -------------------------------------------------------------
-        ! Embedded OpenMX input: num_lines (int32) followed by fixed 256-byte
-        ! records, appended after the numeric data. It supplies species
-        ! labels, which are not present in the binary geometry records
-        ! themselves. Missing/malformed input (EOF, num_lines out of
-        ! 1..100000, allocation failure) is not an error: H/S conversion still
-        ! works and has_atom_labels remains false.
+        ! Input embutido do OpenMX: num_lines (int32) seguido de registros fixos
+        ! de 256 bytes, anexados após os dados numéricos. Fornece os rótulos de
+        ! espécie, que não estão nos próprios registros binários de geometria.
+        ! Input ausente/malformado (EOF, num_lines fora de 1..100000, falha de
+        ! alocação) não é erro: a conversão de H/S continua funcionando e
+        ! has_atom_labels permanece falso.
         ! -------------------------------------------------------------
         block
             integer :: num_lines, iline, alloc_stat
@@ -390,31 +390,31 @@ contains
         end if
     end subroutine ReadScfoutFile
 
-    !> Extracts per-atom species labels from the embedded OpenMX input text.
+    !> Extrai os rótulos de espécie por átomo do texto do input embutido do OpenMX.
     !>
-    !> Looks for the block delimited by `<Atoms.SpeciesAndCoordinates` and
-    !> `Atoms.SpeciesAndCoordinates>` (case-insensitive) and reads, from each
-    !> line inside, the 1-based atom index and the species label (the first
-    !> two list-directed fields; coordinates etc. are ignored). Blank lines,
-    !> '#'/'!' comment lines and NUL padding (records are fixed 256 bytes) are
-    !> skipped.
+    !> Procura o bloco delimitado por `<Atoms.SpeciesAndCoordinates` e
+    !> `Atoms.SpeciesAndCoordinates>` (sem distinguir maiúsculas) e lê, de cada
+    !> linha interna, o índice do átomo (base 1) e o rótulo da espécie (os dois
+    !> primeiros campos em formato livre; coordenadas etc. são ignoradas). Linhas
+    !> em branco, linhas de comentário '#'/'!' e o preenchimento com NUL (os
+    !> registros têm 256 bytes fixos) são ignorados.
     !>
-    !> `found` is .true. only if the block is closed and every atom 1..nat got
-    !> exactly one label of 1..8 characters. On any malformed line (bad
-    !> index, duplicate, label too long, unreadable) it returns early with
-    !> found = .false. and `labels` partially filled: never use labels then.
-    !> Never stops.
+    !> `found` é .true. somente se o bloco foi fechado e cada átomo 1..nat
+    !> recebeu exatamente um rótulo de 1..8 caracteres. Em qualquer linha
+    !> malformada (índice inválido, duplicado, rótulo longo demais, ilegível)
+    !> retorna cedo com found = .false. e `labels` parcialmente preenchido: não
+    !> use os rótulos nesse caso. Nunca para o programa.
     subroutine ParseEmbeddedAtomLabels(lines, nat, labels, found)
-        character(len=*), intent(in) :: lines(:)
-        integer, intent(in) :: nat
+        character(len=*), intent(in)  :: lines(:)
+        integer,          intent(in)  :: nat
         character(len=8), intent(out) :: labels(nat)
-        logical, intent(out) :: found
+        logical,          intent(out) :: found
 
-        character(len=256) :: line
-        character(len=64) :: label
+        character(len=256)   :: line
+        character(len=64)    :: label
         logical, allocatable :: seen(:)
-        logical :: in_atoms, closed
-        integer :: i, idx, ios, nul
+        logical              :: in_atoms, closed
+        integer              :: i, idx, ios, nul
 
         labels = ''
         found = .false.
@@ -455,11 +455,11 @@ contains
         found = closed .and. all(seen)
     end subroutine ParseEmbeddedAtomLabels
 
-    !> ASCII lower-case copy of text (used for case-insensitive keyword search).
+    !> Cópia de text em minúsculas ASCII (usada na busca de palavras-chave sem distinguir maiúsculas).
     pure function to_lower(text) result(lower)
         character(len=*), intent(in) :: text
-        character(len=len(text)) :: lower
-        integer :: i, code
+        character(len=len(text))     :: lower
+        integer                      :: i, code
 
         lower = text
         do i = 1, len(text)
@@ -479,7 +479,7 @@ contains
         end if
     end subroutine check_io
 
-    ! Aborta com mensagem se um valor do cabecalho/vizinhanca e' invalido.
+    ! Aborta com mensagem se um valor do cabeçalho/vizinhança é inválido.
     subroutine fail_header(what, val)
         character(len=*), intent(in) :: what
         integer,          intent(in) :: val
@@ -489,17 +489,17 @@ contains
         stop 1
     end subroutine fail_header
 
-    ! Le-e-descarta n doubles do stream, em blocos, sem alocar um buffer
-    ! do tamanho total (que pode ser grande: OLPmo/DM/iDM sao O(NOrbs^2)).
-    ! Usa iostat para detectar EOF inesperado (calculo de offset errado)
+    ! Lê e descarta n doubles do stream, em blocos, sem alocar um buffer
+    ! do tamanho total (que pode ser grande: OLPmo/DM/iDM são O(NOrbs^2)).
+    ! Usa iostat para detectar EOF inesperado (cálculo de offset errado)
     ! em vez de falhar silenciosamente lendo ChemP do lugar errado.
     subroutine skip_doubles(iunit, n)
-        integer,            intent(in) :: iunit
-        integer(int64),     intent(in) :: n
+        integer,        intent(in) :: iunit
+        integer(int64), intent(in) :: n
 
-        real(dp) :: buf(SKIP_CHUNK)
+        real(dp)       :: buf(SKIP_CHUNK)
         integer(int64) :: remaining
-        integer :: this_chunk, ios
+        integer        :: this_chunk, ios
 
         if (n <= 0_int64) return
 

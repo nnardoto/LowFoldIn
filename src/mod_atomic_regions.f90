@@ -1,22 +1,23 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Named atomic regions (regions.nml): reader, canonical writer, intrinsic
-!> checks, validation against a structure and partition test.
+!> Regiões atômicas nomeadas (regions.nml): leitor, escritor canônico, checagens
+!> intrínsecas, validação contra uma estrutura e teste de partição.
 !>
-!> Pipeline role: atomselect writes regions.nml (named groups of atoms, e.g.
-!> 'top', 'bottom'); spectral/specmap read it to project the spectral function
-!> onto each region. The file is a namelist: one &REGION_FILE header followed by
-!> any number of &REGION groups.
+!> Papel no pipeline: atomselect escreve regions.nml (grupos nomeados de átomos,
+!> p. ex. 'top', 'bottom'); spectral/specmap o leem para projetar a função
+!> espectral sobre cada região. O arquivo é um namelist: um cabeçalho
+!> &REGION_FILE seguido de qualquer número de grupos &REGION.
 !>
-!> Conventions: atom indices are 1-based and refer to the structure-file order
-!> (= HSIO order). Regions may overlap; stored atom lists keep the user order.
-!> Checks are split in two levels: read_regions_file / add_region verify what
-!> can be checked from the file alone (syntax, ranges, names, duplicates), and
-!> validate_regions compares against a structure (nat, labels, fingerprint).
+!> Convenções: índices de átomos começam em 1 e seguem a ordem do arquivo de
+!> estrutura (= ordem HSIO). Regiões podem se sobrepor; as listas de átomos
+!> guardadas mantêm a ordem do usuário. As checagens têm dois níveis:
+!> read_regions_file / add_region verificam o que se pode checar só com o
+!> arquivo (sintaxe, faixas, nomes, duplicatas) e validate_regions compara com
+!> uma estrutura (nat, rótulos, fingerprint).
 !>
-!> Library routines never stop: errors come back as ierr /= 0 plus errmsg.
-!> See docs/design/contracts.md §2.
+!> As rotinas da biblioteca nunca param o programa: erros voltam como
+!> ierr /= 0 mais errmsg. Ver docs/design/contracts.md §2.
 module atomic_regions
     use structure_io, only: structure_t, structure_fingerprint, LABEL_LEN
     use, intrinsic :: iso_fortran_env, only: iostat_end
@@ -24,42 +25,42 @@ module atomic_regions
     private
 
     ! ==================================================================
-    ! TYPES
+    ! TIPOS
     ! ==================================================================
-    !> REGION_NAME_LEN: max region name length. MAX_REGION_ATOMS: size of the
-    !> namelist read buffers, hence the largest atom (or species) list a file
-    !> can carry.
+    !> REGION_NAME_LEN: comprimento máximo do nome da região. MAX_REGION_ATOMS:
+    !> tamanho dos buffers de leitura do namelist, ou seja, a maior lista de
+    !> átomos (ou espécies) que um arquivo pode conter.
     integer, parameter, public :: REGION_NAME_LEN = 64, MAX_REGION_ATOMS = 100000
 
-    !> One named region: `atoms` are 1-based structure indices, no duplicates.
+    !> Uma região nomeada: `atoms` são índices da estrutura (base 1), sem duplicatas.
     type, public :: atom_region_t
         character(len=REGION_NAME_LEN) :: name = ''
         integer, allocatable :: atoms(:)
     end type atom_region_t
 
-    !> Content of a regions file. `natoms`, `fingerprint` and `species`
-    !> describe the structure the regions were built for (checked later by
-    !> validate_regions). fingerprint = '' means "none". regions(1:nregion)
-    !> hold the data; nregion is kept in sync by add_region.
+    !> Conteúdo de um arquivo de regiões. `natoms`, `fingerprint` e `species`
+    !> descrevem a estrutura para a qual as regiões foram construídas (checada
+    !> depois por validate_regions). fingerprint = '' significa "nenhum".
+    !> regions(1:nregion) guarda os dados; nregion é mantido por add_region.
     type, public :: region_set_t
         integer :: format_version = 1
         integer :: natoms = 0
         character(len=16) :: fingerprint = ''
         logical :: has_species = .false.
-        character(len=LABEL_LEN), allocatable :: species(:)   ! (natoms) when has_species
+        character(len=LABEL_LEN), allocatable :: species(:)   ! (natoms) se has_species
         integer :: nregion = 0
         type(atom_region_t), allocatable :: regions(:)
     end type region_set_t
 
     ! ==================================================================
-    ! PUBLIC API / CONSTANTS
+    ! API PÚBLICA / CONSTANTES
     ! ==================================================================
     public :: read_regions_file, write_regions_file, validate_regions
     public :: add_region, regions_are_partition, is_valid_region_name
 
-    ! Marks unused slots in the namelist buffers (a real index is always >= 1)
+    ! Marca posições não usadas nos buffers do namelist (um índice real é sempre >= 1)
     integer, parameter :: ATOM_SENTINEL = -huge(0)
-    ! Line wrapping of the canonical writer
+    ! Quebra de linha do escritor canônico
     integer, parameter :: SPECIES_PER_LINE = 10, ATOMS_PER_LINE = 20
     character(len=*), parameter :: NAME_CHARS = &
         'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.'
@@ -67,39 +68,39 @@ module atomic_regions
 contains
 
     ! ==================================================================
-    ! READ / WRITE
+    ! LEITURA / ESCRITA
     ! ==================================================================
 
-    !> Reads a regions file into `rs` and runs the checks that need no
-    !> structure: &REGION_FILE first and unique, format_version = 1, natoms >= 1,
-    !> fingerprint <= 16 chars, species count = natoms (if given), and per
-    !> region the add_region checks (name, duplicates, index range).
-    !> Never stops; on error ierr = 1 and errmsg describes the problem
-    !> (block number / region name included). rs is intent(out): contents are
-    !> unreliable after an error.
+    !> Lê um arquivo de regiões em `rs` e roda as checagens que não precisam de
+    !> estrutura: &REGION_FILE primeiro e único, format_version = 1, natoms >= 1,
+    !> fingerprint <= 16 caracteres, número de species = natoms (se dado) e, por
+    !> região, as checagens de add_region (nome, duplicatas, faixa de índices).
+    !> Nunca para o programa; em erro ierr = 1 e errmsg descreve o problema
+    !> (inclui número do bloco / nome da região). rs é intent(out): o conteúdo
+    !> não é confiável após um erro.
     subroutine read_regions_file(filename, rs, ierr, errmsg)
         character(len=*),   intent(in)  :: filename
         type(region_set_t), intent(out) :: rs
         integer,            intent(out) :: ierr
         character(len=*),   intent(out) :: errmsg
 
-        ! namelist variables (buffers allocated before every read)
-        integer :: format_version, natoms
-        character(len=64) :: fingerprint
+        ! variáveis do namelist (buffers alocados antes de cada leitura)
+        integer                               :: format_version, natoms
+        character(len=64)                     :: fingerprint
         character(len=LABEL_LEN), allocatable :: species(:)
-        character(len=256) :: name
-        integer, allocatable :: atoms(:)
+        character(len=256)                    :: name
+        integer,                  allocatable :: atoms(:)
         namelist /REGION_FILE/ format_version, natoms, fingerprint, species
         namelist /REGION/ name, atoms
 
-        integer :: iu, ios, n, iblock
+        integer            :: iu, ios, n, iblock
         character(len=512) :: msg
-        logical :: ok
+        logical            :: ok
 
         ierr = 0
         errmsg = ''
 
-        ! 1. Pre-scan: namelist reads cannot tell where the header sits
+        ! 1. Pré-varredura: a leitura de namelist não informa onde está o cabeçalho
         call check_header_position(filename, ok, ierr, errmsg)
         if (ierr /= 0) return
 
@@ -111,8 +112,8 @@ contains
 
         allocate(species(MAX_REGION_ATOMS), atoms(MAX_REGION_ATOMS))
 
-        ! 2. &REGION_FILE header. Defaults are sentinels so that a missing
-        !    key is detected (natoms < 1, format_version /= 1).
+        ! 2. Cabeçalho &REGION_FILE. Os valores padrão são sentinelas, para que uma
+        !    chave ausente seja detectada (natoms < 1, format_version /= 1).
         format_version = -huge(0)
         natoms = -huge(0)
         fingerprint = ''
@@ -158,10 +159,10 @@ contains
             rs%species = species(1:n)
         end if
 
-        ! 3. &REGION blocks, read sequentially until end of file. The atom
-        !    buffer is reset to the sentinel before each read so the list length
-        !    is the number of leading non-sentinel entries; add_region then
-        !    applies the per-region checks.
+        ! 3. Blocos &REGION, lidos em sequência até o fim do arquivo. O buffer de
+        !    átomos volta à sentinela antes de cada leitura, de modo que o tamanho
+        !    da lista é o número de entradas iniciais não sentinela; add_region
+        !    então aplica as checagens por região.
         allocate(rs%regions(0))
         rs%nregion = 0
         iblock = 0
@@ -199,7 +200,7 @@ contains
 
     contains
 
-        !> Sets the error state (file is closed by the caller).
+        !> Define o estado de erro (o arquivo é fechado pelo chamador).
         subroutine fail(m)
             character(len=*), intent(in) :: m
             ierr = 1
@@ -208,19 +209,19 @@ contains
 
     end subroutine read_regions_file
 
-    !> Text pre-scan of the file: &REGION_FILE must be the first namelist group
-    !> and appear exactly once (a namelist read alone would silently skip
-    !> ahead to the first group of the requested name). `ok` is true on
-    !> success; errors are reported through ierr/errmsg. Groups are recognised
-    !> by lines whose first non-blank character is '&'.
+    !> Pré-varredura de texto do arquivo: &REGION_FILE deve ser o primeiro grupo
+    !> do namelist e aparecer exatamente uma vez (uma leitura de namelist sozinha
+    !> pularia em silêncio até o primeiro grupo com o nome pedido). `ok` é
+    !> verdadeiro em caso de sucesso; erros vão por ierr/errmsg. Grupos são
+    !> reconhecidos por linhas cujo primeiro caractere não branco é '&'.
     subroutine check_header_position(filename, ok, ierr, errmsg)
         character(len=*), intent(in)  :: filename
         logical,          intent(out) :: ok
         integer,          intent(out) :: ierr
         character(len=*), intent(out) :: errmsg
-        integer :: iu, ios, nheader, ngroup
+        integer             :: iu, ios, nheader, ngroup
         character(len=1024) :: line, tok
-        character(len=512) :: msg
+        character(len=512)  :: msg
 
         ok = .false.
         ierr = 0
@@ -259,17 +260,17 @@ contains
         ok = .true.
     end subroutine check_header_position
 
-    !> Writes `rs` in the canonical layout (header, then one &REGION per
-    !> region, atoms 20 per line, species 10 per line). Overwrites an existing
-    !> file. Does not validate `rs` (use add_region/validate_regions for that).
-    !> Never stops; ierr = 1 and errmsg on open/close failure.
+    !> Escreve `rs` no layout canônico (cabeçalho, depois um &REGION por região,
+    !> 20 átomos por linha, 10 species por linha). Sobrescreve um arquivo
+    !> existente. Não valida `rs` (use add_region/validate_regions para isso).
+    !> Nunca para o programa; ierr = 1 e errmsg se falhar ao abrir/fechar.
     subroutine write_regions_file(filename, rs, ierr, errmsg)
         character(len=*),   intent(in)  :: filename
         type(region_set_t), intent(in)  :: rs
         integer,            intent(out) :: ierr
         character(len=*),   intent(out) :: errmsg
-        integer :: iu, ios, ir, i, n
-        character(len=512) :: msg
+        integer                       :: iu, ios, ir, i, n
+        character(len=512)            :: msg
         character(len=:), allocatable :: line
 
         ierr = 0
@@ -331,15 +332,15 @@ contains
     end subroutine write_regions_file
 
     ! ==================================================================
-    ! VALIDATION AND EDITING
+    ! VALIDAÇÃO E EDIÇÃO
     ! ==================================================================
 
-    !> Checks a region set against the structure it will be applied to, in
-    !> this order: natoms = st%nat; species list (if present) equals the
-    !> structure labels atom by atom; fingerprint equals
-    !> structure_fingerprint(st). A missing fingerprint is an error unless
-    !> allow_no_fingerprint, in which case a warning is printed to stdout.
-    !> Never stops; ierr = 1 and errmsg on the first failure.
+    !> Checa um conjunto de regiões contra a estrutura à qual será aplicado, nesta
+    !> ordem: natoms = st%nat; lista species (se presente) igual aos rótulos da
+    !> estrutura átomo a átomo; fingerprint igual a structure_fingerprint(st).
+    !> Fingerprint ausente é erro, a menos que allow_no_fingerprint, caso em que
+    !> um aviso é impresso em stdout. Nunca para o programa; ierr = 1 e errmsg
+    !> na primeira falha.
     subroutine validate_regions(rs, st, allow_no_fingerprint, ierr, errmsg)
         type(region_set_t), intent(in)  :: rs
         type(structure_t),  intent(in)  :: st
@@ -396,11 +397,11 @@ contains
         end if
     end subroutine validate_regions
 
-    !> Appends region `name` with the 1-based `atoms` to rs (user order kept).
-    !> Requires rs%format_version = 1 and rs%natoms >= 1 to be already set.
-    !> Errors (ierr = 1, rs unchanged): invalid or duplicated name, empty
-    !> list, index outside 1..natoms, duplicated index within the region.
-    !> Overlap with other regions is allowed.
+    !> Acrescenta a região `name` com os `atoms` (base 1) a rs (ordem do usuário
+    !> mantida). Exige rs%format_version = 1 e rs%natoms >= 1 já definidos.
+    !> Erros (ierr = 1, rs inalterado): nome inválido ou duplicado, lista vazia,
+    !> índice fora de 1..natoms, índice duplicado na região.
+    !> Sobreposição com outras regiões é permitida.
     subroutine add_region(rs, name, atoms, ierr, errmsg)
         type(region_set_t), intent(inout) :: rs
         character(len=*),   intent(in)    :: name
@@ -408,8 +409,8 @@ contains
         integer,            intent(out)   :: ierr
         character(len=*),   intent(out)   :: errmsg
         type(atom_region_t), allocatable :: tmp(:)
-        logical, allocatable :: seen(:)
-        integer :: i, ir
+        logical,             allocatable :: seen(:)
+        integer                          :: i, ir
 
         ierr = 0
         errmsg = ''
@@ -450,7 +451,7 @@ contains
             seen(atoms(i)) = .true.
         end do
 
-        ! Grow the array by one; move_alloc avoids deep-copying the atom lists
+        ! Aumenta o array em um; move_alloc evita cópia profunda das listas de átomos
         if (.not. allocated(rs%regions)) allocate(rs%regions(0))
         allocate(tmp(rs%nregion + 1))
         do ir = 1, rs%nregion
@@ -472,12 +473,13 @@ contains
 
     end subroutine add_region
 
-    !> True if every atom 1..natoms belongs to exactly one region (no overlap,
-    !> no atom left out). False for an empty set or out-of-range indices.
+    !> Verdadeiro se todo átomo 1..natoms pertence a exatamente uma região (sem
+    !> sobreposição e sem átomo de fora). Falso para conjunto vazio ou índices
+    !> fora da faixa.
     logical function regions_are_partition(rs)
         type(region_set_t), intent(in) :: rs
         integer, allocatable :: cnt(:)
-        integer :: ir, i, a
+        integer              :: ir, i, a
 
         regions_are_partition = .false.
         if (rs%natoms < 1) return
@@ -492,8 +494,9 @@ contains
         regions_are_partition = all(cnt == 1)
     end function regions_are_partition
 
-    !> True if `name` (trailing blanks ignored) has 1..REGION_NAME_LEN chars from
-    !> [A-Za-z0-9_.] and is not the reserved word 'total' (case-sensitive).
+    !> Verdadeiro se `name` (brancos finais ignorados) tem 1..REGION_NAME_LEN
+    !> caracteres de [A-Za-z0-9_.] e não é a palavra reservada 'total'
+    !> (diferencia maiúsculas).
     logical function is_valid_region_name(name)
         character(len=*), intent(in) :: name
         integer :: n
@@ -506,10 +509,10 @@ contains
     end function is_valid_region_name
 
     ! ==================================================================
-    ! PRIVATE HELPERS
+    ! AUXILIARES PRIVADAS
     ! ==================================================================
 
-    !> Number of leading non-sentinel entries; -1 if a non-sentinel follows a sentinel.
+    !> Número de entradas iniciais não sentinela; -1 se um não sentinela vier após uma sentinela.
     integer function count_leading_atoms(buf) result(n)
         integer, intent(in) :: buf(:)
         integer :: i
@@ -525,7 +528,7 @@ contains
         end if
     end function count_leading_atoms
 
-    !> Same as count_leading_atoms for the species buffer (sentinel = blank).
+    !> Igual a count_leading_atoms, para o buffer de species (sentinela = branco).
     integer function count_leading_species(buf) result(n)
         character(len=*), intent(in) :: buf(:)
         integer :: i
@@ -541,7 +544,7 @@ contains
         end if
     end function count_leading_species
 
-    !> Text of `line` up to the first blank, tab, '!' or '/' (e.g. '&REGION').
+    !> Texto de `line` até o primeiro branco, tab, '!' ou '/' (p. ex. '&REGION').
     function first_token(line) result(tok)
         character(len=*), intent(in) :: line
         character(len=len(line)) :: tok
@@ -554,7 +557,7 @@ contains
         end if
     end function first_token
 
-    !> ASCII upper-case copy of s.
+    !> Cópia de s em maiúsculas ASCII.
     pure function upper(s) result(u)
         character(len=*), intent(in) :: s
         character(len=len(s)) :: u
@@ -566,7 +569,7 @@ contains
         end do
     end function upper
 
-    !> Integer to trimmed string (for error messages).
+    !> Inteiro para string sem brancos (para mensagens de erro).
     pure function itoa(i) result(s)
         integer, intent(in) :: i
         character(len=:), allocatable :: s

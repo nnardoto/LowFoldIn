@@ -1,21 +1,21 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Tests for atomic_regions (regions.nml) and atomic_selection (index lists).
+!> Testes de atomic_regions (regions.nml) e atomic_selection (listas de índices).
 program test_regions
-    use types, only: dp
-    use testing, only: check, test_summary
-    use structure_io, only: structure_t, structure_fingerprint
-    use atomic_regions, only: region_set_t, read_regions_file, write_regions_file, &
-                              validate_regions, add_region, regions_are_partition, &
-                              is_valid_region_name
+    use types,            only: dp
+    use testing,          only: check, test_summary
+    use structure_io,     only: structure_t, structure_fingerprint
+    use atomic_regions,   only: region_set_t, read_regions_file, write_regions_file, &
+                                validate_regions, add_region, regions_are_partition, &
+                                is_valid_region_name
     use atomic_selection, only: parse_index_list
     implicit none
 
     character(len=*), parameter :: TMPDIR = 'build/'
-    type(structure_t) :: st
-    character(len=16) :: fp
-    integer :: ntmp = 0
+    type(structure_t)  :: st
+    character(len=16)  :: fp
+    integer            :: ntmp = 0
     character(len=256) :: tmpfiles(64)
 
     call make_structure(st)
@@ -36,7 +36,7 @@ contains
     ! ------------------------------------------------------------------
     subroutine make_structure(s)
         type(structure_t), intent(out) :: s
-        integer :: i
+        integer                        :: i
         s%nat = 8
         s%lattice = 0.0_dp
         s%lattice(1,1) = 3.2_dp; s%lattice(2,2) = 3.2_dp; s%lattice(3,3) = 20.0_dp
@@ -65,7 +65,7 @@ contains
 
     function tmpname(tag) result(f)
         character(len=*), intent(in) :: tag
-        character(len=256) :: f
+        character(len=256)           :: f
         f = TMPDIR // 'test_regions_' // tag // '.nml'
         ntmp = ntmp + 1
         tmpfiles(ntmp) = f
@@ -74,7 +74,7 @@ contains
     subroutine write_text(fname, lines)
         character(len=*), intent(in) :: fname
         character(len=*), intent(in) :: lines(:)
-        integer :: iu, i
+        integer                      :: iu, i
         open(newunit=iu, file=fname, status='replace', action='write')
         do i = 1, size(lines)
             write(iu, '(A)') trim(lines(i))
@@ -97,8 +97,8 @@ contains
     ! ------------------------------------------------------------------
     subroutine test_parse_index_list()
         integer, allocatable :: l(:)
-        integer :: ierr, i
-        character(len=256) :: msg
+        integer              :: ierr, i
+        character(len=256)   :: msg
 
         call parse_index_list('1-12', 12, l, ierr, msg)
         call check(ierr == 0 .and. size(l) == 12, 'parse "1-12"')
@@ -141,9 +141,9 @@ contains
     ! ------------------------------------------------------------------
     subroutine test_roundtrip()
         type(region_set_t) :: rs, rs2
-        integer :: ierr, ir
+        integer            :: ierr, ir
         character(len=256) :: msg, f
-        logical :: same
+        logical            :: same
 
         call base_set(rs, .true.)
         call add_region(rs, 'top', [1, 2, 3, 4], ierr, msg)
@@ -179,10 +179,10 @@ contains
         call test_long_roundtrip()
     end subroutine test_roundtrip
 
-    !> Larger set to exercise line wrapping of species and atoms.
+    !> Conjunto maior para exercitar a quebra de linhas de espécies e átomos.
     subroutine test_long_roundtrip()
         type(region_set_t) :: rs, rs2
-        integer :: ierr, i
+        integer            :: ierr, i
         character(len=256) :: msg, f
         rs%natoms = 45
         rs%has_species = .true.
@@ -205,7 +205,7 @@ contains
     ! ------------------------------------------------------------------
     subroutine test_overlap()
         type(region_set_t) :: rs, rs2
-        integer :: ierr
+        integer            :: ierr
         character(len=256) :: msg, f
         call base_set(rs, .false.)
         call add_region(rs, 'top', [1, 2, 3, 4], ierr, msg)
@@ -224,9 +224,9 @@ contains
     ! ------------------------------------------------------------------
     subroutine test_add_region_errors()
         type(region_set_t) :: rs
-        integer :: ierr
+        integer            :: ierr
         character(len=256) :: msg
-        integer :: empty(0)
+        integer            :: empty(0)
 
         call base_set(rs, .false.)
         call add_region(rs, 'top', [1, 2, 3, 4], ierr, msg)
@@ -258,25 +258,25 @@ contains
     ! ------------------------------------------------------------------
     subroutine test_validate_errors()
         type(region_set_t) :: rs
-        type(structure_t) :: st2
-        integer :: ierr
+        type(structure_t)  :: st2
+        integer            :: ierr
         character(len=256) :: msg
 
-        ! natoms mismatch
+        ! natoms inconsistente
         call base_set(rs, .false.)
         rs%natoms = 7
         call add_region(rs, 'top', [1, 2], ierr, msg)
         call validate_regions(rs, st, .true., ierr, msg)
         call check(ierr /= 0, 'validate natoms mismatch -> error')
 
-        ! wrong fingerprint
+        ! fingerprint errado
         call base_set(rs, .false.)
         rs%fingerprint = '0123456789abcdef'
         call add_region(rs, 'top', [1, 2], ierr, msg)
         call validate_regions(rs, st, .true., ierr, msg)
         call check(ierr /= 0, 'validate wrong fingerprint -> error')
 
-        ! modified structure -> fingerprint differs
+        ! estrutura modificada -> fingerprint difere
         st2 = st
         st2%cart(3, 8) = st2%cart(3, 8) + 0.01_dp
         call base_set(rs, .false.)
@@ -284,7 +284,7 @@ contains
         call validate_regions(rs, st2, .true., ierr, msg)
         call check(ierr /= 0, 'validate vs moved structure -> error')
 
-        ! missing fingerprint
+        ! fingerprint ausente
         call base_set(rs, .false.)
         rs%fingerprint = ''
         call add_region(rs, 'top', [1, 2], ierr, msg)
@@ -293,7 +293,7 @@ contains
         call validate_regions(rs, st, .true., ierr, msg)
         call check(ierr == 0, 'validate missing fingerprint (allow) -> ok')
 
-        ! species mismatch
+        ! espécies inconsistentes
         call base_set(rs, .true.)
         rs%species(3) = 'N'
         call add_region(rs, 'top', [1, 2], ierr, msg)
@@ -304,9 +304,9 @@ contains
     ! ------------------------------------------------------------------
     subroutine test_file_errors()
         type(region_set_t) :: rs
-        integer :: ierr
+        integer            :: ierr
         character(len=256) :: msg, f
-        character(len=80) :: hdr(4)
+        character(len=80)  :: hdr(4)
 
         hdr(1) = '&REGION_FILE'
         hdr(2) = '    format_version = 1'

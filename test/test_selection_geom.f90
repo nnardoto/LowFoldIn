@@ -1,13 +1,13 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Tests for the geometric part of atomic_selection: projection on an
-!> arbitrary normal, range/box selection, layer detection, reference layers,
-!> surface layers and the periodic-split warning (docs/design/contracts.md §6).
+!> Testes da parte geométrica de atomic_selection: projeção sobre uma
+!> normal arbitrária, seleção por intervalo/caixa, detecção de camadas, camadas de referência,
+!> camadas de superfície e o aviso de corte periódico (docs/design/contracts.md §6).
 program test_selection_geom
-    use types, only: dp
-    use testing, only: check, check_close, test_summary
-    use structure_io, only: structure_t
+    use types,            only: dp
+    use testing,          only: check, check_close, test_summary
+    use structure_io,     only: structure_t
     use atomic_selection, only: project_positions, select_by_range, select_by_box, &
                                 detect_layers, check_periodic_split, &
                                 assign_to_references, surface_layers
@@ -35,7 +35,7 @@ contains
         type(structure_t), intent(out) :: st
         real(dp),          intent(in)  :: lattice(3,3)   ! rows = a_i
         real(dp),          intent(in)  :: pos(:,:)       ! (3,nat)
-        integer :: i
+        integer                        :: i
         st%nat = size(pos, 2)
         st%lattice = lattice
         st%cart = pos
@@ -51,7 +51,7 @@ contains
 
     function ortho(a, b, c) result(lat)
         real(dp), intent(in) :: a, b, c
-        real(dp) :: lat(3,3)
+        real(dp)             :: lat(3,3)
         lat = 0.0_dp
         lat(1,1) = a; lat(2,2) = b; lat(3,3) = c
     end function ortho
@@ -63,13 +63,13 @@ contains
     end function same
 
     ! ------------------------------------------------------------------
-    !> (a) orthogonal slab along z, 4 layers, top layer first in file order.
+    !> (a) slab ortogonal ao longo de z, 4 camadas, camada do topo primeiro na ordem do arquivo.
     subroutine test_z_slab()
-        type(structure_t) :: st
+        type(structure_t)     :: st
         real(dp), allocatable :: s(:), c(:)
-        integer, allocatable :: lay(:), top(:), bot(:)
-        integer :: nl, ierr
-        character(len=256) :: msg
+        integer, allocatable  :: lay(:), top(:), bot(:)
+        integer               :: nl, ierr
+        character(len=256)    :: msg
 
         call make(st, ortho(4.0_dp, 4.0_dp, 30.0_dp), reshape([ &
             0.0_dp, 0.0_dp, 9.5_dp,   2.0_dp, 2.0_dp, 9.5_dp, &
@@ -90,7 +90,7 @@ contains
         call check(same(bot, [7, 8]), 'z slab: bottom = lowest s')
         call surface_layers(lay, nl, 2, 0, top, bot, ierr, msg)
         call check(ierr == 0 .and. same(top, [1, 2, 3, 4]) .and. size(bot) == 0, 'z slab: top 2 only')
-        ! reversed normal: top becomes the former bottom
+        ! normal invertida: o topo passa a ser o antigo fundo
         call project_positions(st, [0.0_dp, 0.0_dp, -1.0_dp], s, ierr, msg)
         call detect_layers(s, 0.5_dp, lay, nl, c, ierr, msg)
         call surface_layers(lay, nl, 1, 1, top, bot, ierr, msg)
@@ -98,13 +98,13 @@ contains
     end subroutine test_z_slab
 
     ! ------------------------------------------------------------------
-    !> (b) layers along x: detected with (1,0,0), not with z.
+    !> (b) camadas ao longo de x: detectadas com (1,0,0), não com z.
     subroutine test_x_slab()
-        type(structure_t) :: st
+        type(structure_t)     :: st
         real(dp), allocatable :: s(:), c(:)
-        integer, allocatable :: lay(:)
-        integer :: nl, ierr
-        character(len=256) :: msg
+        integer, allocatable  :: lay(:)
+        integer               :: nl, ierr
+        character(len=256)    :: msg
 
         call make(st, ortho(30.0_dp, 4.0_dp, 4.0_dp), reshape([ &
             1.0_dp, 0.0_dp, 0.0_dp,   1.0_dp, 2.0_dp, 0.3_dp, &
@@ -120,16 +120,16 @@ contains
     end subroutine test_x_slab
 
     ! ------------------------------------------------------------------
-    !> (c) hexagonal (non-orthogonal) in-plane cell perpendicular to the tilted
-    !> normal n = (1,1,0)/sqrt(2); tilted a3; buckled layers.
+    !> (c) célula hexagonal (não ortogonal) no plano, perpendicular à normal
+    !> inclinada n = (1,1,0)/sqrt(2); a3 inclinado; camadas com buckling.
     subroutine test_tilted_hex()
-        type(structure_t) :: st
-        real(dp) :: n(3), u(3), w(3), lat(3,3), pos(3,8), sl(4)
+        type(structure_t)     :: st
+        real(dp)              :: n(3), u(3), w(3), lat(3,3), pos(3,8), sl(4)
         real(dp), allocatable :: s(:), c(:)
-        integer, allocatable :: lay(:), top(:), bot(:)
-        integer :: nl, ierr, k
-        logical :: warn
-        character(len=256) :: msg
+        integer, allocatable  :: lay(:), top(:), bot(:)
+        integer               :: nl, ierr, k
+        logical               :: warn
+        character(len=256)    :: msg
 
         n = [R2, R2, 0.0_dp]
         u = [R2, -R2, 0.0_dp]
@@ -161,15 +161,15 @@ contains
     end subroutine test_tilted_hex
 
     ! ------------------------------------------------------------------
-    !> (d) tolerance: too large merges layers, too small splits a buckled layer.
+    !> (d) tolerância: muito grande funde camadas, muito pequena divide uma camada com buckling.
     subroutine test_tolerance()
         real(dp), allocatable :: c(:)
-        integer, allocatable :: lay(:)
-        integer :: nl, ierr
-        character(len=256) :: msg
-        real(dp) :: s(6)
+        integer, allocatable  :: lay(:)
+        integer               :: nl, ierr
+        character(len=256)    :: msg
+        real(dp)              :: s(6)
 
-        s = [0.0_dp, 0.3_dp, 2.0_dp, 2.2_dp, 4.0_dp, 4.0_dp]   ! layer 1 buckled by 0.3
+        s = [0.0_dp, 0.3_dp, 2.0_dp, 2.2_dp, 4.0_dp, 4.0_dp]   ! camada 1 com buckling de 0.3
         call detect_layers(s, 0.5_dp, lay, nl, c, ierr, msg)
         call check(nl == 3, 'tol 0.5: 3 layers')
         call detect_layers(s, 2.5_dp, lay, nl, c, ierr, msg)
@@ -181,12 +181,12 @@ contains
     end subroutine test_tolerance
 
     ! ------------------------------------------------------------------
-    !> (e) manual references, numbering by ascending center, ambiguous atom error.
+    !> (e) referências manuais, numeração por centro crescente, erro para átomo ambíguo.
     subroutine test_references()
         integer, allocatable :: lay(:)
-        integer :: ierr
-        character(len=256) :: msg
-        real(dp) :: s(5)
+        integer              :: ierr
+        character(len=256)   :: msg
+        real(dp)             :: s(5)
 
         s = [9.4_dp, 2.1_dp, 5.0_dp, 1.9_dp, 9.6_dp]
         call assign_to_references(s, [9.5_dp, 2.0_dp, 5.0_dp], 0.5_dp, lay, ierr, msg)
@@ -205,9 +205,9 @@ contains
     ! ------------------------------------------------------------------
     !> (f) select_by_range / select_by_box.
     subroutine test_range_box()
-        type(structure_t) :: st
+        type(structure_t)    :: st
         integer, allocatable :: list(:)
-        real(dp), parameter :: BIG = huge(1.0_dp)
+        real(dp), parameter  :: BIG = huge(1.0_dp)
 
         call select_by_range([3.0_dp, 1.0_dp, 2.0_dp, 5.0_dp], 1.0_dp, 3.0_dp, list)
         call check(same(list, [1, 2, 3]), 'range: inclusive limits, sorted')
@@ -226,12 +226,12 @@ contains
     end subroutine test_range_box
 
     ! ------------------------------------------------------------------
-    !> (g) zero normal.
+    !> (g) normal nula.
     subroutine test_zero_normal()
-        type(structure_t) :: st
+        type(structure_t)     :: st
         real(dp), allocatable :: s(:)
-        integer :: ierr
-        character(len=256) :: msg
+        integer               :: ierr
+        character(len=256)    :: msg
         call make(st, ortho(1.0_dp, 1.0_dp, 1.0_dp), reshape([0.0_dp, 0.0_dp, 0.0_dp], [3, 1]))
         call project_positions(st, [0.0_dp, 0.0_dp, 1.0e-14_dp], s, ierr, msg)
         call check(ierr /= 0, 'zero normal: error')
@@ -239,13 +239,13 @@ contains
     end subroutine test_zero_normal
 
     ! ------------------------------------------------------------------
-    !> (h) periodic split: slab across the z boundary warns; centered slab does not.
+    !> (h) corte periódico: slab atravessando a fronteira em z emite aviso; slab centrado não.
     subroutine test_periodic_split()
-        type(structure_t) :: st
+        type(structure_t)     :: st
         real(dp), allocatable :: s(:)
-        integer :: ierr
-        logical :: warn
-        character(len=256) :: msg
+        integer               :: ierr
+        logical               :: warn
+        character(len=256)    :: msg
 
         call make(st, ortho(4.0_dp, 4.0_dp, 20.0_dp), reshape([ &
             0.0_dp, 0.0_dp, 0.5_dp,   2.0_dp, 2.0_dp, 19.5_dp, &
@@ -260,7 +260,7 @@ contains
         call project_positions(st, [0.0_dp, 0.0_dp, 1.0_dp], s, ierr, msg)
         call check_periodic_split(st, [0.0_dp, 0.0_dp, 1.0_dp], s, 1.5_dp, warn)
         call check(.not. warn, 'split: centered slab does not warn')
-        ! along x (a = 4 A) atoms at x = 0, 2: image gap 2 A <= tol 2 -> warning
+        ! ao longo de x (a = 4 A) átomos em x = 0, 2: gap da imagem 2 A <= tol 2 -> aviso
         call project_positions(st, [1.0_dp, 0.0_dp, 0.0_dp], s, ierr, msg)
         call check_periodic_split(st, [1.0_dp, 0.0_dp, 0.0_dp], s, 2.0_dp, warn)
         call check(warn, 'split: bulk-like direction warns')
@@ -269,8 +269,8 @@ contains
     ! ------------------------------------------------------------------
     subroutine test_surface_errors()
         integer, allocatable :: top(:), bot(:)
-        integer :: ierr
-        character(len=256) :: msg
+        integer              :: ierr
+        character(len=256)   :: msg
         call surface_layers([1, 2, 3], 3, 2, 2, top, bot, ierr, msg)
         call check(ierr /= 0, 'surface: top+bottom > nlayer -> error')
         call surface_layers([1, 2, 3], 3, 0, 0, top, bot, ierr, msg)

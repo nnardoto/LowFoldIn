@@ -4,9 +4,9 @@
 #
 # test/test_atomselect_cli.sh
 #
-# Command-line tests for the atomselect executable (docs/design/contracts.md §6).
-# Run from the repository root:   bash test/test_atomselect_cli.sh
-# Exits non-zero if any check fails.
+# Testes de linha de comando do executável atomselect (docs/design/contracts.md §6).
+# Execute a partir da raiz do repositório:   bash test/test_atomselect_cli.sh
+# Termina com código diferente de zero se alguma verificação falhar.
 
 set -u
 
@@ -31,18 +31,18 @@ nfail=0
 pass() { npass=$((npass + 1)); echo "  ok   $1"; }
 fail() { nfail=$((nfail + 1)); echo "  FAIL $1"; }
 
-# check NAME CONDITION...   (CONDITION is evaluated as a command)
+# check NAME CONDITION...   (CONDITION é avaliada como um comando)
 check() {
     local name=$1; shift
     if "$@"; then pass "$name"; else fail "$name"; fi
 }
 
-# expect_error NAME CMD...   command must exit with code 1 and print the error prefix
+# expect_error NAME CMD...   o comando deve sair com código 1 e imprimir o prefixo de erro
 expect_error() {
     local name=$1; shift
     local out rc
     out=$("$@" 2>&1); rc=$?
-    # the error line must be on stderr: it may not appear on stdout
+    # a linha de erro deve estar em stderr: não pode aparecer em stdout
     if [ "$rc" -eq 1 ] && grep -q '^\[atomselect error\]' <<<"$out" \
         && ! "$@" 2>/dev/null | grep -q '^\[atomselect error\]'; then
         pass "$name"

@@ -1,14 +1,14 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Testes do nucleo de unfolding (module unfold), com dados sinteticos em memoria.
+!> Testes do núcleo de unfolding (module unfold), com dados sintéticos em memória.
 !>
-!> Cadeia diatomica 1D (PC: A em x=0, B em x=0.5, a=1; hopping t1 A->B, t2 B->A+1),
-!> SC de periodo 2 ao longo de x. Compara o motor de M NAO-diagonal
+!> Cadeia diatômica 1D (PC: A em x=0, B em x=0.5, a=1; hopping t1 A->B, t2 B->A+1),
+!> SC de período 2 ao longo de x. Compara o motor de M NÃO-diagonal
 !> M = [[2,1,0],[0,1,0],[0,0,1]] (det 2) contra o caminho M diagonal diag(2,1,1)
-!> (mesma SC fisica ao longo da cadeia; y e' desacoplado), com e sem
-!> representantes de celula DESLOCADOS por um vetor da SC em um dos orbitais-PC.
-!> A geometria (e portanto H(R)) e' construida a partir dos rotulos reais.
+!> (mesma SC física ao longo da cadeia; y é desacoplado), com e sem
+!> representantes de célula DESLOCADOS por um vetor da SC em um dos orbitais-PC.
+!> A geometria (e portanto H(R)) é construída a partir dos rótulos reais.
 program test_unfold_core
     use types,   only: dp
     use HS_io,   only: HSDataFormat
@@ -16,14 +16,14 @@ program test_unfold_core
     use testing, only: check, check_close, test_summary
     implicit none
 
-    integer, parameter :: NA = 4, NK = 5
+    integer,  parameter :: NA = 4, NK = 5
     real(dp), parameter :: T1 = -1.0_dp, T2 = -0.6_dp, EA = 0.4_dp, EB = -0.4_dp
-    ! atomos da SC: tipo (1=A, 2=B) e rotulo de celula n (posicao x = n + 0.5*(tipo-1))
-    integer, parameter :: KIND_(NA) = [1, 2, 1, 2]
-    integer, parameter :: LAB_REF(NA)  = [0, 0, 1, 1]
-    integer, parameter :: LAB_SHIFT(NA) = [0, 0, 1, -1]   ! B da 2a celula: 1 - 2 = -1
+    ! átomos da SC: tipo (1=A, 2=B) e rótulo de célula n (posição x = n + 0.5*(tipo-1))
+    integer,  parameter :: KIND_(NA)     = [1, 2, 1, 2]
+    integer,  parameter :: LAB_REF(NA)   = [0, 0, 1, 1]
+    integer,  parameter :: LAB_SHIFT(NA) = [0, 0, 1, -1]   ! B da 2ª célula: 1 - 2 = -1
     type(UnfoldResultFormat) :: ref, nd_plain, nd_shift, dg_shift
-    real(dp) :: tol
+    real(dp)                 :: tol
 
     call run_case(.true.,  LAB_REF,   ref)
     call run_case(.false., LAB_REF,   nd_plain)
@@ -55,8 +55,8 @@ contains
         type(UnfoldConfig)       :: cfg
         type(HSDataFormat)       :: H, S
         type(UnfoldPerformance)  :: perf
-        integer :: i, j, ir, ik, R
-        real(dp) :: xi, xj, d
+        integer                  :: i, j, ir, ik, R
+        real(dp)                 :: xi, xj, d
 
         H%nAtoms = NA;  H%NOrbs = NA;  H%Neighbors = 5
         allocate(H%Orbs(NA), source=1)

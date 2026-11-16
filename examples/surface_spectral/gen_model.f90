@@ -4,30 +4,31 @@
 ! ----------------------------------------------------------------------------------------------------------
 ! examples/surface_spectral/gen_model.f90
 !
-! SYNTHETIC MODEL -- NOT DFT DATA, NOT ARPES.
+! MODELO SINTÉTICO -- NÃO SÃO DADOS DE DFT, NEM DE ARPES.
 !
-! Writes a deterministic, non-orthogonal LCAO-like tight-binding slab into the
-! CURRENT directory:
+! Escreve, no diretório ATUAL, uma slab tight-binding determinística, do tipo
+! LCAO e não-ortogonal:
 !   model_H.hsio, model_S.hsio   (HSIO v2, via HSDataFormat%WriteFile)
-!   model.nml                    (structure file, contracts §1, with &SPECIES)
+!   model.nml                    (arquivo de estrutura, contracts §1, com &SPECIES)
 !
-! Geometry: square lattice a = 3.0 A in-plane (a1 = (3,0,0), a2 = (0,3,0)),
-! a3 = (0,0,40) (vacuum). NL = 8 layers along z, one atom per layer, spacing
-! 2.0 A, z_l = 13 + 2(l-1) A. Atom l = layer l (atom 1 = bottom, atom 8 = top).
-! Species alternate: odd layers 'A' (2 orbitals: s, pz), even layers 'B'
-! (1 orbital: s). Bottom layer = A (atom 1), top layer = B (atom 8).
+! Geometria: rede quadrada com a = 3.0 A no plano (a1 = (3,0,0), a2 = (0,3,0)),
+! a3 = (0,0,40) (vácuo). NL = 8 camadas ao longo de z, um átomo por camada,
+! espaçamento de 2.0 A, z_l = 13 + 2(l-1) A. Átomo l = camada l (átomo 1 = base,
+! átomo 8 = topo). As espécies se alternam: camadas ímpares 'A' (2 orbitais: s, pz)
+! e camadas pares 'B' (1 orbital: s). Camada da base = A (átomo 1), camada do
+! topo = B (átomo 8).
 !
-! Hamiltonian (eV); Data(:,:,iR) = <i in cell 0| H |j in cell IndexList(:,iR)>,
-! H(k) = sum_R Data(:,:,R) exp(+i 2 pi k.R). Cells: R = 0, +-a1, +-a2.
-!   onsite      : A_s = EPS_AS, A_pz = EPS_AP, B_s = EPS_BS
-!   surface     : top B_s shifted by DTOP, bottom A_s shifted by DBOT
-!   interlayer  : (R = 0, adjacent layers only)  s-s = TZ_SS,
-!                 A_pz - B_s = +TZ_PS if B is above A, -TZ_PS if below (odd pz)
-!   in-plane NN : (R = +-a1, +-a2, same atom) s-s = TP_S, pz-pz = TP_P
-! Overlap: identity on site; same connectivity with SZ_SS, SZ_PS (same sign
-! rule), SP_S, SP_P. All matrices are real symmetric in the sense
-! Data(:,:,-R) = Data(:,:,R)^T, so H(k), S(k) are Hermitian.
-! E_F = 0 by construction (no shift is applied anywhere).
+! Hamiltoniano (eV); Data(:,:,iR) = <i na célula 0| H |j na célula IndexList(:,iR)>,
+! H(k) = sum_R Data(:,:,R) exp(+i 2 pi k.R). Células: R = 0, +-a1, +-a2.
+!   onsite       : A_s = EPS_AS, A_pz = EPS_AP, B_s = EPS_BS
+!   superfície   : B_s do topo deslocado por DTOP, A_s da base deslocado por DBOT
+!   intercamadas : (R = 0, somente camadas adjacentes)  s-s = TZ_SS,
+!                  A_pz - B_s = +TZ_PS se B está acima de A, -TZ_PS se abaixo (pz ímpar)
+!   NN no plano  : (R = +-a1, +-a2, mesmo átomo) s-s = TP_S, pz-pz = TP_P
+! Overlap: identidade no sítio; mesma conectividade com SZ_SS, SZ_PS (mesma regra
+! de sinal), SP_S, SP_P. Todas as matrizes são reais simétricas no sentido
+! Data(:,:,-R) = Data(:,:,R)^T, de modo que H(k) e S(k) são hermitianas.
+! E_F = 0 por construção (nenhum deslocamento é aplicado em lugar algum).
 ! ----------------------------------------------------------------------------------------------------------
 program gen_model
     use types, only: dp
@@ -37,12 +38,12 @@ program gen_model
     integer,  parameter :: NL = 8
     real(dp), parameter :: A_LAT = 3.0_dp, DZ = 2.0_dp, C_LAT = 40.0_dp, Z0 = 13.0_dp
 
-    ! ---- model parameters (eV) ----
+    ! ---- parâmetros do modelo (eV) ----
     real(dp), parameter :: EPS_AS = -1.20_dp, EPS_AP = 4.00_dp, EPS_BS = 1.80_dp
     real(dp), parameter :: DTOP   = -2.00_dp, DBOT = 1.80_dp
     real(dp), parameter :: TZ_SS  = -0.60_dp, TZ_PS = 0.50_dp
     real(dp), parameter :: TP_S   = -0.15_dp, TP_P  = 0.10_dp
-    ! ---- overlaps (dimensionless) ----
+    ! ---- overlaps (adimensionais) ----
     real(dp), parameter :: SZ_SS  = 0.10_dp, SZ_PS = 0.05_dp
     real(dp), parameter :: SP_S   = 0.08_dp, SP_P  = 0.05_dp
 
@@ -50,8 +51,8 @@ program gen_model
     integer, parameter :: RLIST(3, NR) = reshape([0,0,0, 1,0,0, -1,0,0, 0,1,0, 0,-1,0], [3, NR])
 
     type(HSDataFormat) :: H, S
-    integer :: norb(NL), off(NL), ntot, l, iR, u, is_a, is_b, ip_a
-    real(dp) :: sgn
+    integer            :: norb(NL), off(NL), ntot, l, iR, u, is_a, is_b, ip_a
+    real(dp)           :: sgn
 
     do l = 1, NL
         norb(l) = merge(2, 1, mod(l, 2) == 1)
@@ -65,7 +66,7 @@ program gen_model
     call init(H, 'Synthetic model slab H (NOT DFT) - examples/surface_spectral')
     call init(S, 'Synthetic model slab S (NOT DFT) - examples/surface_spectral')
 
-    ! ---- on-site (R = 0) ----
+    ! ---- onsite (R = 0) ----
     do l = 1, NL
         if (mod(l, 2) == 1) then
             call setv(H, off(l)+1, off(l)+1, 1, EPS_AS + merge(DBOT, 0.0_dp, l == 1))
@@ -78,11 +79,11 @@ program gen_model
         end if
     end do
 
-    ! ---- interlayer (R = 0), layers l and l+1 ----
+    ! ---- intercamadas (R = 0), camadas l e l+1 ----
     do l = 1, NL - 1
-        if (mod(l, 2) == 1) then          ! A at l (below), B at l+1 (above)
+        if (mod(l, 2) == 1) then          ! A em l (abaixo), B em l+1 (acima)
             is_a = off(l) + 1; ip_a = off(l) + 2; is_b = off(l+1) + 1; sgn = 1.0_dp
-        else                              ! B at l (below), A at l+1 (above)
+        else                              ! B em l (abaixo), A em l+1 (acima)
             is_b = off(l) + 1; is_a = off(l+1) + 1; ip_a = off(l+1) + 2; sgn = -1.0_dp
         end if
         call setsym(H, is_a, is_b, TZ_SS)
@@ -91,7 +92,7 @@ program gen_model
         call setsym(S, ip_a, is_b, sgn * SZ_PS)
     end do
 
-    ! ---- in-plane nearest neighbours (same atom, R = +-a1, +-a2) ----
+    ! ---- primeiros vizinhos no plano (mesmo átomo, R = +-a1, +-a2) ----
     do iR = 2, NR
         do l = 1, NL
             call setv(H, off(l)+1, off(l)+1, iR, TP_S)
@@ -106,7 +107,7 @@ program gen_model
     call H%WriteFile('model_H.hsio')
     call S%WriteFile('model_S.hsio')
 
-    ! ---- structure file ----
+    ! ---- arquivo de estrutura ----
     open(newunit=u, file='model.nml', status='replace', action='write')
     write(u, '(A)') '! SYNTHETIC MODEL slab (NOT DFT) generated by examples/surface_spectral/gen_model.f90'
     write(u, '(A)') '! 8 layers along z (atom 1 = bottom, atom 8 = top), species A (s,pz) / B (s)'
@@ -151,16 +152,16 @@ contains
 
     subroutine setv(M, i, j, iRn, v)
         type(HSDataFormat), intent(inout) :: M
-        integer,  intent(in) :: i, j, iRn
-        real(dp), intent(in) :: v
+        integer,            intent(in)    :: i, j, iRn
+        real(dp),           intent(in)    :: v
         M%Data(i, j, iRn) = cmplx(v, 0.0_dp, kind=dp)
     end subroutine setv
 
-    !> R = 0 symmetric pair (i,j) and (j,i).
+    !> Par simétrico em R = 0: (i,j) e (j,i).
     subroutine setsym(M, i, j, v)
         type(HSDataFormat), intent(inout) :: M
-        integer,  intent(in) :: i, j
-        real(dp), intent(in) :: v
+        integer,            intent(in)    :: i, j
+        real(dp),           intent(in)    :: v
         call setv(M, i, j, 1, v)
         call setv(M, j, i, 1, v)
     end subroutine setsym

@@ -1,9 +1,9 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Minimal test harness shared by all fpm test programs.
-!> Usage: call check(cond, "description"); at the end call test_summary("name")
-!> which stops with exit code 1 if any check failed.
+!> Harness mínimo de testes compartilhado por todos os programas de teste do fpm.
+!> Uso: call check(cond, "descrição"); ao final, call test_summary("nome"),
+!> que encerra com código de saída 1 se alguma verificação falhou.
 module testing
     use types, only: dp
     implicit none

@@ -10,9 +10,9 @@ module bands_io
     public :: BandsDataFormat
 
     type :: BandsDataFormat
-        real(dp),    allocatable       :: EigenValues(:, :)     ! Dimensão: [total_kpoints, nBands]
-        complex(dp), allocatable       :: Eigenvectors(:, :, :)  ! Dimensão: [total_kpoints, nBands, NOrbs]
-        logical                        :: HasEigenvectors = .false.
+        real(dp),    allocatable :: EigenValues(:, :)      ! Dimensão: [total_kpoints, nBands]
+        complex(dp), allocatable :: Eigenvectors(:, :, :)  ! Dimensão: [total_kpoints, nBands, NOrbs]
+        logical                  :: HasEigenvectors = .false.
 
         contains
             procedure :: SaveToBinary
@@ -20,15 +20,15 @@ module bands_io
             procedure :: SaveToGnuplotBlocks
     end type BandsDataFormat
 
-    contains
+contains
 
     !> Salva as Bandas em Formato de Texto Plano (ASCII)
     subroutine SaveToText(this, filename, b_cfg)
-        class(BandsDataFormat), intent(in)  :: this
-        character(len=*),       intent(in)  :: filename
-        type(BandsConfig),      intent(in)  :: b_cfg
+        class(BandsDataFormat), intent(in) :: this
+        character(len=*),       intent(in) :: filename
+        type(BandsConfig),      intent(in) :: b_cfg
 
-        integer :: iunit, ios, nOrbs, nkPoints, ik
+        integer            :: iunit, ios, nOrbs, nkPoints, ik
         character(len=256) :: FormatString
 
         if (.not. allocated(this%EigenValues)) then
@@ -75,9 +75,9 @@ module bands_io
     !> linha em branco. Esse é o formato clássico esperado pelo Gnuplot para desenhar
     !> várias curvas com um único comando `plot`, sem precisar do `for [i=2:*]`.
     subroutine SaveToGnuplotBlocks(this, filename, b_cfg)
-        class(BandsDataFormat), intent(in)  :: this
-        character(len=*),       intent(in)  :: filename
-        type(BandsConfig),      intent(in)  :: b_cfg
+        class(BandsDataFormat), intent(in) :: this
+        character(len=*),       intent(in) :: filename
+        type(BandsConfig),      intent(in) :: b_cfg
 
         integer :: iunit, ios, nOrbs, nkPoints, ib, ik
 
@@ -129,7 +129,7 @@ module bands_io
         class(BandsDataFormat), intent(in) :: this
         character(len=*),       intent(in) :: filename
         type(BandsConfig),      intent(in) :: b_cfg
-        integer :: iunit, ios, nOrbs, nkPoints
+        integer                            :: iunit, ios, nOrbs, nkPoints
 
         open(newunit=iunit, file=filename, action='write', status='replace', &
              form='unformatted', access='stream', iostat=ios)
@@ -142,8 +142,8 @@ module bands_io
         nkPoints = size(this%EigenValues, 2)
 
         ! Escreve os metadados brutos primeiro para o leitor saber o formato da matriz
-        write(iunit) nOrbs ! nOrbs
-        write(iunit) nkPoints ! nkPoints
+        write(iunit) nOrbs     ! nOrbs
+        write(iunit) nkPoints  ! nkPoints
         
         ! Salva o bloco inteiro de memória da matriz de uma só vez
         write(iunit) b_cfg%xpoints

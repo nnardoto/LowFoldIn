@@ -1,43 +1,43 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Broadening of discrete (energy, weight) spectral data into continuous maps
-!> A(k,E) on a uniform energy grid, plus Fermi-Dirac occupation
+!> Alargamento de dados espectrais discretos (energia, peso) em mapas contínuos
+!> A(k,E) sobre uma grade de energia uniforme, mais a ocupação de Fermi-Dirac
 !> (docs/design/contracts.md §7, specmap).
 !>
-!> Pipeline position: post-processing. specmap reads the discrete
-!> (band energy, projection weight) pairs produced by `spectral`
-!> (module spectral_data, contracts §5) and uses this module to turn them into
-!> a smooth A(E,k) image; nothing here touches eigenvectors or I/O.
+!> Posição no pipeline: pós-processamento. O specmap lê os pares discretos
+!> (energia de banda, peso de projeção) produzidos por `spectral`
+!> (módulo spectral_data, contracts §5) e usa este módulo para transformá-los
+!> em uma imagem A(E,k) suave; nada aqui toca autovetores nem E/S.
 !>
-!> Conventions:
-!>   - Energies, widths and the grid are all in eV; temperature in K.
-!>   - Array order: energy(nband, nk), weight(nband, nk), A(ne, nk), i.e.
-!>     bands first, energy-grid index first in the output.
-!>   - Lorentzian: width = HWHM eta,              L(x) = (1/pi) eta/(x^2+eta^2)
-!>   - Gaussian:   width = standard deviation sigma (NOT HWHM),
-!>                 G(x) = exp(-x^2/(2 sigma^2)) / (sigma sqrt(2 pi))
-!>   - Both kernels integrate to 1 over the real line; weights are used with
-!>     their sign (no abs, no clipping).
-!> Library routines never stop. Callers must validate width > 0, ne >= 2 and
-!> emax > emin beforehand (specmap does it at input validation).
+!> Convenções:
+!>   - Energias, larguras e a grade estão todas em eV; temperatura em K.
+!>   - Ordem dos arrays: energy(nband, nk), weight(nband, nk), A(ne, nk), isto é,
+!>     bandas primeiro e índice da grade de energia primeiro na saída.
+!>   - Lorentziana: largura = HWHM eta,           L(x) = (1/pi) eta/(x^2+eta^2)
+!>   - Gaussiana:   largura = desvio padrão sigma (NÃO HWHM),
+!>                  G(x) = exp(-x^2/(2 sigma^2)) / (sigma sqrt(2 pi))
+!>   - Ambos os núcleos integram 1 sobre a reta real; os pesos são usados com
+!>     o sinal (sem abs, sem truncamento).
+!> As rotinas da biblioteca nunca param o programa. Os chamadores devem validar
+!> width > 0, ne >= 2 e emax > emin antes (o specmap faz isso na validação de entrada).
 module spectral_broadening
     use types, only: dp
     implicit none
     private
 
     ! ==================================================================
-    ! Constants
+    ! Constantes
     ! ==================================================================
 
-    !> Kernel selector for `broaden`.
+    !> Seletor de núcleo para `broaden`.
     integer, parameter, public :: KERNEL_LORENTZIAN = 1, KERNEL_GAUSSIAN = 2
 
-    !> Boltzmann constant in eV/K.
+    !> Constante de Boltzmann em eV/K.
     real(dp), parameter, public :: KB_EV_PER_K = 8.617333262e-5_dp
 
-    !> Gaussian contributions beyond this many sigma are skipped
-    !> (exp(-72) ~ 5e-32, far below double-precision relevance).
+    !> Contribuições gaussianas além deste número de sigma são ignoradas
+    !> (exp(-72) ~ 5e-32, muito abaixo da relevância da dupla precisão).
     real(dp), parameter :: GAUSS_CUTOFF_NSIGMA = 12.0_dp
 
     real(dp), parameter :: PI = acos(-1.0_dp)
@@ -47,33 +47,33 @@ module spectral_broadening
 contains
 
     ! ==================================================================
-    ! Kernels and occupation (elemental, usable on arrays)
+    ! Núcleos e ocupação (elementais, utilizáveis em arrays)
     ! ==================================================================
 
-    !> Normalised Lorentzian with half width at half maximum eta.
+    !> Lorentziana normalizada com meia largura a meia altura eta.
     elemental function lorentzian(x, eta) result(y)
         real(dp), intent(in) :: x, eta
         real(dp) :: y
         y = (eta / PI) / (x*x + eta*eta)
     end function lorentzian
 
-    !> Normalised Gaussian with standard deviation sigma.
+    !> Gaussiana normalizada com desvio padrão sigma.
     elemental function gaussian(x, sigma) result(y)
         real(dp), intent(in) :: x, sigma
         real(dp) :: y
         y = exp(-x*x / (2.0_dp*sigma*sigma)) / (sigma * sqrt(2.0_dp*PI))
     end function gaussian
 
-    !> Fermi-Dirac occupation f = 1/(1+exp((e-mu)/(kB T))), overflow-safe.
-    !> T == 0 gives the step function with f(mu) = 1/2. T < 0 is not
-    !> meaningful and must be rejected by the caller; it is treated as T = 0.
-    !> e, mu in eV; temperature_k in K.
+    !> Ocupação de Fermi-Dirac f = 1/(1+exp((e-mu)/(kB T))), segura contra overflow.
+    !> T == 0 dá a função degrau com f(mu) = 1/2. T < 0 não tem significado
+    !> e deve ser rejeitado pelo chamador; é tratado como T = 0.
+    !> e, mu em eV; temperature_k em K.
     elemental function fermi_dirac(e, mu, temperature_k) result(f)
         real(dp), intent(in) :: e, mu, temperature_k
         real(dp) :: f
         real(dp) :: z, ez
 
-        ! T <= 0: step function (f = 1/2 exactly at e == mu).
+        ! T <= 0: função degrau (f = 1/2 exatamente em e == mu).
         if (temperature_k <= 0.0_dp) then
             if (e < mu) then
                 f = 1.0_dp
@@ -85,9 +85,9 @@ contains
             return
         end if
 
-        ! z = (e-mu)/(kB T). Overflow safety: beyond |z| = 700 exp() would
-        ! overflow, so saturate; for 0 < z use exp(-z) so the argument of exp
-        ! is never positive.
+        ! z = (e-mu)/(kB T). Segurança contra overflow: além de |z| = 700 exp()
+        ! estouraria, então satura; para 0 < z usa-se exp(-z), de modo que o
+        ! argumento de exp nunca seja positivo.
         z = (e - mu) / (KB_EV_PER_K * temperature_k)
         if (z > 700.0_dp) then
             f = 0.0_dp
@@ -102,12 +102,12 @@ contains
     end function fermi_dirac
 
     ! ==================================================================
-    ! Grid and broadening
+    ! Grade e alargamento
     ! ==================================================================
 
-    !> Uniform grid E_i = emin + (i-1)(emax-emin)/(ne-1), i = 1..ne (ne >= 2).
-    !> The last point is set to emax exactly (no round-off drift). grid must
-    !> have size >= ne; shorter arrays are filled only up to size(grid).
+    !> Grade uniforme E_i = emin + (i-1)(emax-emin)/(ne-1), i = 1..ne (ne >= 2).
+    !> O último ponto é fixado exatamente em emax (sem deriva de arredondamento).
+    !> grid deve ter tamanho >= ne; arrays menores são preenchidos só até size(grid).
     subroutine energy_grid(emin, emax, ne, grid)
         real(dp), intent(in)  :: emin, emax
         integer,  intent(in)  :: ne
@@ -124,11 +124,11 @@ contains
 
     !> A(:,k) = sum_n weight(n,k) * K(grid - energy(n,k)).
     !> energy(nband,nk), weight(nband,nk), grid(ne) -> A(ne,nk).
-    !> Lorentzian tails are always computed in full (no cutoff); Gaussian
-    !> contributions with |x| > 12 sigma are skipped. Unknown kernel -> A = 0.
-    !> width is eta (HWHM) for the Lorentzian and sigma for the Gaussian, in eV.
-    !> ne is taken from size(grid); A must have shape (ne, nk). Bands with
-    !> weight exactly 0 are skipped. Cost is O(nk * nband * ne).
+    !> As caudas lorentzianas são sempre calculadas por inteiro (sem corte); as
+    !> contribuições gaussianas com |x| > 12 sigma são ignoradas. Núcleo desconhecido -> A = 0.
+    !> width é eta (HWHM) para a Lorentziana e sigma para a Gaussiana, em eV.
+    !> ne é obtido de size(grid); A deve ter shape (ne, nk). Bandas com
+    !> peso exatamente 0 são ignoradas. Custo O(nk * nband * ne).
     subroutine broaden(energy, weight, grid, kernel, width, A)
         real(dp), intent(in)  :: energy(:,:), weight(:,:), grid(:)
         integer,  intent(in)  :: kernel
@@ -150,7 +150,7 @@ contains
                 if (w == 0.0_dp) cycle
                 select case (kernel)
                 case (KERNEL_LORENTZIAN)
-                    ! Slow 1/x^2 tails: no cutoff, so every band feeds every grid point.
+                    ! Caudas lentas 1/x^2: sem corte, então toda banda contribui a todo ponto da grade.
                     do ie = 1, ne
                         x = grid(ie) - energy(ib, ik)
                         A(ie, ik) = A(ie, ik) + w * lorentzian(x, width)

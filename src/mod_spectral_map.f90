@@ -1,24 +1,24 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Map expressions over named regions and text output of spectral maps
+!> Expressões de mapa sobre regiões nomeadas e saída em texto dos mapas espectrais
 !> (docs/design/contracts.md §7).
 !>
-!> Pipeline position: used by the specmap tool after the broadening step
-!> (spectral_broadening) has turned discrete (energy, weight) pairs into an
-!> intensity map A(ne,nk); this module selects/combines regions and writes
-!> the gnuplot-ready outputs. It does no physics itself.
+!> Posição no pipeline: usado pela ferramenta specmap depois da etapa de alargamento
+!> (spectral_broadening), que transforma pares discretos (energia, peso) em um
+!> mapa de intensidade A(ne,nk); este módulo seleciona/combina regiões e escreve
+!> as saídas prontas para o gnuplot. Não faz física por si só.
 !>
-!>   - parse_map_expression: 'top-bottom', 'a+b-c', '-top' -> region indices
-!>     and +/-1 coefficients (a repeated region has its coefficients added)
+!>   - parse_map_expression: 'top-bottom', 'a+b-c', '-top' -> índices de região
+!>     e coeficientes +/-1 (uma região repetida tem os coeficientes somados)
 !>   - map_file_tag:         'top-bottom' -> 'top_minus_bottom'
-!>   - write_map_file:       pm3d-ready text map (one block per k)
-!>   - write_kticks_file:    gnuplot include with xtics/xrange/EF/ELABEL
+!>   - write_map_file:       mapa em texto pronto para pm3d (um bloco por k)
+!>   - write_kticks_file:    include do gnuplot com xtics/xrange/EF/ELABEL
 !>
-!> Conventions: energies in eV, k distance in 1/Angstrom (as in
-!> spectral_data); region indices are 1-based into sd%region_name.
-!> Library routines never stop: errors are returned through ierr/errmsg
-!> (ierr = 0 means success).
+!> Convenções: energias em eV, distância k em 1/Angstrom (como em
+!> spectral_data); os índices de região são de base 1 em sd%region_name.
+!> As rotinas da biblioteca nunca param: os erros são devolvidos via ierr/errmsg
+!> (ierr = 0 significa sucesso).
 module spectral_map
     use types, only: dp
     use spectral_data, only: spectral_data_t, find_region, EREF_FERMI, EREF_ABSOLUTE
@@ -30,18 +30,18 @@ module spectral_map
 contains
 
     ! ==================================================================
-    ! Map expressions
+    ! Expressões de mapa
     ! ==================================================================
 
-    !> Parse a map expression: region names joined by '+' or '-'; a leading
-    !> '-' is allowed; spaces are ignored. Returns the distinct region indices
-    !> (in order of first appearance) and their coefficients (sum of the +/-1
-    !> of every occurrence; a repeated region is combined, e.g. 'top+top' -> 2).
-    !> Errors: empty expression, empty term ('top+', '++', '+top'), unknown
-    !> region (the message lists the available names).
-    !> Note: a region whose name itself contains '+' or '-' cannot be addressed.
-    !> On error (ierr = 1) region_idx and coeff are returned with size 0.
-    !> The caller combines per-region intensities as sum(coeff(i)*I(region_idx(i))).
+    !> Analisa uma expressão de mapa: nomes de região unidos por '+' ou '-'; um
+    !> '-' inicial é permitido; espaços são ignorados. Devolve os índices de região
+    !> distintos (na ordem da primeira aparição) e seus coeficientes (soma dos +/-1
+    !> de cada ocorrência; uma região repetida é combinada, p. ex. 'top+top' -> 2).
+    !> Erros: expressão vazia, termo vazio ('top+', '++', '+top'), região
+    !> desconhecida (a mensagem lista os nomes disponíveis).
+    !> Nota: uma região cujo nome contém '+' ou '-' não pode ser endereçada.
+    !> Em caso de erro (ierr = 1), region_idx e coeff são devolvidos com tamanho 0.
+    !> O chamador combina as intensidades por região como sum(coeff(i)*I(region_idx(i))).
     subroutine parse_map_expression(expr, sd, region_idx, coeff, ierr, errmsg)
         character(len=*),      intent(in)  :: expr
         type(spectral_data_t), intent(in)  :: sd
@@ -51,11 +51,11 @@ contains
         character(len=*),      intent(out) :: errmsg
 
         character(len=:), allocatable :: s, name
-        integer  :: i, n, nterm, idx, j
-        real(dp) :: sgn
-        integer,  allocatable :: tidx(:)
-        real(dp), allocatable :: tcoef(:)
-        logical :: found, at_end
+        integer                       :: i, n, nterm, idx, j
+        real(dp)                      :: sgn
+        integer,  allocatable         :: tidx(:)
+        real(dp), allocatable         :: tcoef(:)
+        logical                       :: found, at_end
 
         ierr = 0
         errmsg = ''
@@ -68,17 +68,17 @@ contains
             return
         end if
 
-        ! Single left-to-right scan. 'name' accumulates the current term;
-        ! '+'/'-' (or the end of the string, i = n+1) closes it, and the
-        ! operator that closed it sets the sign of the NEXT term. At most n
-        ! terms can exist, hence the size of the scratch arrays.
+        ! Varredura única da esquerda para a direita. 'name' acumula o termo atual;
+        ! '+'/'-' (ou o fim da string, i = n+1) o fecha, e o operador que o
+        ! fechou define o sinal do PRÓXIMO termo. Existem no máximo n termos,
+        ! daí o tamanho dos arrays auxiliares.
         allocate(tidx(n), tcoef(n))
         nterm = 0
         sgn = 1.0_dp
         name = ''
         i = 1
-        ! A leading '-' negates the first term ('+' at the start is an
-        ! empty-term error, caught below).
+        ! Um '-' inicial nega o primeiro termo ('+' no início é um erro de
+        ! termo vazio, capturado abaixo).
         if (s(1:1) == '-') then
             sgn = -1.0_dp
             i = 2
@@ -91,7 +91,7 @@ contains
                 at_end = (s(i:i) == '+' .or. s(i:i) == '-')
             end if
             if (at_end) then
-                ! End of a term.
+                ! Fim de um termo.
                 if (len(name) == 0) then
                     call fail("empty term in map expression '" // trim(expr) // "'")
                     return
@@ -102,8 +102,8 @@ contains
                               trim(expr) // "'; available: " // available_names(sd))
                     return
                 end if
-                ! Merge repeated regions by adding their signed coefficients
-                ! (so 'top-top' yields coefficient 0, not an error).
+                ! Une regiões repetidas somando seus coeficientes com sinal
+                ! (assim 'top-top' resulta em coeficiente 0, não em erro).
                 found = .false.
                 do j = 1, nterm
                     if (tidx(j) == idx) then
@@ -117,7 +117,7 @@ contains
                     tidx(nterm) = idx
                     tcoef(nterm) = sgn
                 end if
-                ! Sign for the following term (none left at end of string).
+                ! Sinal do termo seguinte (nenhum resta no fim da string).
                 if (i <= n) then
                     if (s(i:i) == '+') then
                         sgn = 1.0_dp
@@ -148,15 +148,15 @@ contains
 
     end subroutine parse_map_expression
 
-    !> File-name tag of a map expression: spaces removed, a leading '-'
-    !> becomes 'minus_', then '+' -> '_plus_' and '-' -> '_minus_'.
-    !> Used to build '<prefix>.<tag>.map.dat'. The expression is not
-    !> validated here.
+    !> Tag de nome de arquivo de uma expressão de mapa: espaços removidos, um '-'
+    !> inicial vira 'minus_', depois '+' -> '_plus_' e '-' -> '_minus_'.
+    !> Usada para montar '<prefix>.<tag>.map.dat'. A expressão não é
+    !> validada aqui.
     function map_file_tag(expr) result(tag)
-        character(len=*), intent(in) :: expr
+        character(len=*), intent(in)  :: expr
         character(len=:), allocatable :: tag
         character(len=:), allocatable :: s
-        integer :: i, i0
+        integer                       :: i, i0
 
         s = strip_spaces(expr)
         tag = ''
@@ -177,17 +177,17 @@ contains
     end function map_file_tag
 
     ! ==================================================================
-    ! Output files
+    ! Arquivos de saída
     ! ==================================================================
 
-    !> Write a map A(ne,nk) on energy grid(ne) along sd%kdist(nk).
-    !> grid in eV, kdist in 1/Angstrom; A is the intensity (arbitrary units).
-    !> Each header line is written prefixed with '# ' (unless it already
-    !> starts with '#'). Then, for every k, ne rows
-    !> 'k_distance energy_eV intensity' followed by one blank line, so the
-    !> file contains nk*ne data lines and exactly nk blank lines (the last
-    !> one terminates the final block; harmless for gnuplot pm3d).
-    !> ierr: 0 ok; 1 size mismatch or no kdist; 2 cannot open; 3 write/close error.
+    !> Escreve um mapa A(ne,nk) na grade de energia grid(ne) ao longo de sd%kdist(nk).
+    !> grid em eV, kdist em 1/Angstrom; A é a intensidade (unidades arbitrárias).
+    !> Cada linha de cabeçalho é escrita com prefixo '# ' (a menos que já
+    !> comece com '#'). Depois, para cada k, ne linhas
+    !> 'k_distance energy_eV intensity' seguidas de uma linha em branco, de modo que o
+    !> arquivo contém nk*ne linhas de dados e exatamente nk linhas em branco (a última
+    !> encerra o bloco final; inofensiva para o pm3d do gnuplot).
+    !> ierr: 0 ok; 1 tamanhos incompatíveis ou sem kdist; 2 não abre; 3 erro de escrita/fechamento.
     subroutine write_map_file(filename, sd, A, grid, header_lines, ierr, errmsg)
         character(len=*),      intent(in)  :: filename
         type(spectral_data_t), intent(in)  :: sd
@@ -196,7 +196,7 @@ contains
         integer,               intent(out) :: ierr
         character(len=*),      intent(out) :: errmsg
 
-        integer :: u, ios, ios2, ik, ie, i
+        integer                     :: u, ios, ios2, ik, ie, i
         character(len=*), parameter :: ROWFMT = '(ES17.9E3, 1X, ES17.9E3, 1X, ES18.10E3)'
 
         ierr = 0
@@ -225,7 +225,7 @@ contains
             return
         end if
 
-        ! Header: every line is made a gnuplot comment.
+        ! Cabeçalho: cada linha vira um comentário do gnuplot.
         do i = 1, size(header_lines)
             if (len_trim(header_lines(i)) > 0) then
                 if (header_lines(i)(1:1) == '#') then
@@ -240,8 +240,8 @@ contains
         end do
         if (ios == 0) write(u, '(A)', iostat=ios) '# columns: k_distance energy_eV intensity'
 
-        ! Data: k-major blocks (energy runs fastest) separated by blank
-        ! lines, the layout gnuplot's 'splot ... with pm3d' expects.
+        ! Dados: blocos por k (a energia varia mais rápido) separados por linhas
+        ! em branco, o layout que o 'splot ... with pm3d' do gnuplot espera.
         do ik = 1, size(A, 2)
             if (ios /= 0) exit
             do ie = 1, size(grid)
@@ -264,28 +264,28 @@ contains
         end if
     end subroutine write_map_file
 
-    !> Write a gnuplot include file with:
+    !> Escreve um arquivo de include do gnuplot com:
     !>   set xrange [0:kmax]
     !>   set xtics ("label" kdist, ...)     ('G'/'Gamma' -> {/Symbol G})
-    !>   vertical dashed lines at interior vertices (colour VLINE_COLOR,
-    !>   default "white"; a script may define VLINE_COLOR before loading)
-    !>   EF = 0 (fermi reference) | E_F (absolute & known) | NaN
+    !>   linhas verticais tracejadas nos vértices interiores (cor VLINE_COLOR,
+    !>   padrão "white"; um script pode definir VLINE_COLOR antes de carregar)
+    !>   EF = 0 (referência fermi) | E_F (absoluta e conhecida) | NaN
     !>   ELABEL = "E - E_F (eV)" | "E (eV)" | "E (eV, reference unknown)"
-    !> The EF/ELABEL choice follows sd%energy_ref, so plots can mark the
-    !> Fermi level correctly whichever zero the energies use. Vertex ticks
-    !> are skipped if sd has no vertices.
-    !> ierr: 0 ok; 1 no k-points; 2 cannot open; 3 error on close.
+    !> A escolha de EF/ELABEL segue sd%energy_ref, de modo que os gráficos podem
+    !> marcar corretamente o nível de Fermi qualquer que seja o zero das energias.
+    !> As marcas de vértice são omitidas se sd não tiver vértices.
+    !> ierr: 0 ok; 1 sem pontos k; 2 não abre; 3 erro no fechamento.
     subroutine write_kticks_file(filename, sd, ierr, errmsg)
         character(len=*),      intent(in)  :: filename
         type(spectral_data_t), intent(in)  :: sd
         integer,               intent(out) :: ierr
         character(len=*),      intent(out) :: errmsg
 
-        integer  :: u, ios, ios2, iv, ik
-        logical  :: first
-        real(dp) :: kmax, kd
+        integer                       :: u, ios, ios2, iv, ik
+        logical                       :: first
+        real(dp)                      :: kmax, kd
         character(len=:), allocatable :: line
-        character(len=32) :: num
+        character(len=32)             :: num
 
         ierr = 0
         errmsg = ''
@@ -331,8 +331,8 @@ contains
             end do
         end if
 
-        ! Energy reference: with EREF_FERMI the energies are already
-        ! relative to E_F, so the Fermi level sits at 0.
+        ! Referência de energia: com EREF_FERMI as energias já são
+        ! relativas a E_F, então o nível de Fermi fica em 0.
         if (sd%energy_ref == EREF_FERMI) then
             if (ios == 0) write(u, '(A)', iostat=ios) 'EF = 0.0'
             if (ios == 0) write(u, '(A)', iostat=ios) 'ELABEL = "E - E_F (eV)"'
@@ -363,25 +363,25 @@ contains
     end subroutine write_kticks_file
 
     ! ==================================================================
-    ! Private helpers
+    ! Rotinas auxiliares privadas
     ! ==================================================================
 
-    !> Remove blanks and tabs.
+    !> Remove espaços e tabulações.
     pure function strip_spaces(s) result(r)
-        character(len=*), intent(in) :: s
+        character(len=*), intent(in)  :: s
         character(len=:), allocatable :: r
-        integer :: i
+        integer                       :: i
         r = ''
         do i = 1, len(s)
             if (s(i:i) /= ' ' .and. s(i:i) /= achar(9)) r = r // s(i:i)
         end do
     end function strip_spaces
 
-    !> Comma-separated region names, for "unknown region" error messages.
+    !> Nomes de região separados por vírgula, para as mensagens de erro "unknown region".
     function available_names(sd) result(r)
         type(spectral_data_t), intent(in) :: sd
-        character(len=:), allocatable :: r
-        integer :: i
+        character(len=:), allocatable     :: r
+        integer                           :: i
         r = ''
         if (.not. allocated(sd%region_name)) return
         do i = 1, size(sd%region_name)
@@ -390,13 +390,13 @@ contains
         end do
     end function available_names
 
-    !> Gnuplot (enhanced text) label: 'G'/'Gamma' -> '{/Symbol G}';
-    !> double quotes are removed.
+    !> Rótulo do gnuplot (enhanced text): 'G'/'Gamma' -> '{/Symbol G}';
+    !> aspas duplas são removidas.
     function gp_label(lab) result(r)
-        character(len=*), intent(in) :: lab
+        character(len=*), intent(in)  :: lab
         character(len=:), allocatable :: r
         character(len=:), allocatable :: t
-        integer :: i
+        integer                       :: i
         t = trim(adjustl(lab))
         if (t == 'G' .or. t == 'g' .or. t == 'Gamma' .or. t == 'GAMMA' .or. t == 'gamma') then
             r = '{/Symbol G}'
@@ -408,11 +408,11 @@ contains
         end do
     end function gp_label
 
-    !> Compact scientific notation without padding, for gnuplot numbers.
+    !> Notação científica compacta, sem preenchimento, para números do gnuplot.
     function fmt_real(x) result(r)
-        real(dp), intent(in) :: x
+        real(dp), intent(in)          :: x
         character(len=:), allocatable :: r
-        character(len=32) :: buf
+        character(len=32)             :: buf
         write(buf, '(ES16.8E3)') x
         r = trim(adjustl(buf))
     end function fmt_real

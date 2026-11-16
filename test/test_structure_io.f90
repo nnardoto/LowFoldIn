@@ -2,15 +2,15 @@
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
 program test_structure_io
-    use types, only: dp
-    use testing, only: check, check_close, test_summary
+    use types,        only: dp
+    use testing,      only: check, check_close, test_summary
     use structure_io, only: structure_t, read_structure, structure_fingerprint, fnv1a64_hex, &
                             reciprocal_lattice, cart_to_frac, species_norb_of
     implicit none
 
     character(len=*), parameter :: TMP = 'build/test_struct_tmp.nml'
     character(len=*), parameter :: NL = achar(10)
-    real(dp), parameter :: TWO_PI = 2.0_dp * acos(-1.0_dp)
+    real(dp),         parameter :: TWO_PI = 2.0_dp * acos(-1.0_dp)
     character(len=*), parameter :: HEX_LAT = &
         "&STRUCTURE" // NL // &
         "  LatticeVectors(1,:) = 3.0, 0.0, 0.0" // NL // &
@@ -18,18 +18,18 @@ program test_structure_io
         "  LatticeVectors(3,:) = 0.0, 0.0, 20.0" // NL // &
         "/" // NL
 
-    type(structure_t) :: st, st2
-    integer :: ierr, i, j
+    type(structure_t)  :: st, st2
+    integer            :: ierr, i, j
     character(len=256) :: errmsg
-    character(len=16) :: fp0
-    real(dp) :: a(3,3), b(3,3), r(3), f(3)
+    character(len=16)  :: fp0
+    real(dp)           :: a(3,3), b(3,3), r(3), f(3)
 
-    ! 1. FNV-1a 64 test vectors
+    ! 1. Vetores de teste do FNV-1a 64
     call check(fnv1a64_hex("") == "cbf29ce484222325", "fnv1a64('')")
     call check(fnv1a64_hex("a") == "af63dc4c8601ec8c", "fnv1a64('a')")
     call check(fnv1a64_hex("foobar") == "85944171f73967e8", "fnv1a64('foobar')")
 
-    ! 2. Read a small non-orthogonal structure with comments and blank lines
+    ! 2. Lê uma estrutura pequena não ortogonal, com comentários e linhas em branco
     call write_file(HEX_LAT // NL // &
         "&SPECIES" // NL // "! species table" // NL // NL // "2" // NL // &
         "Mo  9" // NL // "# comment" // NL // "S   4" // NL // "/" // NL // NL // &
@@ -52,7 +52,7 @@ program test_structure_io
         call check_close(st%lattice(2, 2), 2.598076211353316_dp, 1.0e-14_dp, "lattice a2y")
     end if
 
-    ! 3. Reciprocal lattice: b_i . a_j = 2π δ_ij
+    ! 3. Rede recíproca: b_i . a_j = 2π δ_ij
     a = st%lattice
     b = reciprocal_lattice(st)
     do i = 1, 3
@@ -62,7 +62,7 @@ program test_structure_io
         end do
     end do
 
-    ! 4. cart_to_frac round trip
+    ! 4. Ida e volta de cart_to_frac
     r = [0.7_dp, -1.3_dp, 4.2_dp]
     f = cart_to_frac(st, r)
     do i = 1, 3
@@ -73,7 +73,7 @@ program test_structure_io
     f = cart_to_frac(st, r)
     call check(all(abs(f - [0.0_dp, 1.0_dp, 0.0_dp]) < 1.0e-12_dp), "cart_to_frac(a2) = (0,1,0)")
 
-    ! 5. Fingerprint
+    ! 5. Impressão digital (fingerprint)
     fp0 = structure_fingerprint(st)
     call check(len_trim(fp0) == 16 .and. verify(fp0, "0123456789abcdef") == 0, "fingerprint is 16 hex")
     st2 = st
@@ -101,7 +101,7 @@ program test_structure_io
     st2%cart(1, 1) = 0.00001_dp
     call check(structure_fingerprint(st2) == fp0, "fingerprint: -1e-5 and +1e-5 equal")
 
-    ! 6. Error cases (no stop)
+    ! 6. Casos de erro (sem stop)
     call read_structure('build/does_not_exist_struct.nml', st2, ierr, errmsg)
     call check(ierr /= 0 .and. index(errmsg, 'does_not_exist_struct.nml') > 0, "missing file -> ierr")
 
@@ -126,7 +126,7 @@ program test_structure_io
     call read_structure(TMP, st2, ierr, errmsg)
     call check(ierr /= 0, "fewer atom lines than nAtoms -> ierr")
 
-    ! No &SPECIES block: accepted, species_norb_of = -1
+    ! Sem bloco &SPECIES: aceito, species_norb_of = -1
     call write_file(HEX_LAT // "&ATOMS" // NL // "1" // NL // "X 0 0 0" // NL // "/" // NL)
     call read_structure(TMP, st2, ierr, errmsg)
     call check(ierr == 0 .and. st2%nat == 1 .and. .not. st2%has_species, "no &SPECIES accepted")
@@ -134,7 +134,7 @@ program test_structure_io
 
     call delete_file(TMP)
 
-    ! 7. Real example
+    ! 7. Exemplo real
     call read_structure('examples/UnfoldDiatomic/sc.nml', st2, ierr, errmsg)
     call check(ierr == 0 .and. st2%nat == 6, "read examples/UnfoldDiatomic/sc.nml: " // trim(errmsg))
     if (st2%nat == 6) call check(species_norb_of(st2, 2) == 1, "UnfoldDiatomic norb(B) == 1")
@@ -145,7 +145,7 @@ contains
 
     subroutine write_file(text)
         character(len=*), intent(in) :: text
-        integer :: iu
+        integer                      :: iu
         open(newunit=iu, file=TMP, status='replace', action='write', form='formatted')
         write(iu, '(A)', advance='no') text
         close(iu)
@@ -153,7 +153,7 @@ contains
 
     subroutine delete_file(name)
         character(len=*), intent(in) :: name
-        integer :: iu, ios
+        integer                      :: iu, ios
         open(newunit=iu, file=name, status='old', iostat=ios)
         if (ios == 0) close(iu, status='delete')
     end subroutine delete_file

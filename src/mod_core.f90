@@ -62,13 +62,13 @@ contains
         use types
         use omp_lib, only: omp_get_max_threads, omp_get_thread_num
 
-        type(AppConfig),  intent(in)         :: cfg
-        real(kind=dp),    allocatable        :: Energies(:, :)
+        type(AppConfig), intent(in)  :: cfg
+        real(kind=dp),   allocatable :: Energies(:, :)
         
         type(HSDataFormat) :: FileData
         integer            :: ik
 
-        ! 1. Variaveis para Gerenciar a Pré-alocação alinhado com openmp
+        ! 1. Variáveis para Gerenciar a Pré-alocação alinhado com openmp
         integer :: max_threads, thread_id
 
         ! 2. Matrizes de Trabalho para LAPACK com Dimensão extra para openmp
@@ -78,7 +78,7 @@ contains
         real(dp),    allocatable :: rwork_pool(:, :)
         integer,     allocatable :: info_pool(:)
         integer                  :: lwork
-        integer                  :: nFail, firstFail   ! falhas LAPACK (sem stop dentro da região paralela)
+        integer                  :: nFail, firstFail  ! falhas LAPACK (sem stop dentro da região paralela)
 
         nFail = 0
         firstFail = 0
@@ -109,7 +109,7 @@ contains
             allocate(Energies(nOrbs, nkPoints))
             Energies = 0.0d0
 
-            ! 5. Aloca as matrizes de trabalho para cada thread uma unica vez
+            ! 5. Aloca as matrizes de trabalho para cada thread uma única vez
             allocate(Hk_pool(nOrbs, nOrbs, max_threads))
             allocate(w_pool(nOrbs, max_threads))
             allocate(work_pool(3*nOrbs - 1, max_threads))
@@ -124,7 +124,7 @@ contains
                 thread_id = 0
                 !$ thread_id = omp_get_thread_num()
 
-                ! 2. Ajusta o indice para fortran (1-based) para acessar a matriz de trabalho da thread correta
+                ! 2. Ajusta o índice para fortran (1-based) para acessar a matriz de trabalho da thread correta
                 thread_id = thread_id + 1
 
                 ! 3. Calcula a matriz H(k) para o ponto k atual
@@ -163,15 +163,15 @@ contains
         use types
         use omp_lib, only: omp_get_max_threads, omp_get_thread_num
 
-        type(AppConfig),  intent(in)         :: cfg
-        real(kind=dp),    allocatable        :: Energies(:, :)
+        type(AppConfig), intent(in)  :: cfg
+        real(kind=dp),   allocatable :: Energies(:, :)
         
         type(HSDataFormat) :: HData, SData
-        integer          :: ik, max_threads, thread_id
+        integer            :: ik, max_threads, thread_id
 
         ! Pools de matrizes temporárias (Hk e Sk) por thread
         complex(dp), allocatable :: Hk_pool(:, :, :)
-        complex(dp), allocatable :: Sk_pool(:, :, :) ! <- Nova matriz de Overlap
+        complex(dp), allocatable :: Sk_pool(:, :, :)  ! <- Nova matriz de Overlap
         real(dp),    allocatable :: w_pool(:, :)
         
         ! Espaços de trabalho expandidos para a zhegv
@@ -206,8 +206,8 @@ contains
         lwork  = max(1, 2 * HData%NOrbs - 1)
         lrwork = max(1, 3 * HData%NOrbs - 2)
 
-        associate( Hr        => HData%Data,              & ! H(r)
-                   Sr        => SData%Data,              & ! S(r) - Novo dado do arquivo
+        associate( Hr        => HData%Data,              &  ! H(r)
+                   Sr        => SData%Data,              &  ! S(r) - Novo dado do arquivo
                    nOrbs     => HData%NOrbs,             & 
                    nkPoints  => cfg%Bands%total_kpoints, &
                    FullPath  => cfg%Bands%FullPath,      &
@@ -233,14 +233,15 @@ contains
 
                 ! 2. Calcula as matrizes H(k) e S(k) para o ponto k atual
                 call compute_Hk_at_kpoint(Hr, Rpt, Hk_pool(:, :, thread_id), FullPath(:, ik))
-                call compute_Hk_at_kpoint(Sr, Rpt, Sk_pool(:, :, thread_id), FullPath(:, ik)) ! Reutiliza a função de Fourier para S(k)
+                ! Reutiliza a função de Fourier para S(k)
+                call compute_Hk_at_kpoint(Sr, Rpt, Sk_pool(:, :, thread_id), FullPath(:, ik))
 
                 ! 3. Diagonalização Generalizada usando LAPACK zhegv
                 ! '1' significa resolver o problema do tipo H*c = E*S*c
                 ! 'N' calcula apenas autovalores (Energias)
                 ! 'U' usa a parte triangular superior das matrizes
                 call zhegv(1, 'N', 'U', nOrbs, Hk_pool(:, :, thread_id), nOrbs, & 
-                            Sk_pool(:, :, thread_id), nOrbs, w_pool(:, thread_id), &
+                            Sk_pool(:, :, thread_id), nOrbs, w_pool(:, thread_id),    &
                             work_pool(:, thread_id), lwork, rwork_pool(:, thread_id), &
                             info_pool(thread_id))
 

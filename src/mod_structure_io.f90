@@ -1,20 +1,22 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Structure geometry: file reader, fingerprint and lattice helpers.
+!> Geometria da estrutura: leitor de arquivo, fingerprint e auxiliares de rede.
 !>
-!> Pipeline role: the HSIO file stores no geometry, so every spectral tool
-!> (atomselect, spectral, specmap) gets lattice, atom positions and labels from
-!> this module. The file format is the one of unfold::ReadStructureFile
-!> (&STRUCTURE, optional &SPECIES, &ATOMS). The fingerprint ties a regions file
-!> to the structure it was built from (see atomic_regions).
+!> Papel no pipeline: o arquivo HSIO não guarda geometria, então toda
+!> ferramenta espectral (atomselect, spectral, specmap) obtém rede, posições
+!> atômicas e rótulos deste módulo. O formato do arquivo é o de
+!> unfold::ReadStructureFile (&STRUCTURE, &SPECIES opcional, &ATOMS). O
+!> fingerprint amarra um arquivo de regiões à estrutura da qual ele foi
+!> construído (ver atomic_regions).
 !>
-!> Conventions: atoms are 1-based and keep the file order (must equal the HSIO
-!> atom order); lengths are Cartesian Å; lattice(i,:) is the i-th lattice
-!> vector (rows, not columns); fractional coordinates f satisfy r = sum_i f_i a_i.
-!> Library routines never stop: errors are returned through ierr/errmsg.
+!> Convenções: átomos começam em 1 e mantêm a ordem do arquivo (que deve ser a
+!> ordem dos átomos no HSIO); comprimentos são cartesianos em Å; lattice(i,:) é
+!> o i-ésimo vetor de rede (linhas, não colunas); as coordenadas fracionárias f
+!> satisfazem r = sum_i f_i a_i. As rotinas da biblioteca nunca param o
+!> programa: erros voltam por ierr/errmsg.
 !>
-!> See docs/design/contracts.md §1 and §1.1.
+!> Ver docs/design/contracts.md §1 e §1.1.
 module structure_io
     use types, only: dp
     use, intrinsic :: iso_fortran_env, only: int64
@@ -22,63 +24,64 @@ module structure_io
     private
 
     ! ==================================================================
-    ! TYPES
+    ! TIPOS
     ! ==================================================================
-    !> Maximum length of an atom/species label (longer labels are truncated).
+    !> Comprimento máximo de um rótulo de átomo/espécie (rótulos maiores são truncados).
     integer, parameter, public :: LABEL_LEN = 8
 
-    !> Crystal structure as read from the structure file. nat = 0 means "empty
-    !> or failed read". species_* are allocated (size 0 if there is no
-    !> &SPECIES block) once a read gets past the &SPECIES/&ATOMS search.
+    !> Estrutura cristalina lida do arquivo de estrutura. nat = 0 significa "vazia
+    !> ou leitura falhou". species_* são alocados (tamanho 0 se não houver bloco
+    !> &SPECIES) assim que a leitura passa da busca por &SPECIES/&ATOMS.
     type, public :: structure_t
-        integer :: nat = 0
-        real(dp) :: lattice(3,3) = 0.0_dp                  ! lattice(i,:) = a_i, Å
-        real(dp), allocatable :: cart(:,:)                 ! (3,nat) Å
-        character(len=LABEL_LEN), allocatable :: label(:)  ! (nat)
-        logical :: has_species = .false.
-        integer :: nspecies = 0
+        integer                               :: nat = 0
+        real(dp)                              :: lattice(3,3) = 0.0_dp  ! lattice(i,:) = a_i, Å
+        real(dp),                 allocatable :: cart(:,:)              ! (3,nat) Å
+        character(len=LABEL_LEN), allocatable :: label(:)               ! (nat)
+        logical                               :: has_species = .false.
+        integer                               :: nspecies = 0
         character(len=LABEL_LEN), allocatable :: species_name(:)
-        integer, allocatable :: species_norb(:)   ! per species, counted in the HSIO basis (incl. spin doubling)
+        integer,                  allocatable :: species_norb(:)        ! por espécie, contado na base HSIO (incl. dobro de spin)
     end type structure_t
 
     ! ==================================================================
-    ! PUBLIC API / CONSTANTS
+    ! API PÚBLICA / CONSTANTES
     ! ==================================================================
 
     public :: read_structure, structure_fingerprint, fnv1a64_hex
     public :: reciprocal_lattice, cart_to_frac, species_norb_of
 
-    real(dp), parameter :: TWO_PI = 2.0_dp * acos(-1.0_dp)
-    real(dp), parameter :: DET_TOL = 1.0e-12_dp   ! |det| (Å^3) below which the lattice is considered singular
-    integer(int64), parameter :: MASK32 = int(z'FFFFFFFF', int64)
+    real(dp),       parameter :: TWO_PI  = 2.0_dp * acos(-1.0_dp)
+    real(dp),       parameter :: DET_TOL = 1.0e-12_dp   ! |det| (Å^3) abaixo do qual a rede é considerada singular
+    integer(int64), parameter :: MASK32  = int(z'FFFFFFFF', int64)
 
 contains
 
     ! ==================================================================
-    ! READER
+    ! LEITOR
     ! ==================================================================
 
-    !> Reads a structure file into `st`.
+    !> Lê um arquivo de estrutura em `st`.
     !>
-    !> Layout: &STRUCTURE namelist (LatticeVectors, rows = a1,a2,a3 in Å), then
-    !> an optional &SPECIES block (count, then `label nOrb` lines), then &ATOMS
-    !> (count, then `label x y z` lines, Cartesian Å). Blank lines and lines
-    !> starting with '!' or '#' are skipped inside the blocks.
+    !> Layout: namelist &STRUCTURE (LatticeVectors, linhas = a1,a2,a3 em Å), depois
+    !> um bloco &SPECIES opcional (contagem, depois linhas `label nOrb`), depois
+    !> &ATOMS (contagem, depois linhas `label x y z`, Å cartesianos). Linhas em
+    !> branco e linhas começando com '!' ou '#' são ignoradas dentro dos blocos.
     !>
-    !> Never stops. ierr = 0 on success; otherwise ierr /= 0, errmsg names the
-    !> file and st%nat = 0. Codes: 1 cannot open, 2 bad &STRUCTURE namelist,
-    !> 3 lattice missing/singular, 4 &ATOMS not found, 5 bad &SPECIES,
-    !> 6 bad atom count, 7 bad/missing atom line, 8 atom label not in &SPECIES.
+    !> Nunca para o programa. ierr = 0 em sucesso; senão ierr /= 0, errmsg nomeia o
+    !> arquivo e st%nat = 0. Códigos: 1 não abre, 2 namelist &STRUCTURE inválido,
+    !> 3 rede ausente/singular, 4 &ATOMS não encontrado, 5 &SPECIES inválido,
+    !> 6 contagem de átomos inválida, 7 linha de átomo inválida/ausente,
+    !> 8 rótulo de átomo não está em &SPECIES.
     subroutine read_structure(filename, st, ierr, errmsg)
         character(len=*),  intent(in)  :: filename
         type(structure_t), intent(out) :: st
         integer,           intent(out) :: ierr
         character(len=*),  intent(out) :: errmsg
 
-        integer :: iu, ios, i, nsp, nat
+        integer            :: iu, ios, i, nsp, nat
         character(len=256) :: line, iom
-        real(dp) :: LatticeVectors(3,3), rcart(3)
-        logical :: opened
+        real(dp)           :: LatticeVectors(3,3), rcart(3)
+        logical            :: opened
         namelist /STRUCTURE/ LatticeVectors
 
         ierr = 0
@@ -110,8 +113,9 @@ contains
         end if
         st%lattice = LatticeVectors
 
-        ! 2. Skip to the first '&SPECIES' or '&ATOMS' marker line. These blocks
-        !    are parsed by hand (not as namelists) because their rows are free text.
+        ! 2. Avança até a primeira linha marcadora '&SPECIES' ou '&ATOMS'. Esses
+        !    blocos são lidos à mão (não como namelist) porque suas linhas são
+        !    texto livre.
         do
             read(iu, '(A)', iostat=ios) line
             if (ios /= 0) then
@@ -121,7 +125,7 @@ contains
             if (trim(adjustl(line)) == "&SPECIES" .or. trim(adjustl(line)) == "&ATOMS") exit
         end do
 
-        ! 2b. Optional &SPECIES block; afterwards skip ahead to &ATOMS
+        ! 2b. Bloco &SPECIES opcional; depois avança até &ATOMS
         if (trim(adjustl(line)) == "&SPECIES") then
             call next_data_line(iu, line, ios)
             nsp = 0
@@ -157,8 +161,8 @@ contains
             allocate(st%species_name(0), st%species_norb(0))
         end if
 
-        ! 3. &ATOMS: count, then one `label x y z` line per atom. With a
-        !    &SPECIES table, every label must be listed in it.
+        ! 3. &ATOMS: contagem, depois uma linha `label x y z` por átomo. Com uma
+        !    tabela &SPECIES, todo rótulo deve constar nela.
         call next_data_line(iu, line, ios)
         nat = 0
         if (ios == 0) read(line, *, iostat=ios) nat
@@ -192,7 +196,7 @@ contains
 
     contains
 
-        !> Records the error, invalidates st and closes the file if open.
+        !> Registra o erro, invalida st e fecha o arquivo se estiver aberto.
         subroutine fail(code, msg)
             integer,          intent(in) :: code
             character(len=*), intent(in) :: msg
@@ -205,35 +209,36 @@ contains
     end subroutine read_structure
 
     ! ==================================================================
-    ! LATTICE HELPERS
+    ! AUXILIARES DE REDE
     ! ==================================================================
 
-    !> Reciprocal lattice (rows): b(i,:) = b_i, with b_i . a_j = 2π δ_ij, in
-    !> 1/Å and including the 2π factor. Needs a non-singular st%lattice.
-    !> b = 2π (A^-1)^T where A has the a_i as rows.
+    !> Rede recíproca (linhas): b(i,:) = b_i, com b_i . a_j = 2π δ_ij, em 1/Å e
+    !> incluindo o fator 2π. Exige st%lattice não singular.
+    !> b = 2π (A^-1)^T, onde A tem os a_i como linhas.
     function reciprocal_lattice(st) result(b)
         type(structure_t), intent(in) :: st
-        real(dp) :: b(3,3)
+        real(dp)                      :: b(3,3)
         b = TWO_PI * transpose(inv3(st%lattice))
     end function reciprocal_lattice
 
-    !> Fractional coordinates f such that r = Σ_i f_i a_i, for a Cartesian
-    !> position r in Å. No wrapping into [0,1): periodic images are kept.
+    !> Coordenadas fracionárias f tais que r = Σ_i f_i a_i, para uma posição
+    !> cartesiana r em Å. Sem reembrulhar em [0,1): imagens periódicas são mantidas.
     function cart_to_frac(st, r) result(f)
         type(structure_t), intent(in) :: st
         real(dp),          intent(in) :: r(3)
-        real(dp) :: f(3)
+        real(dp)                      :: f(3)
         ! r = A^T f  =>  f = (A^T)^-1 r = (A^-1)^T r
         f = matmul(r, inv3(st%lattice))
     end function cart_to_frac
 
-    !> Number of orbitals of atom iat (1-based) from the species table, matched
-    !> by label. Returns -1 if there is no table, iat is out of range or the
-    !> label is not found (callers must treat -1 as "unknown", not as an error).
+    !> Número de orbitais do átomo iat (base 1) a partir da tabela de espécies,
+    !> casada pelo rótulo. Devolve -1 se não há tabela, iat está fora da faixa ou
+    !> o rótulo não é encontrado (os chamadores devem tratar -1 como
+    !> "desconhecido", não como erro).
     function species_norb_of(st, iat) result(n)
         type(structure_t), intent(in) :: st
         integer,           intent(in) :: iat
-        integer :: n, k
+        integer                       :: n, k
         n = -1
         if (.not. st%has_species) return
         if (iat < 1 .or. iat > st%nat) return
@@ -246,20 +251,20 @@ contains
     end function species_norb_of
 
     ! ==================================================================
-    ! FINGERPRINT
+    ! FINGERPRINT (IMPRESSÃO DIGITAL)
     ! ==================================================================
 
-    !> Structure fingerprint (contracts §1.1): FNV-1a 64 of a canonical text
-    !> "LFSTRUCT1\n<nat>\n<label x y z>\n..." with coordinates rounded to
-    !> 1e-4 Å (integers, so no "-0"). Only labels and positions enter; the
-    !> lattice does not. Returns 16 lowercase hex chars.
+    !> Fingerprint da estrutura (contracts §1.1): FNV-1a 64 de um texto canônico
+    !> "LFSTRUCT1\n<nat>\n<label x y z>\n..." com coordenadas arredondadas a
+    !> 1e-4 Å (inteiros, logo sem "-0"). Entram só rótulos e posições; a rede
+    !> não entra. Devolve 16 caracteres hexadecimais minúsculos.
     function structure_fingerprint(st) result(fp)
-        type(structure_t), intent(in) :: st
-        character(len=16) :: fp
-        character(len=:), allocatable :: text
-        character(len=24) :: buf
-        character(len=1), parameter :: NL = achar(10)
-        integer :: i, j
+        type(structure_t),           intent(in) :: st
+        character(len=16)                       :: fp
+        character(len=:),            allocatable :: text
+        character(len=24)                       :: buf
+        character(len=1),            parameter  :: NL = achar(10)
+        integer                                 :: i, j
 
         write(buf, '(I0)') st%nat
         text = "LFSTRUCT1" // NL // trim(buf) // NL
@@ -274,17 +279,18 @@ contains
         fp = fnv1a64_hex(text)
     end function structure_fingerprint
 
-    !> FNV-1a 64-bit hash of `text`, as 16 lowercase hex chars. The 64-bit state
-    !> is held as two 32-bit limbs (hi, lo) in int64 to avoid signed overflow
-    !> (Fortran has no unsigned integers). Multiplication by the FNV prime is
-    !> done limb-wise, keeping only the low 64 bits of the product.
+    !> Hash FNV-1a de 64 bits de `text`, como 16 caracteres hexadecimais
+    !> minúsculos. O estado de 64 bits é guardado em dois limbs de 32 bits (hi, lo)
+    !> em int64 para evitar overflow com sinal (Fortran não tem inteiros sem
+    !> sinal). A multiplicação pelo primo FNV é feita limb a limb, mantendo só os
+    !> 64 bits baixos do produto.
     function fnv1a64_hex(text) result(hex)
         character(len=*), intent(in) :: text
-        character(len=16) :: hex
-        ! offset basis 0xcbf29ce484222325 ; prime 0x100000001b3 = 256*2^32 + 435
-        integer(int64), parameter :: P_HI = 256_int64, P_LO = 435_int64
-        integer(int64) :: hi, lo, t, carry
-        integer :: i
+        character(len=16)            :: hex
+        ! offset basis 0xcbf29ce484222325 ; primo 0x100000001b3 = 256*2^32 + 435
+        integer(int64), parameter    :: P_HI = 256_int64, P_LO = 435_int64
+        integer(int64)               :: hi, lo, t, carry
+        integer                      :: i
 
         hi = int(z'CBF29CE4', int64)
         lo = int(z'84222325', int64)
@@ -300,27 +306,27 @@ contains
     end function fnv1a64_hex
 
     ! ==================================================================
-    ! PRIVATE HELPERS
+    ! AUXILIARES PRIVADAS
     ! ==================================================================
 
-    !> Lowercase hex of the low 32 bits of v (8 chars, most significant first).
+    !> Hexadecimal minúsculo dos 32 bits baixos de v (8 caracteres, mais significativo primeiro).
     function hex8(v) result(s)
-        integer(int64), intent(in) :: v
-        character(len=8) :: s
-        character(len=16), parameter :: DIGITS = '0123456789abcdef'
-        integer :: k, d
+        integer(int64),    intent(in) :: v
+        character(len=8)              :: s
+        character(len=16), parameter  :: DIGITS = '0123456789abcdef'
+        integer                       :: k, d
         do k = 1, 8
             d = int(iand(shiftr(v, 4 * (8 - k)), 15_int64))
             s(k:k) = DIGITS(d + 1:d + 1)
         end do
     end function hex8
 
-    !> Next non-blank, non-comment ('!' or '#') line.
+    !> Próxima linha não vazia e que não seja comentário ('!' ou '#').
     subroutine next_data_line(iu, line, ios)
         integer,          intent(in)  :: iu
         character(len=*), intent(out) :: line
         integer,          intent(out) :: ios
-        character(len=len(line)) :: raw
+        character(len=len(line))      :: raw
         do
             read(iu, '(A)', iostat=ios) raw
             if (ios /= 0) return
@@ -331,19 +337,19 @@ contains
         end do
     end subroutine next_data_line
 
-    !> Determinant of a 3x3 matrix (cofactor expansion along the first row).
+    !> Determinante de uma matriz 3x3 (expansão em cofatores pela primeira linha).
     pure function det3(A) result(det)
         real(dp), intent(in) :: A(3,3)
-        real(dp) :: det
+        real(dp)             :: det
         det = A(1,1) * (A(2,2)*A(3,3) - A(2,3)*A(3,2)) &
             - A(1,2) * (A(2,1)*A(3,3) - A(2,3)*A(3,1)) &
             + A(1,3) * (A(2,1)*A(3,2) - A(2,2)*A(3,1))
     end function det3
 
-    !> Cofactor inverse; caller guarantees non-singular (checked on read).
+    !> Inversa por cofatores; o chamador garante que não é singular (checado na leitura).
     pure function inv3(A) result(Ainv)
         real(dp), intent(in) :: A(3,3)
-        real(dp) :: Ainv(3,3), det
+        real(dp)             :: Ainv(3,3), det
         det = det3(A)
         Ainv(1,1) =  (A(2,2)*A(3,3) - A(2,3)*A(3,2)) / det
         Ainv(1,2) = -(A(1,2)*A(3,3) - A(1,3)*A(3,2)) / det
@@ -356,11 +362,11 @@ contains
         Ainv(3,3) =  (A(1,1)*A(2,2) - A(1,2)*A(2,1)) / det
     end function inv3
 
-    !> Integer to trimmed string (for error messages).
+    !> Inteiro para string sem brancos (para mensagens de erro).
     pure function itoa(i) result(s)
-        integer, intent(in) :: i
+        integer,          intent(in)  :: i
         character(len=:), allocatable :: s
-        character(len=16) :: buf
+        character(len=16)             :: buf
         write(buf, '(I0)') i
         s = trim(buf)
     end function itoa

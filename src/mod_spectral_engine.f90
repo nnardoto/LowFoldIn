@@ -1,34 +1,34 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Spectral engine (docs/design/contracts.md §3, §3.2; uses §4 and §5): reads
-!> spectral.nml, the HSIO H/S files, the structure file and regions.nml,
-!> diagonalizes H(k) along a k-path and computes per-region projection weights
-!> (Mulliken or Löwdin, selected by `method`).
+!> Motor spectral (docs/design/contracts.md §3, §3.2; usa §4 e §5): lê
+!> spectral.nml, os arquivos HSIO de H/S, o arquivo de estrutura e regions.nml,
+!> diagonaliza H(k) ao longo de um caminho k e calcula os pesos de projeção por
+!> região (Mulliken ou Löwdin, escolhido por `method`).
 !>
-!> Pipeline position: backend of the `spectral` executable. Output is a
-!> spectral_data_t (module spectral_data), written to disk by the driver and
-!> later broadened/plotted by specmap.
+!> Posição no pipeline: backend do executável `spectral`. A saída é um
+!> spectral_data_t (módulo spectral_data), escrito em disco pelo driver e
+!> depois alargado/plotado pelo specmap.
 !>
-!> Conventions:
-!>   - Energies in eV, k-points in fractional reciprocal coordinates, all
-!>     indices 1-based; atom order = structure file = HSIO order.
-!>   - Region group 1 is always 'total' (all atoms); user regions are groups
-!>     2..nregion+1 (so sd%nregion = 1 + number of regions in regions.nml).
-!>   - Array layout: sd%energy(nband, nk, nspin),
-!>     sd%weight(nband, nk, group, nspin). nspin = 2 only for collinear.
+!> Convenções:
+!>   - Energias em eV, pontos k em coordenadas recíprocas fracionárias, todos os
+!>     índices base 1; ordem dos átomos = arquivo de estrutura = ordem do HSIO.
+!>   - O grupo de região 1 é sempre 'total' (todos os átomos); as regiões do usuário
+!>     são os grupos 2..nregion+1 (logo sd%nregion = 1 + número de regiões em regions.nml).
+!>   - Layout dos arrays: sd%energy(nband, nk, nspin),
+!>     sd%weight(nband, nk, group, nspin). nspin = 2 apenas para colinear.
 !>
-!> The per-k work lives in `process_kpoint`, which only touches the arrays and
-!> workspaces passed to it. The (spin, k) loop of `run_spectral` is
-!> parallelized with OpenMP (when compiled with -fopenmp): each thread owns
-!> one set of workspaces, allocated once, and each iteration writes only its
-!> own sd%energy / sd%weight slices, so results do not depend on the thread
-!> count. Without -fopenmp the `!$` lines vanish and the loop runs serially.
-!> Library routines never stop: errors are returned through ierr/errmsg.
-!> (Exceptions: HSDataFormat%ReadFile stops on a corrupt HSIO file; missing
-!> files are detected here before calling it. process_kpoint does `error stop`
-!> on a programming error: Löwdin requested without its required optional
-!> arguments.)
+!> O trabalho por ponto k fica em `process_kpoint`, que só toca os arrays e os
+!> espaços de trabalho que recebe. O laço (spin, k) de `run_spectral` é
+!> paralelizado com OpenMP (quando compilado com -fopenmp): cada thread possui
+!> um conjunto de espaços de trabalho, alocado uma única vez, e cada iteração escreve
+!> apenas suas próprias fatias de sd%energy / sd%weight, de modo que o resultado não
+!> depende do número de threads. Sem -fopenmp as linhas `!$` somem e o laço roda em série.
+!> As rotinas da biblioteca nunca param o programa: os erros são devolvidos por ierr/errmsg.
+!> (Exceções: HSDataFormat%ReadFile para o programa diante de um arquivo HSIO corrompido;
+!> arquivos ausentes são detectados aqui antes de chamá-lo. process_kpoint executa
+!> `error stop` diante de um erro de programação: Löwdin solicitado sem os argumentos
+!> opcionais obrigatórios.)
 module spectral_engine
     use, intrinsic :: iso_fortran_env, only: int64, iostat_end, output_unit
     use types, only: dp
@@ -49,58 +49,58 @@ module spectral_engine
     private
 
     ! ==================================================================
-    ! Parameters and types
+    ! Parâmetros e tipos
     ! ==================================================================
 
-    integer, parameter, public :: MAX_KVERTEX = 100
+    integer, parameter, public :: MAX_KVERTEX   = 100
     integer, parameter, public :: SPEC_PATH_LEN = 512
-    !> Cap on printed warnings per category in check_weights.
+    !> Limite de avisos impressos por categoria em check_weights.
     integer, parameter :: MAX_WARN_LINES = 20
 
-    !> Mirror of the &SPECTRAL and &KPATH namelists (contracts §3). The
-    !> defaults here are the defaults of the input file. Fields are plain
-    !> strings/numbers; validation happens in read_spectral_input.
-    !> vertex(:, i) = i-th k-path vertex (fractional); npoints(i) = points
-    !> of the segment from vertex i to i+1 (exact meaning: see module kpath).
+    !> Espelho dos namelists &SPECTRAL e &KPATH (contracts §3). Os valores
+    !> padrão aqui são os padrões do arquivo de entrada. Os campos são
+    !> strings/números simples; a validação ocorre em read_spectral_input.
+    !> vertex(:, i) = i-ésimo vértice do caminho k (fracionário); npoints(i) = pontos
+    !> do segmento do vértice i ao i+1 (significado exato: veja o módulo kpath).
     type, public :: spectral_input_t
-        character(len=SPEC_PATH_LEN) :: h_file = ''
-        character(len=SPEC_PATH_LEN) :: h_up_file = ''
-        character(len=SPEC_PATH_LEN) :: h_dn_file = ''
-        character(len=SPEC_PATH_LEN) :: s_file = ''
-        character(len=SPEC_PATH_LEN) :: structure_file = ''
-        character(len=SPEC_PATH_LEN) :: regions_file = ''
-        logical :: allow_no_fingerprint = .false.   ! accept regions.nml without structure fingerprint
-        character(len=16) :: spin_mode = 'none'
-        character(len=16) :: method = 'mulliken'
-        character(len=16) :: energy_reference = 'unknown'
-        real(dp) :: fermi_energy_ev = 0.0_dp
-        logical :: fermi_known = .false.
-        character(len=SPEC_PATH_LEN) :: output_prefix = 'slab'
-        logical :: write_text = .false.
-        real(dp) :: tol_norm = 1.0e-8_dp             ! normalisation-check tolerance (check_weights)
-        real(dp) :: tol_negative_warn = 1.0e-3_dp    ! Mulliken negative-weight warning threshold
-        real(dp) :: tol_s_min = 1.0e-10_dp           ! Löwdin: min eig(S) must exceed this
+        character(len=SPEC_PATH_LEN) :: h_file               = ''
+        character(len=SPEC_PATH_LEN) :: h_up_file            = ''
+        character(len=SPEC_PATH_LEN) :: h_dn_file            = ''
+        character(len=SPEC_PATH_LEN) :: s_file               = ''
+        character(len=SPEC_PATH_LEN) :: structure_file       = ''
+        character(len=SPEC_PATH_LEN) :: regions_file         = ''
+        logical                      :: allow_no_fingerprint = .false.  ! aceita regions.nml sem fingerprint
+        character(len=16)            :: spin_mode            = 'none'
+        character(len=16)            :: method               = 'mulliken'
+        character(len=16)            :: energy_reference     = 'unknown'
+        real(dp)                     :: fermi_energy_ev      = 0.0_dp
+        logical                      :: fermi_known          = .false.
+        character(len=SPEC_PATH_LEN) :: output_prefix        = 'slab'
+        logical                      :: write_text           = .false.
+        real(dp)                     :: tol_norm             = 1.0e-8_dp   ! tolerância de normalização (check_weights)
+        real(dp)                     :: tol_negative_warn    = 1.0e-3_dp   ! limiar de aviso de peso negativo (Mulliken)
+        real(dp)                     :: tol_s_min            = 1.0e-10_dp  ! Löwdin: min autovalor de S deve exceder este valor
         ! &KPATH
-        integer :: nvertex = 0
-        real(dp) :: vertex(3, MAX_KVERTEX) = 0.0_dp
-        character(len=16) :: label(MAX_KVERTEX) = ''
-        integer :: npoints(MAX_KVERTEX - 1) = 0
+        integer                      :: nvertex              = 0
+        real(dp)                     :: vertex(3, MAX_KVERTEX) = 0.0_dp
+        character(len=16)            :: label(MAX_KVERTEX)   = ''
+        integer                      :: npoints(MAX_KVERTEX - 1) = 0
     end type spectral_input_t
 
-    !> All values are measured with system_clock (wall clock), in seconds.
-    !> build_s, diag_s and proj_s are ACCUMULATED over all threads of the
-    !> k-loop (thread-seconds: sum of each thread's wall time in that phase);
-    !> loop_wall_s is the wall-clock time of the whole k-loop. With one thread
+    !> Todos os valores são medidos com system_clock (tempo de parede), em segundos.
+    !> build_s, diag_s e proj_s são ACUMULADOS sobre todas as threads do laço
+    !> em k (thread-segundos: soma do tempo de parede de cada thread na fase);
+    !> loop_wall_s é o tempo de parede do laço em k inteiro. Com uma thread,
     !> build_s + diag_s + proj_s <= loop_wall_s.
     type, public :: spectral_timing_t
-        real(dp) :: read_s  = 0.0_dp   ! structure, regions, HSIO (wall)
-        real(dp) :: build_s = 0.0_dp   ! H(k), S(k) construction (accumulated thread-s)
-        real(dp) :: diag_s  = 0.0_dp   ! generalized eigensolver (accumulated thread-s)
-        real(dp) :: proj_s  = 0.0_dp   ! S*C + weights (accumulated thread-s)
-        real(dp) :: loop_wall_s = 0.0_dp ! k-loop wall-clock time
-        real(dp) :: write_s = 0.0_dp   ! filled by the driver (wall)
-        real(dp) :: total_s = 0.0_dp   ! wall
-        integer  :: nthreads = 1       ! threads that ran the k-loop (1 without OpenMP)
+        real(dp) :: read_s      = 0.0_dp  ! estrutura, regiões, HSIO (parede)
+        real(dp) :: build_s     = 0.0_dp  ! construção de H(k), S(k) (thread-s acumulados)
+        real(dp) :: diag_s      = 0.0_dp  ! autoresolvedor generalizado (thread-s acumulados)
+        real(dp) :: proj_s      = 0.0_dp  ! S*C + pesos (thread-s acumulados)
+        real(dp) :: loop_wall_s = 0.0_dp  ! tempo de parede do laço em k
+        real(dp) :: write_s     = 0.0_dp  ! preenchido pelo driver (parede)
+        real(dp) :: total_s     = 0.0_dp  ! parede
+        integer  :: nthreads    = 1       ! threads que executaram o laço em k (1 sem OpenMP)
     end type spectral_timing_t
 
     public :: read_spectral_input, run_spectral, process_kpoint
@@ -108,16 +108,16 @@ module spectral_engine
 contains
 
     ! ==================================================================
-    ! Input
+    ! Entrada
     ! ==================================================================
 
-    !> Read and validate the &SPECTRAL and &KPATH namelists from `filename`
-    !> (the two groups may appear in any order in the file).
-    !> inp is initialised to its defaults first, so keys absent from the file
-    !> keep them. spin_mode / method / energy_reference are lower-cased.
-    !> energy_reference='fermi' forces fermi_known=.true. and E_F = 0.
-    !> Never stops: on failure ierr = 1 and errmsg describes the first problem
-    !> found (inp is then only partially filled).
+    !> Lê e valida os namelists &SPECTRAL e &KPATH de `filename`
+    !> (os dois grupos podem aparecer em qualquer ordem no arquivo).
+    !> inp é inicializado com seus padrões primeiro, de modo que as chaves ausentes
+    !> do arquivo os mantêm. spin_mode / method / energy_reference são convertidos para minúsculas.
+    !> energy_reference='fermi' força fermi_known=.true. e E_F = 0.
+    !> Nunca para o programa: em caso de falha ierr = 1 e errmsg descreve o primeiro problema
+    !> encontrado (inp fica então apenas parcialmente preenchido).
     subroutine read_spectral_input(filename, inp, ierr, errmsg)
         character(len=*),       intent(in)  :: filename
         type(spectral_input_t), intent(out) :: inp
@@ -126,13 +126,13 @@ contains
 
         character(len=SPEC_PATH_LEN) :: h_file, h_up_file, h_dn_file, s_file, structure_file, &
                                         regions_file, output_prefix
-        logical :: allow_no_fingerprint, fermi_known, write_text
-        character(len=16) :: spin_mode, method, energy_reference
-        real(dp) :: fermi_energy_ev, tol_norm, tol_negative_warn, tol_s_min
-        integer :: nvertex
-        real(dp) :: vertex(3, MAX_KVERTEX)
-        character(len=64) :: label(MAX_KVERTEX)   ! wider than stored (16) to detect truncation
-        integer :: npoints(MAX_KVERTEX - 1)
+        logical                      :: allow_no_fingerprint, fermi_known, write_text
+        character(len=16)            :: spin_mode, method, energy_reference
+        real(dp)                     :: fermi_energy_ev, tol_norm, tol_negative_warn, tol_s_min
+        integer                      :: nvertex
+        real(dp)                     :: vertex(3, MAX_KVERTEX)
+        character(len=64)            :: label(MAX_KVERTEX)   ! mais largo que o armazenado (16) para detectar truncamento
+        integer                      :: npoints(MAX_KVERTEX - 1)
 
         namelist /SPECTRAL/ h_file, h_up_file, h_dn_file, s_file, structure_file, regions_file, &
                             allow_no_fingerprint, spin_mode, method, energy_reference, &
@@ -140,30 +140,30 @@ contains
                             tol_norm, tol_negative_warn, tol_s_min
         namelist /KPATH/ nvertex, vertex, label, npoints
 
-        integer :: iu, ios, is
+        integer            :: iu, ios, is
         character(len=512) :: iomsg
-        logical :: exists
+        logical            :: exists
 
         ierr = 0
         errmsg = ''
 
-        ! 1. Namelist reads only overwrite variables present in the file, so
-        ! seed the local namelist variables with the defaults of spectral_input_t
-        ! (inp is intent(out): its default initialisation applies on entry).
-        h_file = inp%h_file;             h_up_file = inp%h_up_file
-        h_dn_file = inp%h_dn_file;         s_file = inp%s_file
+        ! 1. A leitura de namelist só sobrescreve as variáveis presentes no arquivo, então
+        ! inicializa as variáveis locais do namelist com os padrões de spectral_input_t
+        ! (inp é intent(out): sua inicialização padrão se aplica na entrada).
+        h_file = inp%h_file;                 h_up_file = inp%h_up_file
+        h_dn_file = inp%h_dn_file;           s_file = inp%s_file
         structure_file = inp%structure_file; regions_file = inp%regions_file
         allow_no_fingerprint = inp%allow_no_fingerprint
-        spin_mode = inp%spin_mode;         method = inp%method
+        spin_mode = inp%spin_mode;           method = inp%method
         energy_reference = inp%energy_reference
         fermi_energy_ev = inp%fermi_energy_ev; fermi_known = inp%fermi_known
-        output_prefix = inp%output_prefix; write_text = inp%write_text
-        tol_norm = inp%tol_norm;           tol_negative_warn = inp%tol_negative_warn
+        output_prefix = inp%output_prefix;   write_text = inp%write_text
+        tol_norm = inp%tol_norm;             tol_negative_warn = inp%tol_negative_warn
         tol_s_min = inp%tol_s_min
-        nvertex = inp%nvertex;             vertex = inp%vertex
-        label = inp%label;                 npoints = inp%npoints
+        nvertex = inp%nvertex;               vertex = inp%vertex
+        label = inp%label;                   npoints = inp%npoints
 
-        ! 2. Open the file and read both namelists (rewind: order-independent).
+        ! 2. Abre o arquivo e lê os dois namelists (rewind: independe da ordem).
         inquire(file=filename, exist=exists)
         if (.not. exists) then
             call fail("input file not found: '" // trim(filename) // "'")
@@ -198,26 +198,26 @@ contains
         end if
         close(iu)
 
-        ! 3. Copy back into inp (normalising enum strings) and validate.
-        inp%h_file = h_file;             inp%h_up_file = h_up_file
-        inp%h_dn_file = h_dn_file;         inp%s_file = s_file
+        ! 3. Copia de volta para inp (normalizando as strings de enumeração) e valida.
+        inp%h_file = h_file;                 inp%h_up_file = h_up_file
+        inp%h_dn_file = h_dn_file;           inp%s_file = s_file
         inp%structure_file = structure_file; inp%regions_file = regions_file
         inp%allow_no_fingerprint = allow_no_fingerprint
         inp%spin_mode = lower(adjustl(spin_mode))
         inp%method = lower(adjustl(method))
         inp%energy_reference = lower(adjustl(energy_reference))
         inp%fermi_energy_ev = fermi_energy_ev; inp%fermi_known = fermi_known
-        inp%output_prefix = output_prefix; inp%write_text = write_text
-        inp%tol_norm = tol_norm;           inp%tol_negative_warn = tol_negative_warn
+        inp%output_prefix = output_prefix;   inp%write_text = write_text
+        inp%tol_norm = tol_norm;             inp%tol_negative_warn = tol_negative_warn
         inp%tol_s_min = tol_s_min
-        inp%nvertex = nvertex;             inp%vertex = vertex
+        inp%nvertex = nvertex;               inp%vertex = vertex
         if (any(len_trim(label) > len(inp%label))) then
             call fail('&KPATH label longer than 16 characters')
             return
         end if
-        inp%label = label;                 inp%npoints = npoints
+        inp%label = label;                   inp%npoints = npoints
 
-        ! --- enums -------------------------------------------------------
+        ! --- enumerações -------------------------------------------------
         select case (trim(inp%spin_mode))
         case ('none', 'noncollinear')
             if (len_trim(inp%h_file) == 0) then
@@ -244,7 +244,7 @@ contains
 
         select case (trim(inp%energy_reference))
         case ('fermi')
-            ! Energies are already relative to E_F: E_F = 0 by definition.
+            ! As energias já são relativas a E_F: E_F = 0 por definição.
             inp%fermi_known = .true.
             inp%fermi_energy_ev = 0.0_dp
         case ('absolute', 'unknown')
@@ -254,7 +254,7 @@ contains
             return
         end select
 
-        ! --- required files ----------------------------------------------
+        ! --- arquivos obrigatórios ---------------------------------------
         if (len_trim(inp%s_file) == 0) then
             call fail('s_file is required')
             return
@@ -268,7 +268,7 @@ contains
             return
         end if
 
-        ! --- tolerances --------------------------------------------------
+        ! --- tolerâncias -------------------------------------------------
         if (.not. (inp%tol_norm > 0.0_dp)) then
             call fail('tol_norm must be > 0')
             return
@@ -282,7 +282,7 @@ contains
             return
         end if
 
-        ! --- k-path ------------------------------------------------------
+        ! --- caminho k ---------------------------------------------------
         if (inp%nvertex < 2 .or. inp%nvertex > MAX_KVERTEX) then
             call fail('&KPATH nvertex must be in 2..' // itoa(MAX_KVERTEX) // &
                       ' (got ' // itoa(inp%nvertex) // ')')
@@ -307,21 +307,21 @@ contains
     end subroutine read_spectral_input
 
     ! ==================================================================
-    ! Driver of the calculation
+    ! Driver do cálculo
     ! ==================================================================
 
-    !> Full calculation: read inputs, check consistency, build orbital groups
-    !> and the k-path, diagonalize H(k) at every (spin, k) and fill `sd`.
-    !>   inp           validated input (see read_spectral_input)
-    !>   sd            output spectral data; sd%energy(nband,nk,nspin) in eV,
-    !>                 sd%weight(nband,nk,group,nspin); group 1 = 'total'
-    !>   timing        wall/thread timings; write_s is left for the driver
-    !>   show_progress optional (default .false.): print [1/3]..[3/3] stage
-    !>                 lines and k-loop progress/ETA to stdout
-    !> Never stops: on failure ierr = 1 and errmsg holds the message (for k-loop
-    !> failures it names ispin, ik and kfrac of the lowest failing iteration).
-    !> Warnings from check_weights are printed, not returned. Exception:
-    !> HSDataFormat%ReadFile may stop on a corrupt HSIO file.
+    !> Cálculo completo: lê as entradas, verifica a consistência, constrói os grupos de orbitais
+    !> e o caminho k, diagonaliza H(k) em cada (spin, k) e preenche `sd`.
+    !>   inp           entrada validada (veja read_spectral_input)
+    !>   sd            dados espectrais de saída; sd%energy(nband,nk,nspin) em eV,
+    !>                 sd%weight(nband,nk,group,nspin); grupo 1 = 'total'
+    !>   timing        tempos de parede/thread; write_s fica para o driver
+    !>   show_progress opcional (padrão .false.): imprime as linhas de etapa [1/3]..[3/3]
+    !>                 e o progresso/ETA do laço em k no stdout
+    !> Nunca para o programa: em caso de falha ierr = 1 e errmsg contém a mensagem (para falhas
+    !> no laço em k ela nomeia ispin, ik e kfrac da menor iteração que falhou).
+    !> Os avisos de check_weights são impressos, não devolvidos. Exceção:
+    !> HSDataFormat%ReadFile pode parar o programa diante de um arquivo HSIO corrompido.
     subroutine run_spectral(inp, sd, timing, ierr, errmsg, show_progress)
         type(spectral_input_t),  intent(in)  :: inp
         type(spectral_data_t),   intent(out) :: sd
@@ -330,30 +330,30 @@ contains
         character(len=*),        intent(out) :: errmsg
         logical, optional,       intent(in)  :: show_progress
 
-        type(structure_t)  :: st
-        type(region_set_t) :: rs
+        type(structure_t)               :: st
+        type(region_set_t)              :: rs
         type(HSDataFormat), allocatable :: hdat(:)
-        type(HSDataFormat) :: sdat
-        type(orbital_groups_t) :: groups
-        type(kpath_t) :: path
-        integer, allocatable :: list_start(:), list_atoms(:)
-        complex(dp), allocatable :: Hk(:,:), Sk(:,:), C(:,:), SC(:,:)
-        real(dp), allocatable :: E(:), W(:,:)
-        character(len=SPEC_PATH_LEN) :: hname(2)
-        integer(int64) :: c_start, c0, c1, crate
-        integer :: nspin, nreg, ngroup, nat, n, ispin, ik, ia, ir, g, pos, smode, kerr, perr
-        logical :: have_regions, partition, use_lowdin
-        real(dp) :: smin
-        character(len=512) :: msg
-        ! k-loop (OpenMP) state
-        integer :: nk, nit, it, first_fail, ff, nthr
-        integer, allocatable :: it_kerr(:), it_perr(:)
-        real(dp), allocatable :: it_smin(:)
-        real(dp) :: t_b, t_d, t_p
-        integer(int64) :: cl0, cl1, cp
-        integer :: completed, next_report, report_step
-        logical :: report_progress
-        real(dp) :: progress_elapsed, progress_eta
+        type(HSDataFormat)              :: sdat
+        type(orbital_groups_t)          :: groups
+        type(kpath_t)                   :: path
+        integer, allocatable            :: list_start(:), list_atoms(:)
+        complex(dp), allocatable        :: Hk(:,:), Sk(:,:), C(:,:), SC(:,:)
+        real(dp), allocatable           :: E(:), W(:,:)
+        character(len=SPEC_PATH_LEN)    :: hname(2)
+        integer(int64)                  :: c_start, c0, c1, crate
+        integer                         :: nspin, nreg, ngroup, nat, n, ispin, ik, ia, ir, g, pos, smode, kerr, perr
+        logical                         :: have_regions, partition, use_lowdin
+        real(dp)                        :: smin
+        character(len=512)              :: msg
+        ! Estado do laço em k (OpenMP)
+        integer                         :: nk, nit, it, first_fail, ff, nthr
+        integer, allocatable            :: it_kerr(:), it_perr(:)
+        real(dp), allocatable           :: it_smin(:)
+        real(dp)                        :: t_b, t_d, t_p
+        integer(int64)                  :: cl0, cl1, cp
+        integer                         :: completed, next_report, report_step
+        logical                         :: report_progress
+        real(dp)                        :: progress_elapsed, progress_eta
 
         ierr = 0
         errmsg = ''
@@ -385,7 +385,7 @@ contains
             return
         end select
 
-        ! ---------------- 1. read inputs --------------------------------
+        ! ---------------- 1. leitura das entradas -----------------------
         call system_clock(c0)
         call read_structure(inp%structure_file, st, ierr, msg)
         if (ierr /= 0) then
@@ -425,7 +425,7 @@ contains
         call system_clock(c1)
         timing%read_s = elapsed(c0, c1, crate)
 
-        ! ---------------- 2. consistency --------------------------------
+        ! ---------------- 2. consistência -------------------------------
         do ispin = 1, nspin
             call compare_hs(hdat(ispin), sdat, trim(hname(ispin)), trim(inp%s_file), ierr, msg)
             if (ierr /= 0) then
@@ -460,9 +460,9 @@ contains
             end do
         end if
 
-        ! ---------------- 3. orbital groups -----------------------------
-        ! Group 1 = all atoms ('total'); groups 2.. = user regions, in file
-        ! order. Atom lists are concatenated in CSR form (list_start/list_atoms).
+        ! ---------------- 3. grupos de orbitais -------------------------
+        ! Grupo 1 = todos os átomos ('total'); grupos 2.. = regiões do usuário, na ordem
+        ! do arquivo. As listas de átomos são concatenadas em formato CSR (list_start/list_atoms).
         nreg = 0
         if (have_regions) nreg = rs%nregion
         ngroup = 1 + nreg
@@ -480,12 +480,12 @@ contains
             pos = pos + size(rs%regions(ir)%atoms)
         end do
         call build_orbital_groups(sdat%Orbs, ngroup, list_start, list_atoms, groups)
-        ! partition: user regions cover every atom exactly once, so their
-        ! weights must sum to 1 (verified in check_weights).
+        ! partition: as regiões do usuário cobrem cada átomo exatamente uma vez, então seus
+        ! pesos devem somar 1 (verificado em check_weights).
         partition = .false.
         if (have_regions) partition = regions_are_partition(rs)
 
-        ! ---------------- 4. k-path -------------------------------------
+        ! ---------------- 4. caminho k ----------------------------------
         call build_kpath(inp%vertex(:, 1:inp%nvertex), inp%npoints(1:inp%nvertex - 1), &
                          inp%label(1:inp%nvertex), reciprocal_lattice(st), path, ierr, msg)
         if (ierr /= 0) then
@@ -493,16 +493,16 @@ contains
             return
         end if
 
-        ! ---------------- 5. spectral data metadata ---------------------
-        ! Fill everything in sd except the k-loop results (energy/weight are
-        ! allocated zeroed here and written in step 6).
-        sd%nk = path%nk
-        sd%nband = n
-        sd%nspin = nspin
-        sd%nregion = ngroup
-        sd%nvertex = path%nvertex
+        ! ---------------- 5. metadados dos dados espectrais -------------
+        ! Preenche tudo em sd exceto os resultados do laço em k (energy/weight são
+        ! alocados zerados aqui e escritos na etapa 6).
+        sd%nk        = path%nk
+        sd%nband     = n
+        sd%nspin     = nspin
+        sd%nregion   = ngroup
+        sd%nvertex   = path%nvertex
         sd%spin_mode = smode
-        sd%method = METHOD_MULLIKEN
+        sd%method    = METHOD_MULLIKEN
         if (use_lowdin) sd%method = METHOD_LOWDIN
         select case (trim(inp%energy_reference))
         case ('fermi');    sd%energy_ref = EREF_FERMI
@@ -538,16 +538,16 @@ contains
         allocate(sd%energy(n, path%nk, nspin), source=0.0_dp)
         allocate(sd%weight(n, path%nk, ngroup, nspin), source=0.0_dp)
 
-        ! ---------------- 6. k loop (OpenMP over the flat (ispin, ik) index) --
-        ! it = (ispin-1)*nk + ik (inverted below as ispin = (it-1)/nk + 1).
-        ! t_b/t_d/t_p are OpenMP reductions (thread-seconds). Each iteration writes only sd%energy(:,ik,ispin),
-        ! sd%weight(:,ik,:,ispin) and its own entry of the status arrays, so the
-        ! result is independent of the thread count and schedule. Workspaces
-        ! are private and allocated once per thread. Progress I/O, when enabled,
-        ! is serialized; there is no stop inside the region. The first failing
-        ! iteration (lowest it) is reported after the parallel region.
-        ! Iterations above the lowest failure seen so far are skipped; those
-        ! below it always run, so the reported failure is deterministic.
+        ! ---------------- 6. laço em k (OpenMP sobre o índice plano (ispin, ik)) --
+        ! it = (ispin-1)*nk + ik (invertido abaixo como ispin = (it-1)/nk + 1).
+        ! t_b/t_d/t_p são reduções OpenMP (thread-segundos). Cada iteração escreve apenas
+        ! sd%energy(:,ik,ispin), sd%weight(:,ik,:,ispin) e sua própria entrada dos arrays
+        ! de status, de modo que o resultado independe do número de threads e do
+        ! escalonamento. Os espaços de trabalho são privados e alocados uma vez por thread.
+        ! A E/S de progresso, quando habilitada, é serializada; não há stop dentro da
+        ! região. A primeira iteração que falha (menor it) é reportada após a região paralela.
+        ! Iterações acima da menor falha vista até então são puladas; as abaixo dela
+        ! sempre executam, então a falha reportada é determinística.
         nk = path%nk
         nit = nspin * nk
         allocate(it_kerr(nit), it_perr(nit), it_smin(nit))
@@ -621,13 +621,13 @@ contains
 
         call system_clock(cl1)
         timing%loop_wall_s = elapsed(cl0, cl1, crate)
-        timing%build_s = t_b
-        timing%diag_s  = t_d
-        timing%proj_s  = t_p
+        timing%build_s  = t_b
+        timing%diag_s   = t_d
+        timing%proj_s   = t_p
         timing%nthreads = nthr
 
-        ! Report the lowest failing iteration (deterministic across thread counts).
-        ! perr == 1 is the Löwdin S-not-positive-definite code of lowdin_weights.
+        ! Reporta a menor iteração que falhou (determinístico para qualquer número de threads).
+        ! perr == 1 é o código de S não definida positiva do Löwdin em lowdin_weights.
         if (first_fail <= nit) then
             it = first_fail
             ispin = (it - 1) / nk + 1
@@ -644,8 +644,8 @@ contains
                 write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'Lowdin projection failed (ierr=', &
                     perr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
             else if (kerr > n) then
-                ! LAPACK zhegv convention: info > n means the leading minor of S(k) of
-                ! order info-n is not positive definite.
+                ! Convenção do zhegv (LAPACK): info > n significa que o menor principal líder
+                ! de S(k) de ordem info-n não é definido positivo.
                 write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') &
                     'overlap S(k) not positive definite (zhegv info=', &
                     kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
@@ -657,7 +657,7 @@ contains
             return
         end if
 
-        ! ---------------- 7. checks -------------------------------------
+        ! ---------------- 7. verificações -------------------------------
         if (report_progress) print '(A)', '[3/3] Checking projection weights'
         call check_weights(sd, partition, inp%tol_norm, inp%tol_negative_warn, use_lowdin)
 
@@ -675,47 +675,47 @@ contains
     end subroutine run_spectral
 
     ! ==================================================================
-    ! Per-k body: touches only its arguments (thread-safe by construction).
+    ! Corpo por ponto k: toca apenas seus argumentos (thread-safe por construção).
     ! ==================================================================
 
-    !> One (spin, k) point: build H(k), S(k), solve H C = S C E, and compute the
-    !> projection weights W(band, group).
-    !>   Hr, Sr, Rpt  real-space H(R), S(R) and lattice vectors n_R (integer
-    !>                triples), as stored in HSDataFormat (Data / IndexList);
-    !>                Fourier sum H(k) = sum_R H(R) exp(+i 2 pi k.n_R)
-    !>                (core::compute_Hk_at_kpoint, lattice gauge)
-    !>   kfrac        k-point in fractional reciprocal coordinates
-    !>   Hk,Sk,C,SC   caller-owned (n,n) workspaces (one set per thread);
-    !>                on return Sk = original S(k), C = eigenvectors (columns)
-    !>   E(n), W(n,ngroup)  eigenvalues in eV (ascending) and weights
-    !>   t_build/t_diag/t_proj  wall seconds ADDED to the passed values
-    !>   ierr         info of the generalized eigensolver (0 = ok); on ierr /= 0
-    !>                E, C, W are undefined and t_proj is not updated
-    !> Optional Löwdin mode (lowdin=.true.): weights from lowdin_weights on the
-    !> ORIGINAL Sk (SC is not used); tol_s_min, smin and proj_ierr are then
-    !> required. proj_ierr = 1 means min eig(Sk) = smin <= tol_s_min.
-    !> Without the optional arguments the Mulliken path is used (unchanged).
-    !> Violating the Löwdin argument requirement is a programming error and
-    !> triggers `error stop` (the only stop in this module's library API).
+    !> Um ponto (spin, k): constrói H(k), S(k), resolve H C = S C E e calcula os
+    !> pesos de projeção W(banda, grupo).
+    !>   Hr, Sr, Rpt  H(R), S(R) no espaço real e vetores de rede n_R (triplas
+    !>                inteiras), como armazenados em HSDataFormat (Data / IndexList);
+    !>                soma de Fourier H(k) = sum_R H(R) exp(+i 2 pi k.n_R)
+    !>                (core::compute_Hk_at_kpoint, gauge de rede)
+    !>   kfrac        ponto k em coordenadas recíprocas fracionárias
+    !>   Hk,Sk,C,SC   espaços de trabalho (n,n) do chamador (um conjunto por thread);
+    !>                no retorno Sk = S(k) original, C = autovetores (colunas)
+    !>   E(n), W(n,ngroup)  autovalores em eV (crescentes) e pesos
+    !>   t_build/t_diag/t_proj  segundos de parede SOMADOS aos valores passados
+    !>   ierr         info do autoresolvedor generalizado (0 = ok); com ierr /= 0
+    !>                E, C, W ficam indefinidos e t_proj não é atualizado
+    !> Modo Löwdin opcional (lowdin=.true.): pesos de lowdin_weights sobre o Sk
+    !> ORIGINAL (SC não é usado); tol_s_min, smin e proj_ierr passam a ser
+    !> obrigatórios. proj_ierr = 1 significa min autovalor de Sk = smin <= tol_s_min.
+    !> Sem os argumentos opcionais usa-se o caminho de Mulliken (inalterado).
+    !> Violar a exigência de argumentos do Löwdin é um erro de programação e
+    !> dispara `error stop` (o único stop na API de biblioteca deste módulo).
     subroutine process_kpoint(n, ngroup, Hr, Sr, Rpt, kfrac, groups, Hk, Sk, C, SC, E, W, &
                               t_build, t_diag, t_proj, ierr, lowdin, tol_s_min, smin, proj_ierr)
-        integer,                intent(in)    :: n, ngroup
-        complex(dp), contiguous, intent(in)   :: Hr(:,:,:), Sr(:,:,:)
-        integer,     contiguous, intent(in)   :: Rpt(:,:)
-        real(dp),               intent(in)    :: kfrac(3)
-        type(orbital_groups_t), intent(in)    :: groups
+        integer,                 intent(in)    :: n, ngroup
+        complex(dp), contiguous, intent(in)    :: Hr(:,:,:), Sr(:,:,:)
+        integer,     contiguous, intent(in)    :: Rpt(:,:)
+        real(dp),                intent(in)    :: kfrac(3)
+        type(orbital_groups_t),  intent(in)    :: groups
         complex(dp), contiguous, intent(inout) :: Hk(:,:), Sk(:,:), C(:,:), SC(:,:)
-        real(dp),               intent(inout) :: E(n), W(n, ngroup)
-        real(dp),               intent(inout) :: t_build, t_diag, t_proj
-        integer,                intent(out)   :: ierr
-        logical,  optional,     intent(in)    :: lowdin
-        real(dp), optional,     intent(in)    :: tol_s_min
-        real(dp), optional,     intent(out)   :: smin
-        integer,  optional,     intent(out)   :: proj_ierr
-        integer(int64) :: c0, c1, c2, c3, crate
-        logical :: do_lowdin
-        real(dp) :: smin_loc
-        integer :: perr
+        real(dp),                intent(inout) :: E(n), W(n, ngroup)
+        real(dp),                intent(inout) :: t_build, t_diag, t_proj
+        integer,                 intent(out)   :: ierr
+        logical,     optional,   intent(in)    :: lowdin
+        real(dp),    optional,   intent(in)    :: tol_s_min
+        real(dp),    optional,   intent(out)   :: smin
+        integer,     optional,   intent(out)   :: proj_ierr
+        integer(int64)                         :: c0, c1, c2, c3, crate
+        logical                                :: do_lowdin
+        real(dp)                               :: smin_loc
+        integer                                :: perr
 
         do_lowdin = .false.
         if (present(lowdin)) do_lowdin = lowdin
@@ -724,13 +724,13 @@ contains
         if (present(proj_ierr)) proj_ierr = 0
         if (present(smin)) smin = 0.0_dp
 
-        ! 1. H(k), S(k) by Fourier sum over R.
+        ! 1. H(k), S(k) por soma de Fourier sobre R.
         call system_clock(c0, crate)
         call compute_Hk_at_kpoint(Hr, Rpt, Hk, kfrac)
         call compute_Hk_at_kpoint(Sr, Rpt, Sk, kfrac)
         call system_clock(c1)
-        ! 2. Generalized eigenproblem. generalized_eigensolve works on internal
-        ! copies: Sk stays the original S(k), as the projections require.
+        ! 2. Autoproblema generalizado. generalized_eigensolve trabalha em cópias
+        ! internas: Sk permanece o S(k) original, como as projeções exigem.
         call generalized_eigensolve(n, Hk, Sk, E, C, ierr)
         call system_clock(c2)
         if (ierr /= 0) then
@@ -738,7 +738,7 @@ contains
             t_diag  = t_diag  + elapsed(c1, c2, crate)
             return
         end if
-        ! 3. Projection weights (Löwdin from S^{1/2}C, Mulliken from C and S·C).
+        ! 3. Pesos de projeção (Löwdin a partir de S^{1/2}C, Mulliken a partir de C e S·C).
         if (do_lowdin) then
             call lowdin_weights(n, n, Sk, C, groups, W, tol_s_min, smin_loc, perr)
             proj_ierr = perr
@@ -754,25 +754,25 @@ contains
     end subroutine process_kpoint
 
     ! ==================================================================
-    ! Helpers
+    ! Auxiliares
     ! ==================================================================
 
-    !> Diagnostics on the finished spectral data; prints warnings (capped at
-    !> MAX_WARN_LINES per category) and a summary, never fails. Checks:
-    !>   - group 1 ('total') weight = 1 per band within tol_norm
-    !>   - if `partition`, sum over user regions (groups 2..) = 1 within tol_norm
-    !>   - no weight below -tol_neg (Mulliken populations may be slightly negative)
-    !> For Löwdin (lowdin=.true.) weights are non-negative by construction; the
-    !> negative check then uses -tol_norm instead of -tol_negative_warn.
+    !> Diagnósticos sobre os dados espectrais prontos; imprime avisos (limitados a
+    !> MAX_WARN_LINES por categoria) e um resumo, nunca falha. Verifica:
+    !>   - peso do grupo 1 ('total') = 1 por banda dentro de tol_norm
+    !>   - se `partition`, soma sobre as regiões do usuário (grupos 2..) = 1 dentro de tol_norm
+    !>   - nenhum peso abaixo de -tol_neg (populações de Mulliken podem ser levemente negativas)
+    !> Para Löwdin (lowdin=.true.) os pesos são não negativos por construção; a
+    !> checagem de negativos usa então -tol_norm em vez de -tol_negative_warn.
     subroutine check_weights(sd, partition, tol_norm, tol_neg_in, lowdin)
         type(spectral_data_t), intent(in) :: sd
         logical,               intent(in) :: partition
         real(dp),              intent(in) :: tol_norm, tol_neg_in
         logical,               intent(in) :: lowdin
-        real(dp) :: tol_neg
-        character(len=8) :: mname
-        integer :: ispin, ik, ib, g, n_tot, n_part, n_neg
-        real(dp) :: dev, max_tot, max_part, wmin, w
+        real(dp)               :: tol_neg
+        character(len=8)       :: mname
+        integer                :: ispin, ik, ib, g, n_tot, n_part, n_neg
+        real(dp)               :: dev, max_tot, max_part, wmin, w
 
         if (lowdin) then
             tol_neg = tol_norm;   mname = 'Lowdin'
@@ -840,15 +840,15 @@ contains
         end if
     end subroutine check_weights
 
-    !> Check that two HSIO files (e.g. H and S) describe the same system:
-    !> nAtoms, NOrbs, Neighbors, Orbs and IndexList (R-vector list) must agree.
-    !> ierr = 1 and errmsg names the first mismatching item.
+    !> Verifica se dois arquivos HSIO (p. ex. H e S) descrevem o mesmo sistema:
+    !> nAtoms, NOrbs, Neighbors, Orbs e IndexList (lista de vetores R) devem coincidir.
+    !> ierr = 1 e errmsg nomeia o primeiro item divergente.
     subroutine compare_hs(A, B, nameA, nameB, ierr, errmsg)
         type(HSDataFormat), intent(in)  :: A, B
         character(len=*),   intent(in)  :: nameA, nameB
         integer,            intent(out) :: ierr
         character(len=*),   intent(out) :: errmsg
-        character(len=:), allocatable :: what
+        character(len=:), allocatable   :: what
 
         ierr = 0
         errmsg = ''
@@ -889,7 +889,7 @@ contains
         inquire(file=trim(fname), exist=file_exists)
     end function file_exists
 
-    !> Seconds between two system_clock counts (rate guarded against 0).
+    !> Segundos entre duas contagens de system_clock (taxa protegida contra 0).
     pure real(dp) function elapsed(c0, c1, rate)
         integer(int64), intent(in) :: c0, c1, rate
         elapsed = real(c1 - c0, dp) / real(max(rate, 1_int64), dp)
@@ -898,7 +898,7 @@ contains
     pure function lower(s) result(r)
         character(len=*), intent(in) :: s
         character(len=len(s)) :: r
-        integer :: i, ic
+        integer               :: i, ic
         r = s
         do i = 1, len(s)
             ic = iachar(s(i:i))
@@ -909,7 +909,7 @@ contains
     pure function itoa(i) result(s)
         integer, intent(in) :: i
         character(len=:), allocatable :: s
-        character(len=24) :: buf
+        character(len=24)             :: buf
         write(buf, '(I0)') i
         s = trim(buf)
     end function itoa

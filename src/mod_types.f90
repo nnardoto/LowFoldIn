@@ -10,8 +10,8 @@ module types
     public :: sp, dp, qp
 
     ! 1. Definições de Kinds de Precisão
-    integer, parameter :: sp = real32  ! Single Precision (Precisão Simples - 4 bytes)
-    integer, parameter :: dp = real64  ! Double Precision (Precisão Dupla - 8 bytes)
-    integer, parameter :: qp = real128 ! Quad Precision (Precisão Quádrupla - 16 bytes)
+    integer, parameter :: sp = real32   ! Single Precision (Precisão Simples - 4 bytes)
+    integer, parameter :: dp = real64   ! Double Precision (Precisão Dupla - 8 bytes)
+    integer, parameter :: qp = real128  ! Quad Precision (Precisão Quádrupla - 16 bytes)
 
 end module types

@@ -1,21 +1,21 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> spectral: band energies and per-region projection weights along a k-path
-!> (contracts §3, §5). Thin driver around module spectral_engine: this file only
-!> handles the CLI, progress/summary output and writing the result files.
+!> spectral: energias de banda e pesos de projeção por região ao longo de um caminho k
+!> (contracts §3, §5). Driver fino em torno do módulo spectral_engine: este arquivo
+!> trata apenas a CLI, a saída de progresso/resumo e a escrita dos arquivos de resultado.
 !>
 !> Usage:
 !>   spectral <spectral.nml>
 !>
-!> Input : a namelist file (see docs/spectral.md for every option), which in turn
-!>         points to the HSIO data, structure, k-path and region definitions.
-!> Output: <output_prefix>.spectral.bin (always) and <output_prefix>.spectral.txt
-!>         (only if write_text = .true.). These are the input of specmap.
-!> Exit  : 0 on success; 1 on wrong usage or any error (message prefixed
-!>         "[spectral error]" on stderr).
+!> Entrada: um arquivo namelist (veja docs/spectral.md para todas as opções), que por sua
+!>          vez aponta para os dados HSIO, a estrutura, o caminho k e as definições de região.
+!> Saída  : <output_prefix>.spectral.bin (sempre) e <output_prefix>.spectral.txt
+!>          (somente se write_text = .true.). Estes são a entrada do specmap.
+!> Código : 0 em caso de sucesso; 1 em uso incorreto ou qualquer erro (mensagem com
+!>          prefixo "[spectral error]" no stderr).
 !>
-!> User documentation: docs/spectral.md
+!> Documentação de usuário: docs/spectral.md
 program spectral
     use, intrinsic :: iso_fortran_env, only: int64, error_unit
     use types, only: dp
@@ -26,15 +26,15 @@ program spectral
     !$ use omp_lib, only: omp_get_max_threads
     implicit none
 
-    type(spectral_input_t)  :: inp
-    type(spectral_data_t)   :: sd
-    type(spectral_timing_t) :: timing
-    character(len=1024) :: nml_file, errmsg
+    type(spectral_input_t)        :: inp
+    type(spectral_data_t)         :: sd
+    type(spectral_timing_t)       :: timing
+    character(len=1024)           :: nml_file, errmsg
     character(len=:), allocatable :: bin_file, txt_file
-    integer :: ierr, ir, max_thr
-    integer(int64) :: c0, c1, crate
+    integer                       :: ierr, ir, max_thr
+    integer(int64)                :: c0, c1, crate
 
-    ! 1. Parse arguments
+    ! 1. Leitura dos argumentos
     if (command_argument_count() /= 1) then
         write(error_unit, '(A)') 'Usage: spectral <spectral.nml>'
         write(error_unit, '(A)') '  Computes band energies and Mulliken or Lowdin weights per region along a k-path'
@@ -43,7 +43,7 @@ program spectral
     end if
     call get_command_argument(1, nml_file)
 
-    ! 2. Start-up banner: thread information (the code never sets environment variables).
+    ! 2. Banner de início: informação de threads (o código nunca define variáveis de ambiente).
     max_thr = 1
     !$ max_thr = omp_get_max_threads()
     call print_box('spectral | projected band calculation')
@@ -55,15 +55,15 @@ program spectral
     call print_box_close()
     print '(A)', ''
 
-    ! 3. Read and validate the namelist input
+    ! 3. Leitura e validação da entrada namelist
     call read_spectral_input(trim(nml_file), inp, ierr, errmsg)
     if (ierr /= 0) call die(errmsg)
 
-    ! 4. Compute energies and projection weights (k-loop, parallel over k)
+    ! 4. Cálculo das energias e dos pesos de projeção (laço em k, paralelo em k)
     call run_spectral(inp, sd, timing, ierr, errmsg, show_progress=.true.)
     if (ierr /= 0) call die(errmsg)
 
-    ! 5. Write result files (write time is added to the engine's total)
+    ! 5. Escrita dos arquivos de resultado (o tempo de escrita é somado ao total do motor)
     bin_file = trim(inp%output_prefix) // '.spectral.bin'
     txt_file = trim(inp%output_prefix) // '.spectral.txt'
     print '(A)', '[output] Writing result files'
@@ -78,7 +78,7 @@ program spectral
     timing%write_s = real(c1 - c0, dp) / real(max(crate, 1_int64), dp)
     timing%total_s = timing%total_s + timing%write_s
 
-    ! 6. Summary
+    ! 6. Resumo
     print '(A)', ''
     call print_box('spectral | summary')
     print '(A,I0,A,I0,A,I0,A,I0)', '  nk = ', sd%nk, '   nband = ', sd%nband, &
@@ -111,9 +111,9 @@ program spectral
 
 contains
 
-    !> Human-readable description of the energy reference for the summary box.
-    !> 'fermi' means the engine already delivers E - E_F; 'absolute' keeps raw
-    !> energies and E_F (if known) is only stored as metadata.
+    !> Descrição legível da referência de energia para a caixa de resumo.
+    !> 'fermi' significa que o motor já entrega E - E_F; 'absolute' mantém as
+    !> energias brutas e E_F (se conhecido) é apenas guardado como metadado.
     function eref_text() result(s)
         character(len=:), allocatable :: s
         character(len=32) :: buf
@@ -132,7 +132,7 @@ contains
         end select
     end function eref_text
 
-    !> Print the message to stderr and exit with code 1.
+    !> Imprime a mensagem no stderr e encerra com código 1.
     subroutine die(msg)
         character(len=*), intent(in) :: msg
         write(error_unit, '(A,A)') '[spectral error] ', trim(msg)

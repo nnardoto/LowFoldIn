@@ -2,19 +2,19 @@
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
 ! Teste de ida e volta WriteFile -> ReadFile do formato .hsio (blocos esparsos),
-! incluindo blocos atomo-atomo inteiramente nulos.
+! incluindo blocos átomo-átomo inteiramente nulos.
 program test_hs_io
-    use types,  only: dp
-    use HS_io,  only: HSDataFormat
+    use types, only: dp
+    use HS_io, only: HSDataFormat
     implicit none
 
     type(HSDataFormat) :: A, B
     character(len=*), parameter :: fname = "test_hs_io_roundtrip.hsio"
-    integer :: i, j, R, nfail, unit_del
+    integer                     :: i, j, R, nfail, unit_del
 
     nfail = 0
 
-    ! 2 atomos (2 e 3 orbitais), 3 celulas R
+    ! 2 átomos (2 e 3 orbitais), 3 células R
     A%Title     = "roundtrip"
     A%Neighbors = 3
     A%nAtoms    = 2
@@ -28,7 +28,7 @@ program test_hs_io
     do R = 1, 2                      ! R = 3 fica totalmente nulo
         do j = 1, 5
             do i = 1, 5
-                ! Zera o bloco (atomo 2, atomo 2) em R = 2 para testar blocos nulos
+                ! Zera o bloco (átomo 2, átomo 2) em R = 2 para testar blocos nulos
                 if (R == 2 .and. i > 2 .and. j > 2) cycle
                 A%Data(i, j, R) = cmplx(real(100*R + 10*i + j, dp), real(i - j, dp) / 7.0_dp, kind=dp)
             end do

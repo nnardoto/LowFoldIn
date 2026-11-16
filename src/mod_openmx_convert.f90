@@ -6,12 +6,12 @@
 !
 ! Monta as matrizes densas H(R) e S(R) (formato HSDataFormat de
 ! mod_hs_io.f90) a partir dos dados esparsos lidos por mod_scfout_io.f90,
-! porte direto da logica de scfout2hsio.py (assemble_dense,
+! porte direto da lógica de scfout2hsio.py (assemble_dense,
 ! assemble_noncollinear_H) para Fortran.
 !
-! Tambem aplica a conversao Hartree -> eV e o deslocamento do nivel de
+! Também aplica a conversão Hartree -> eV e o deslocamento do nível de
 ! Fermi H'(R) = H(R) - E_F*S(R), fisicamente correto no problema
-! generalizado nao-ortogonal (ver discussao no scfout2hsio.py).
+! generalizado não-ortogonal (ver discussão no scfout2hsio.py).
 !
 ! Nathanael N. Batista / porte para Fortran, Agosto de 2026
 ! ----------------------------------------------------------------------------------------------------------
@@ -27,22 +27,22 @@ module openmx_convert
     public :: ReorderSpinorAtomMajor
 
     ! CODATA 2018 (mesmo valor usado internamente pelo OpenMX). O .scfout
-    ! guarda Hks/iHks em Hartree; mod_hs_io/mod_core nao fazem nenhuma
-    ! conversao de unidades, entao H precisa sair em eV daqui. Overlap (S)
-    ! e' adimensional e NUNCA deve ser escalado por este fator.
+    ! guarda Hks/iHks em Hartree; mod_hs_io/mod_core não fazem nenhuma
+    ! conversão de unidades, então H precisa sair em eV daqui. Overlap (S)
+    ! é adimensional e NUNCA deve ser escalado por este fator.
     real(dp), parameter :: HARTREE_TO_EV = 27.211386245988_dp
 
 contains
 
     ! -----------------------------------------------------------------
     ! IndexList (3, Neighbors) a partir de atv_ijk -- mesma ordem de
-    ! celulas do .scfout (indice 1 = celula central [0,0,0], em
-    ! convencao Fortran 1-based)
+    ! células do .scfout (índice 1 = célula central [0,0,0], em
+    ! convenção Fortran 1-based)
     ! -----------------------------------------------------------------
     subroutine BuildIndexList(scfout, IndexList)
-        type(ScfoutData), intent(in)  :: scfout
-        integer, allocatable, intent(out) :: IndexList(:, :)
-        integer :: Rn, ncell
+        type(ScfoutData), intent(in)               :: scfout
+        integer,          allocatable, intent(out) :: IndexList(:, :)
+        integer                                    :: Rn, ncell
 
         ncell = scfout%TCpyCell + 1
         allocate(IndexList(3, ncell))
@@ -52,14 +52,14 @@ contains
     end subroutine BuildIndexList
 
     ! -----------------------------------------------------------------
-    ! Calcula os offsets globais de orbital (0-based) de cada atomo:
-    ! atom_offset(ct_AN) = indice do primeiro orbital do atomo ct_AN
+    ! Calcula os offsets globais de orbital (0-based) de cada átomo:
+    ! atom_offset(ct_AN) = índice do primeiro orbital do átomo ct_AN
     ! -----------------------------------------------------------------
     subroutine OrbitalOffsets(scfout, atom_offset, NOrbs)
-        type(ScfoutData), intent(in)  :: scfout
-        integer, allocatable, intent(out) :: atom_offset(:)
-        integer, intent(out) :: NOrbs
-        integer :: ct_AN
+        type(ScfoutData), intent(in)               :: scfout
+        integer,          allocatable, intent(out) :: atom_offset(:)
+        integer,          intent(out)              :: NOrbs
+        integer                                    :: ct_AN
 
         allocate(atom_offset(scfout%atomnum + 1))
         atom_offset(1) = 0
@@ -70,35 +70,35 @@ contains
     end subroutine OrbitalOffsets
 
     ! -----------------------------------------------------------------
-    ! Reordena H/S do caso nao-colinear (SpinP_switch=3) da convencao
+    ! Reordena H/S do caso não-colinear (SpinP_switch=3) da convenção
     ! "spin-major" produzida por AssembleNonCollinearH/DoubleBlockDiagonal
     ! (todos os N orbitais espaciais "up" primeiro, depois todos os N
-    ! "down": Hin(off1+i, off2+j) = bloco up-up do par de atomos, e
+    ! "down": Hin(off1+i, off2+j) = bloco up-up do par de átomos, e
     ! Hin(N+off1+i, N+off2+j) = bloco down-down, com N=NOrbsSpatial) para a
-    ! convencao "atomo-major, spin-menor" (para cada atomo, seus orbitais
-    ! up seguidos pelos seus orbitais down, atomo apos atomo) -- que e' a
-    ! UNICA convencao compativel com o campo Orbs(:) do formato
-    ! HSDataFormat, que assume blocos CONTIGUOS por atomo (ver cabecalho de
-    ! mod_hs_io.f90). A rotina WriteHS (em tools/openmx2hsio.f90) ja'
+    ! convenção "átomo-major, spin-menor" (para cada átomo, seus orbitais
+    ! up seguidos pelos seus orbitais down, átomo após átomo) -- que é a
+    ! ÚNICA convenção compatível com o campo Orbs(:) do formato
+    ! HSDataFormat, que assume blocos CONTÍGUOS por átomo (ver cabeçalho de
+    ! mod_hs_io.f90). A rotina WriteHS (em tools/openmx2hsio.f90) já
     ! assume essa contiguidade ao gravar Orbs(iAtom) = 2*TotalNumOrbs(iAtom);
     ! sem este reordenamento essa premissa fica FALSA para os dados
     ! realmente gravados, e qualquer ferramenta que localize orbitais de um
-    ! atomo via Orbs(:) (como o `unfold`) leria indices errados no caso
-    ! nao-colinear -- ainda que o calculo de bandas em si (que nao usa
+    ! átomo via Orbs(:) (como o `unfold`) leria índices errados no caso
+    ! não-colinear -- ainda que o cálculo de bandas em si (que não usa
     ! Orbs(:) para nada) continue correto de qualquer forma.
     !
-    ! E' uma transformacao de similaridade por PERMUTACAO (unitaria):
-    ! preserva hermiticidade e todos os autovalores, so' reordena rotulos
+    ! É uma transformação de similaridade por PERMUTAÇÃO (unitária):
+    ! preserva hermiticidade e todos os autovalores, só reordena rótulos
     ! de base. Aplicada a cada bloco de vizinho independentemente.
     ! -----------------------------------------------------------------
     subroutine ReorderSpinorAtomMajor(scfout, Hin, Sin, Hout, Sout)
-        type(ScfoutData), intent(in)  :: scfout
-        complex(dp),      intent(in)  :: Hin(:, :, :), Sin(:, :, :)
-        complex(dp), allocatable, intent(out) :: Hout(:, :, :), Sout(:, :, :)
+        type(ScfoutData), intent(in)               :: scfout
+        complex(dp),      intent(in)               :: Hin(:, :, :), Sin(:, :, :)
+        complex(dp),      allocatable, intent(out) :: Hout(:, :, :), Sout(:, :, :)
 
         integer, allocatable :: perm(:), atom_offset(:), new_atom_offset(:)
-        integer :: NOrbsSpatial, NOrbsTotal, ncell
-        integer :: ct_AN, o, TNO, dummyNOrbs
+        integer              :: NOrbsSpatial, NOrbsTotal, ncell
+        integer              :: ct_AN, o, TNO, dummyNOrbs
 
         call OrbitalOffsets(scfout, atom_offset, dummyNOrbs)
         NOrbsSpatial = dummyNOrbs
@@ -113,8 +113,8 @@ contains
             stop 1
         end if
 
-        ! Deslocamentos na NOVA ordem (atomo-major): cada atomo ocupa
-        ! 2*TotalNumOrbs(ct_AN) posicoes contiguas, up seguido de down.
+        ! Deslocamentos na NOVA ordem (átomo-major): cada átomo ocupa
+        ! 2*TotalNumOrbs(ct_AN) posições contiguas, up seguido de down.
         allocate(new_atom_offset(scfout%atomnum + 1))
         new_atom_offset(1) = 0
         do ct_AN = 1, scfout%atomnum
@@ -126,8 +126,8 @@ contains
             TNO = scfout%TotalNumOrbs(ct_AN)
             do o = 1, TNO
                 ! perm(nova_posicao) = posicao_antiga
-                perm(new_atom_offset(ct_AN) + o)       = atom_offset(ct_AN) + o                  ! up
-                perm(new_atom_offset(ct_AN) + TNO + o) = NOrbsSpatial + atom_offset(ct_AN) + o    ! down
+                perm(new_atom_offset(ct_AN) + o)       = atom_offset(ct_AN) + o                 ! up
+                perm(new_atom_offset(ct_AN) + TNO + o) = NOrbsSpatial + atom_offset(ct_AN) + o  ! down
             end do
         end do
 
@@ -140,19 +140,19 @@ contains
     ! -----------------------------------------------------------------
     ! Monta um bloco denso complex(dp) (NOrbs,NOrbs,Neighbors) a partir
     ! de um canal "flat" (Hks_flat(:,ispin) ou OLP_flat), posicionando
-    ! cada bloco atomo-vizinho na celula certa (via ncn_flat) e nos
-    ! indices de orbital globais certos (via atom_offset). Port direto
+    ! cada bloco átomo-vizinho na célula certa (via ncn_flat) e nos
+    ! índices de orbital globais certos (via atom_offset). Port direto
     ! de assemble_dense() do scfout2hsio.py.
     ! -----------------------------------------------------------------
     subroutine AssembleDense(scfout, flat_channel, Hout, NOrbsOut)
-        type(ScfoutData), intent(in)  :: scfout
-        real(dp),          intent(in)  :: flat_channel(:)
-        complex(dp), allocatable, intent(out) :: Hout(:, :, :)
-        integer, intent(out) :: NOrbsOut
+        type(ScfoutData), intent(in)               :: scfout
+        real(dp),         intent(in)               :: flat_channel(:)
+        complex(dp),      allocatable, intent(out) :: Hout(:, :, :)
+        integer,          intent(out)              :: NOrbsOut
 
         integer, allocatable :: atom_offset(:)
-        integer :: ct_AN, h_AN, p, off1, off2, TNO1, TNO2, Gh_AN, Rn
-        integer :: i, j, blk, ncell
+        integer              :: ct_AN, h_AN, p, off1, off2, TNO1, TNO2, Gh_AN, Rn
+        integer              :: i, j, blk, ncell
 
         call OrbitalOffsets(scfout, atom_offset, NOrbsOut)
         ncell = scfout%TCpyCell + 1
@@ -184,16 +184,16 @@ contains
 
     ! -----------------------------------------------------------------
     ! Retorna o bloco (TNO1,TNO2) do par (ct_AN,h_AN) de um canal flat,
-    ! ja' reorganizado como matriz Fortran normal (i,j).
+    ! já reorganizado como matriz Fortran normal (i,j).
     ! -----------------------------------------------------------------
     subroutine ExtractBlock(scfout, flat_channel, ct_AN, h_AN_idx_global, TNO1, TNO2, Bout)
-        type(ScfoutData), intent(in) :: scfout
-        real(dp),          intent(in) :: flat_channel(:)
-        integer,           intent(in) :: ct_AN            ! nao usado diretamente, mantido p/ clareza
-        integer,           intent(in) :: h_AN_idx_global   ! indice global do par p (1..n_pairs)
-        integer,           intent(in) :: TNO1, TNO2
-        real(dp), allocatable, intent(out) :: Bout(:, :)
-        integer :: i, j, blk
+        type(ScfoutData), intent(in)               :: scfout
+        real(dp),         intent(in)               :: flat_channel(:)
+        integer,          intent(in)               :: ct_AN            ! não usado diretamente, mantido p/ clareza
+        integer,          intent(in)               :: h_AN_idx_global  ! índice global do par p (1..n_pairs)
+        integer,          intent(in)               :: TNO1, TNO2
+        real(dp),         allocatable, intent(out) :: Bout(:, :)
+        integer                                    :: i, j, blk
 
         blk = scfout%block_offset(h_AN_idx_global)
         allocate(Bout(TNO1, TNO2))
@@ -205,14 +205,14 @@ contains
     end subroutine ExtractBlock
 
     ! -----------------------------------------------------------------
-    ! Encontra, para cada celula Rn, a celula Rn_neg tal que
-    ! atv_ijk(:,Rn_neg) == -atv_ijk(:,Rn). Necessario para montar o
-    ! bloco spin down-up (H_du) por hermiticidade no caso nao-colinear.
+    ! Encontra, para cada célula Rn, a célula Rn_neg tal que
+    ! atv_ijk(:,Rn_neg) == -atv_ijk(:,Rn). Necessário para montar o
+    ! bloco spin down-up (H_du) por hermiticidade no caso não-colinear.
     ! -----------------------------------------------------------------
     subroutine NegCellMap(scfout, neg_cell)
-        type(ScfoutData), intent(in) :: scfout
-        integer, allocatable, intent(out) :: neg_cell(:)   ! 0:TCpyCell
-        integer :: Rn, Rn2
+        type(ScfoutData), intent(in)               :: scfout
+        integer,          allocatable, intent(out) :: neg_cell(:)  ! 0:TCpyCell
+        integer                                    :: Rn, Rn2
 
         allocate(neg_cell(0:scfout%TCpyCell))
         neg_cell = -1
@@ -224,7 +224,7 @@ contains
                 end if
             end do
             if (neg_cell(Rn) < 0) then
-                print '(A,I0,A)', "[openmx_convert] Erro: nao foi possivel achar a " // &
+                print '(A,I0,A)', "[openmx_convert] Erro: nao foi possivel achar a " //        &
                     "celula oposta a atv_ijk(:,", Rn, "). A montagem do caso nao-colinear " // &
                     "depende dessa simetria (R e -R ambos presentes no .scfout)."
                 stop 1
@@ -233,16 +233,16 @@ contains
     end subroutine NegCellMap
 
     ! -----------------------------------------------------------------
-    ! Para um atomo Gh_AN, encontra o indice de vizinho (global, 1..n_pairs)
+    ! Para um átomo Gh_AN, encontra o índice de vizinho (global, 1..n_pairs)
     ! tal que (natn(Gh_AN,h'), ncn(Gh_AN,h')) == (target_atom, target_cell).
     ! Busca linear dentro da lista de vizinhos de Gh_AN (tipicamente
     ! pequena, dezenas de elementos).
     ! -----------------------------------------------------------------
     function FindMirrorNeighbor(scfout, Gh_AN, target_atom, target_cell) result(p_mirror)
         type(ScfoutData), intent(in) :: scfout
-        integer,           intent(in) :: Gh_AN, target_atom, target_cell
-        integer :: p_mirror
-        integer :: h, off, natn_val, ncn_val
+        integer,          intent(in) :: Gh_AN, target_atom, target_cell
+        integer                      :: p_mirror
+        integer                      :: h, off, natn_val, ncn_val
 
         p_mirror = -1
         off = scfout%neighbor_offset(Gh_AN)
@@ -250,22 +250,22 @@ contains
             natn_val = scfout%natn_flat(off + h + 1)
             ncn_val  = scfout%ncn_flat(off + h + 1)
             if (natn_val == target_atom .and. ncn_val == target_cell) then
-                ! indice global do par (Gh_AN, h): soma dos pares de todos
-                ! os atomos anteriores + h + 1
+                ! índice global do par (Gh_AN, h): soma dos pares de todos
+                ! os átomos anteriores + h + 1
                 p_mirror = GlobalPairIndex(scfout, Gh_AN, h)
                 return
             end if
         end do
     end function FindMirrorNeighbor
 
-    ! Indice global (1-based, na mesma ordem de leitura ct_AN/h_AN) do
+    ! Índice global (1-based, na mesma ordem de leitura ct_AN/h_AN) do
     ! par (ct_AN, h_AN [0-based])
     function GlobalPairIndex(scfout, ct_AN, h_AN) result(p)
         type(ScfoutData), intent(in) :: scfout
-        integer,           intent(in) :: ct_AN, h_AN
-        integer :: p, k
+        integer,          intent(in) :: ct_AN, h_AN
+        integer                      :: p, k
 
-        ! numero de pares de todos os atomos 1..ct_AN-1
+        ! número de pares de todos os átomos 1..ct_AN-1
         p = 0
         do k = 1, ct_AN - 1
             p = p + scfout%FNAN(k) + 1
@@ -275,29 +275,29 @@ contains
 
     ! -----------------------------------------------------------------
     ! Monta o Hamiltoniano spinor completo (caso SpinP_switch==3), shape
-    ! (2*NOrbs,2*NOrbs,Neighbors), convencao de bloco:
+    ! (2*NOrbs,2*NOrbs,Neighbors), convenção de bloco:
     !
     !   Data(:,:,n) = [ H_uu  H_ud ]
     !                 [ H_du  H_dd ]
     !
     ! H_uu, H_dd, H_ud vem direto de Hks+i*iHks (Hks[2],Hks[3],iHks[2]
-    ! para H_ud). H_du e' obtido por hermiticidade via bloco espelhado:
+    ! para H_ud). H_du é obtido por hermiticidade via bloco espelhado:
     ! H_du(R)_{ct_AN,Gh_AN} = conj( H_ud(-R)_{Gh_AN,ct_AN} )^T.
     ! Port direto de assemble_noncollinear_H() do scfout2hsio.py.
     ! -----------------------------------------------------------------
     subroutine AssembleNonCollinearH(scfout, Hout, NOrbsOut2)
-        type(ScfoutData), intent(in)  :: scfout
-        complex(dp), allocatable, intent(out) :: Hout(:, :, :)
-        integer, intent(out) :: NOrbsOut2
+        type(ScfoutData), intent(in)               :: scfout
+        complex(dp),      allocatable, intent(out) :: Hout(:, :, :)
+        integer,          intent(out)              :: NOrbsOut2
 
-        integer, allocatable :: atom_offset(:), neg_cell(:)
-        integer :: N, ncell
-        integer :: ct_AN, h_AN, p, off1, off2, TNO1, TNO2, Gh_AN, Rn, Rn_neg
-        integer :: i, j, p_mirror
-        real(dp), allocatable :: Huu_r(:,:), Hdd_r(:,:), Hud_re(:,:), Hud_im1(:,:), Hud_im2(:,:)
-        real(dp), allocatable :: Hud_mirror_re(:,:), Hud_mirror_im1(:,:), Hud_mirror_im2(:,:)
+        integer,     allocatable :: atom_offset(:), neg_cell(:)
+        integer                  :: N, ncell
+        integer                  :: ct_AN, h_AN, p, off1, off2, TNO1, TNO2, Gh_AN, Rn, Rn_neg
+        integer                  :: i, j, p_mirror
+        real(dp),    allocatable :: Huu_r(:,:), Hdd_r(:,:), Hud_re(:,:), Hud_im1(:,:), Hud_im2(:,:)
+        real(dp),    allocatable :: Hud_mirror_re(:,:), Hud_mirror_im1(:,:), Hud_mirror_im2(:,:)
         complex(dp), allocatable :: Hud_mirror(:,:), Hdu(:,:)
-        integer :: NOrbs
+        integer                  :: NOrbs
 
         call OrbitalOffsets(scfout, atom_offset, NOrbs)
         NOrbsOut2 = 2 * NOrbs
@@ -344,11 +344,11 @@ contains
                     end do
                 end block
 
-                ! H_du via bloco espelhado (Gh_AN -> ct_AN na celula -Rn)
+                ! H_du via bloco espelhado (Gh_AN -> ct_AN na célula -Rn)
                 Rn_neg = neg_cell(Rn)
                 p_mirror = FindMirrorNeighbor(scfout, Gh_AN, ct_AN, Rn_neg)
                 if (p_mirror < 0) then
-                    print '(A,I0,A,I0,A)', "[openmx_convert] Erro: bloco espelhado (atomo ", &
+                    print '(A,I0,A,I0,A)', "[openmx_convert] Erro: bloco espelhado (atomo ",          &
                         Gh_AN, " -> ", ct_AN, ") nao encontrado na lista de vizinhos do .scfout. " // &
                         "Nao e' possivel montar H_du."
                     stop 1
@@ -380,12 +380,12 @@ contains
     ! Dado um bloco espacial (N,N,Neighbors), devolve (2N,2N,Neighbors)
     ! com o mesmo bloco copiado na diagonal (up-up e down-down) e zero
     ! nos quadrantes fora da diagonal. Usado para dobrar o Overlap S no
-    ! caso nao-colinear.
+    ! caso não-colinear.
     ! -----------------------------------------------------------------
     subroutine DoubleBlockDiagonal(Sin, Sout)
-        complex(dp), intent(in)  :: Sin(:, :, :)
+        complex(dp), intent(in)               :: Sin(:, :, :)
         complex(dp), allocatable, intent(out) :: Sout(:, :, :)
-        integer :: N, ncell
+        integer                               :: N, ncell
 
         N = size(Sin, 1)
         ncell = size(Sin, 3)
@@ -396,30 +396,30 @@ contains
     end subroutine DoubleBlockDiagonal
 
     ! -----------------------------------------------------------------
-    ! Diagnostico: soma Data sobre todas as celulas (== H(k=Gamma)) e
+    ! Diagnóstico: soma Data sobre todas as células (== H(k=Gamma)) e
     ! mede o quanto isso desvia de ser hermitiano. Deve ser ~0 (ordem de
     ! erro de arredondamento) se a montagem estiver fisicamente correta.
     ! -----------------------------------------------------------------
     subroutine HermiticityReport(data, label)
-        complex(dp), intent(in) :: data(:, :, :)
-        character(len=*), intent(in) :: label
-        complex(dp), allocatable :: gamma(:, :)
-        real(dp) :: dev, scale
+        complex(dp),      intent(in)  :: data(:, :, :)
+        character(len=*), intent(in)  :: label
+        complex(dp),      allocatable :: gamma(:, :)
+        real(dp)                      :: dev, scale
 
         allocate(gamma(size(data,1), size(data,2)))
         gamma = sum(data, dim=3)
         dev = maxval(abs(gamma - transpose(conjg(gamma))))
         scale = maxval(abs(gamma)) + 1.0e-30_dp
-        print '(A, A, ES12.3E3, A, ES12.3E3, A)', &
+        print '(A, A, ES12.3E3, A, ES12.3E3, A)',                                                   &
             "  [diagnostico ", trim(label), dev, " ] desvio de hermiticidade em Gamma (relativo: ", &
             dev/scale, ") -- deve ser proximo de zero"
     end subroutine HermiticityReport
 
     ! -----------------------------------------------------------------
-    ! Desloca H para que o nivel de Fermi caia em 0 eV: H'(R) = H(R) -
+    ! Desloca H para que o nível de Fermi caia em 0 eV: H'(R) = H(R) -
     ! E_F*S(R) para TODO vizinho R (forma correta no problema
-    ! generalizado nao-ortogonal -- nao basta subtrair so' do termo
-    ! on-site, ja que S tem overlaps entre vizinhos).
+    ! generalizado não-ortogonal -- não basta subtrair só do termo
+    ! on-site, já que S tem overlaps entre vizinhos).
     ! -----------------------------------------------------------------
     subroutine ApplyFermiShift(Hdata, Sdata, fermi_ev)
         complex(dp), intent(inout) :: Hdata(:, :, :)

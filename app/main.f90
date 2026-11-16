@@ -9,9 +9,9 @@ program LowFoldIn
     use terminal_ui, only: print_box, print_box_close
     implicit none
 
-    type(AppConfig)        :: cfg
-    type(BandsDataFormat)  :: BandsData
-    character(len=:), allocatable :: BaseName, TextFile, BinFile, BlockFile
+    type(AppConfig)                    :: cfg
+    type(BandsDataFormat)              :: BandsData
+    character(len=:),      allocatable :: BaseName, TextFile, BinFile, BlockFile
 
     ! 1. Lê a configuração de entrada (via stdin) e o bloco &BANDS, se aplicável
     call ReadConfigFromStdin(cfg)

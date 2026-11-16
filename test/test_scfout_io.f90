@@ -7,8 +7,8 @@ program test_scfout_io
     implicit none
 
     character(len=256) :: lines(8)
-    character(len=8) :: labels(3)
-    logical :: found
+    character(len=8)   :: labels(3)
+    logical            :: found
 
     lines = ''
     lines(1) = '# representative OpenMX input'

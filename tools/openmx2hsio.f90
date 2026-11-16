@@ -4,8 +4,8 @@
 ! ----------------------------------------------------------------------------------------------------------
 ! tools/openmx2hsio.f90
 !
-! Converte um arquivo binario .scfout do OpenMX (SCFOUT_VERSION = 3,
-! OpenMX 3.9/4.0) para o formato binario HSDataFormat (mod_hs_io.f90)
+! Converte um arquivo binário .scfout do OpenMX (SCFOUT_VERSION = 3,
+! OpenMX 3.9/4.0) para o formato binário HSDataFormat (mod_hs_io.f90)
 ! usado pelo LowFoldIn, em Fortran puro -- sem depender de Python.
 !
 ! Uso:
@@ -17,39 +17,39 @@
 !   PREFIXO_H.hsio                       (SpinP_switch == 0)
 ! ou
 !   PREFIXO_H_up.hsio, PREFIXO_H_dn.hsio (SpinP_switch == 1, spin colinear;
-!                                          um S.hsio so', compartilhado pelos
+!                                          um S.hsio só, compartilhado pelos
 !                                          dois canais de spin -- rode o
 !                                          `unfold` duas vezes, uma por canal,
-!                                          com o MESMO mapeamento atomo->PC)
+!                                          com o MESMO mapeamento átomo->PC)
 ! ou
-!   PREFIXO_H.hsio, PREFIXO_S.hsio       (SpinP_switch == 3, spin nao-colinear
+!   PREFIXO_H.hsio, PREFIXO_S.hsio       (SpinP_switch == 3, spin não-colinear
 !                                          / spinor, NOrbs dobrado. Escrito em
-!                                          ordem ATOMO-MAJOR -- up e down
-!                                          contiguos por atomo -- via
-!                                          ReorderSpinorAtomMajor, a UNICA
-!                                          ordem compativel com Orbs(:) do
+!                                          ordem ÁTOMO-MAJOR -- up e down
+!                                          contíguos por átomo -- via
+!                                          ReorderSpinorAtomMajor, a ÚNICA
+!                                          ordem compatível com Orbs(:) do
 !                                          formato HSDataFormat. A ordem
 !                                          "spin-major" bruta que sai de
-!                                          AssembleNonCollinearH/scfout NAO e'
-!                                          usavel diretamente por ferramentas
-!                                          que indexam orbitais por atomo via
+!                                          AssembleNonCollinearH/scfout NÃO é
+!                                          usável diretamente por ferramentas
+!                                          que indexam orbitais por átomo via
 !                                          Orbs(:), como o `unfold` -- ver
 !                                          comentario de ReorderSpinorAtomMajor
 !                                          em mod_openmx_convert.f90.)
 !
-! Por padrao, o nivel de Fermi (ChemP) e' lido automaticamente do
-! proprio .scfout e H e' deslocado para que E_F caia em 0 eV, via
+! Por padrão, o nível de Fermi (ChemP) é lido automaticamente do
+! próprio .scfout e H é deslocado para que E_F caia em 0 eV, via
 ! H'(R) = H(R) - E_F*S(R) para todo vizinho R.
 !
-! Opcionalmente (--write-structure, ou --structure-file ARQ que tambem o
-! ativa) escreve tambem PREFIXO.structure.nml (ou ARQ): rede (Angstrom),
-! especies com numero de orbitais e posicoes atomicas, extraidos da geometria
-! e do input OpenMX embutido no .scfout. Esse arquivo e' o structure_file
+! Opcionalmente (--write-structure, ou --structure-file ARQ que também o
+! ativa) escreve também PREFIXO.structure.nml (ou ARQ): rede (Angstrom),
+! espécies com número de orbitais e posições atômicas, extraídos da geometria
+! e do input OpenMX embutido no .scfout. Esse arquivo é o structure_file
 ! usado por `spectral` e `atomselect` (ver docs/spectral.md e
-! docs/atomselect.md). O caminho nao pode coincidir com o .scfout nem com os
+! docs/atomselect.md). O caminho não pode coincidir com o .scfout nem com os
 ! .hsio gerados.
 !
-! Codigo de saida: 0 em sucesso (ou --help); 1 em qualquer erro.
+! Código de saída: 0 em sucesso (ou --help); 1 em qualquer erro.
 !
 ! Nathanael N. Batista, Agosto de 2026
 ! ----------------------------------------------------------------------------------------------------------
@@ -66,17 +66,17 @@ program openmx2hsio
     real(dp), parameter :: BOHR_TO_ANG = 0.529177210903_dp
 
     character(len=1024) :: scfout_path, out_prefix, structure_path, arg
-    real(dp) :: fermi_hartree
-    logical  :: has_fermi_override, no_fermi_shift, write_structure, custom_structure_path
-    integer  :: nargs, iarg, ios
+    real(dp)            :: fermi_hartree
+    logical             :: has_fermi_override, no_fermi_shift, write_structure, custom_structure_path
+    integer             :: nargs, iarg, ios
 
-    type(ScfoutData) :: scfout
-    integer, allocatable :: IndexList(:, :)
-    complex(dp), allocatable :: Sdata(:, :, :), Hdata(:, :, :)
-    integer :: NOrbs, NOrbs2, neighbors
-    real(dp) :: fermi_hartree_final, fermi_ev
-    logical  :: apply_shift
-    character(len=64) :: fermi_source
+    type(ScfoutData)               :: scfout
+    integer,           allocatable :: IndexList(:, :)
+    complex(dp),       allocatable :: Sdata(:, :, :), Hdata(:, :, :)
+    integer                        :: NOrbs, NOrbs2, neighbors
+    real(dp)                       :: fermi_hartree_final, fermi_ev
+    logical                        :: apply_shift
+    character(len=64)              :: fermi_source
 
     ! -------------------------------------------------------------
     ! 1. Parsing da linha de comando
@@ -141,13 +141,13 @@ program openmx2hsio
         iarg = iarg + 1
     end do
 
-    ! Caminho padrao da estrutura (a menos que --structure-file tenha sido dado)
+    ! Caminho padrão da estrutura (a menos que --structure-file tenha sido dado)
     if (write_structure .and. .not. custom_structure_path) then
         structure_path = trim(out_prefix) // ".structure.nml"
     end if
 
     ! -------------------------------------------------------------
-    ! 2. Le o .scfout
+    ! 2. Lê o .scfout
     ! -------------------------------------------------------------
     call ReadScfoutFile(scfout, trim(scfout_path))
     ! Falha cedo (antes de qualquer escrita) se a estrutura sobrescreveria um arquivo em uso
@@ -157,7 +157,7 @@ program openmx2hsio
     end if
 
     ! -------------------------------------------------------------
-    ! 3. Decide o nivel de Fermi: --fermi (override) > ChemP do
+    ! 3. Decide o nível de Fermi: --fermi (override) > ChemP do
     !    .scfout > nenhum shift (--no-fermi-shift)
     ! -------------------------------------------------------------
     apply_shift = .not. no_fermi_shift
@@ -208,7 +208,7 @@ program openmx2hsio
         block
             complex(dp), allocatable :: Sspatial(:, :, :), Sspinor(:, :, :)
             complex(dp), allocatable :: HdataReordered(:, :, :), SspinorReordered(:, :, :)
-            integer :: NOrbsSpatial
+            integer                  :: NOrbsSpatial
 
             call AssembleDense(scfout, scfout%OLP_flat, Sspatial, NOrbsSpatial)
             call DoubleBlockDiagonal(Sspatial, Sspinor)
@@ -222,10 +222,10 @@ program openmx2hsio
             call HermiticityReport(Sspinor, "S (spinor, ordem original spin-major)")
 
             ! Reordena de "spin-major" (todos os orbitais up, depois todos
-            ! os down) para "atomo-major" (up e down contiguos por atomo),
-            ! a UNICA ordem compativel com Orbs(:) do formato HSDataFormat.
-            ! Pura permutacao de base: autovalores e hermiticidade
-            ! preservados, so' a ordem das linhas/colunas muda.
+            ! os down) para "átomo-major" (up e down contíguos por átomo),
+            ! a ÚNICA ordem compatível com Orbs(:) do formato HSDataFormat.
+            ! Pura permutação de base: autovalores e hermiticidade
+            ! preservados, só a ordem das linhas/colunas muda.
             call ReorderSpinorAtomMajor(scfout, Hdata, Sspinor, HdataReordered, SspinorReordered)
 
             call WriteHS(trim(out_prefix) // "_H.hsio", &
@@ -241,7 +241,7 @@ program openmx2hsio
         stop 1
     end select
 
-    ! Estrutura escrita apos os .hsio, a partir dos mesmos dados do .scfout
+    ! Estrutura escrita após os .hsio, a partir dos mesmos dados do .scfout
     if (write_structure) call WriteStructureFile(trim(structure_path), scfout)
 
     ! -------------------------------------------------------------
@@ -280,9 +280,9 @@ contains
     end subroutine print_usage
 
     function default_prefix(path) result(prefix)
-        character(len=*), intent(in) :: path
-        character(len=1024) :: prefix
-        integer :: dot_pos, slash_pos, i
+        character(len=*),    intent(in) :: path
+        character(len=1024)             :: prefix
+        integer                         :: dot_pos, slash_pos, i
 
         slash_pos = 0
         do i = len_trim(path), 1, -1
@@ -308,13 +308,13 @@ contains
     end function default_prefix
 
     !> Aborta (stop 1) se `path` coincidir com o .scfout de entrada ou com algum
-    !> .hsio de saida (_S, _H, _H_up, _H_dn), para nao sobrescreve-los.
-    !> A comparacao e' textual (apos remover "./" iniciais): nao resolve
-    !> links simbolicos nem caminhos absolutos/relativos equivalentes.
+    !> .hsio de saída (_S, _H, _H_up, _H_dn), para não sobrescrevê-los.
+    !> A comparação é textual (após remover "./" iniciais): não resolve
+    !> links simbólicos nem caminhos absolutos/relativos equivalentes.
     subroutine ValidateStructurePath(path, source_path, prefix)
-        character(len=*), intent(in) :: path, source_path, prefix
-        character(len=1024) :: reserved(5)
-        integer :: i
+        character(len=*),    intent(in) :: path, source_path, prefix
+        character(len=1024)             :: reserved(5)
+        integer                         :: i
 
         reserved(1) = source_path
         reserved(2) = trim(prefix) // '_S.hsio'
@@ -329,10 +329,10 @@ contains
         end do
     end subroutine ValidateStructurePath
 
-    !> Remove todos os "./" iniciais de um caminho (para comparacao textual).
+    !> Remove todos os "./" iniciais de um caminho (para comparação textual).
     function strip_dot_slash(path) result(clean)
-        character(len=*), intent(in) :: path
-        character(len=len(path)) :: clean
+        character(len=*),         intent(in) :: path
+        character(len=len(path))             :: clean
 
         clean = adjustl(path)
         do while (len_trim(clean) >= 2)
@@ -342,8 +342,8 @@ contains
     end function strip_dot_slash
 
     !> Falha cedo (antes de escrever qualquer .hsio) se faltarem os dados
-    !> necessarios para o structure.nml: rotulos atomicos do input embutido,
-    !> coordenadas e contagem de orbitais igual para atomos da mesma especie
+    !> necessários para o structure.nml: rótulos atômicos do input embutido,
+    !> coordenadas e contagem de orbitais igual para átomos da mesma espécie
     !> (ver WriteStructureFile).
     subroutine ValidateStructureInputs(scf)
         type(ScfoutData), intent(in) :: scf
@@ -374,21 +374,21 @@ contains
     end subroutine ValidateStructureInputs
 
     !> Escreve o structure.nml (&STRUCTURE, &SPECIES, &ATOMS) em Angstrom.
-    !> Pre-condicoes (rotulos, coordenadas, orbitais por especie) ja validadas
+    !> Pré-condições (rótulos, coordenadas, orbitais por espécie) já validadas
     !> por ValidateStructureInputs.
-    !> O numero de orbitais por especie e' TotalNumOrbs (x2 em spinor,
+    !> O número de orbitais por espécie é TotalNumOrbs (x2 em spinor,
     !> SpinP_switch == 3, para casar com o NOrbs dobrado do .hsio) e deve ser
-    !> o mesmo para todos os atomos da mesma especie.
+    !> o mesmo para todos os átomos da mesma espécie.
     subroutine WriteStructureFile(filename, scf)
         character(len=*), intent(in) :: filename
         type(ScfoutData), intent(in) :: scf
 
         character(len=8), allocatable :: species_label(:)
-        integer, allocatable :: species_norb(:)
-        integer :: iu, ios_local, iatom, ispecies, nspecies, norb_factor
-        logical :: known_species
+        integer,          allocatable :: species_norb(:)
+        integer                       :: iu, ios_local, iatom, ispecies, nspecies, norb_factor
+        logical                       :: known_species
 
-        ! Fator de spinor e lista de especies unicas (ordem de primeira aparicao)
+        ! Fator de spinor e lista de espécies únicas (ordem de primeira aparição)
         norb_factor = merge(2, 1, scf%SpinP_switch == 3)
         allocate(species_label(scf%atomnum), species_norb(scf%atomnum))
         nspecies = 0
@@ -438,15 +438,15 @@ contains
         print '(A,A)', "  Escrito: ", trim(filename)
     end subroutine WriteStructureFile
 
-    ! Monta um objeto HSDataFormat e chama WriteFile (o MESMO codigo que
-    ! o Fortran usa para ler depois -- garante compatibilidade binaria
+    ! Monta um objeto HSDataFormat e chama WriteFile (o MESMO código que
+    ! o Fortran usa para ler depois -- garante compatibilidade binária
     ! sem precisar reimplementar o layout do arquivo).
     subroutine WriteHS(filename, tag, scf, nOrbsLocal, nNeighLocal, IdxList, Data)
         character(len=*), intent(in) :: filename, tag
         type(ScfoutData), intent(in) :: scf
-        integer, intent(in) :: nOrbsLocal, nNeighLocal
-        integer, intent(in) :: IdxList(:, :)
-        complex(dp), intent(in) :: Data(:, :, :)
+        integer,          intent(in) :: nOrbsLocal, nNeighLocal
+        integer,          intent(in) :: IdxList(:, :)
+        complex(dp),      intent(in) :: Data(:, :, :)
 
         type(HSDataFormat) :: out_data
 
@@ -462,7 +462,7 @@ contains
         if (nOrbsLocal == sum(scf%TotalNumOrbs)) then
             out_data%Orbs = scf%TotalNumOrbs
         else
-            ! caso spinor (NOrbs dobrado): reporta 2x orbitais por atomo
+            ! caso spinor (NOrbs dobrado): reporta 2x orbitais por átomo
             out_data%Orbs = 2 * scf%TotalNumOrbs
         end if
 

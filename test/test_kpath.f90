@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Tests for module kpath (contracts §3.1).
+!> Testes do módulo kpath (contracts §3.1).
 program test_kpath
     use types,   only: dp
     use kpath,   only: kpath_t, build_kpath, KLABEL_LEN
@@ -10,18 +10,18 @@ program test_kpath
 
     real(dp), parameter :: pi = acos(-1.0_dp)
     real(dp), parameter :: a = 3.0_dp
-    real(dp) :: lat(3,3), recip(3,3), vertex(3,3), step, step0
+    real(dp)                  :: lat(3,3), recip(3,3), vertex(3,3), step, step0
     character(len=KLABEL_LEN) :: label(3)
-    character(len=256) :: errmsg
-    type(kpath_t) :: path
-    integer :: ierr, k
-    logical :: ok
+    character(len=256)        :: errmsg
+    type(kpath_t)             :: path
+    integer                   :: ierr, k
+    logical                   :: ok
 
-    ! Lattice vectors as ROWS: a1, a2, a3 (Å)
+    ! Vetores de rede como LINHAS: a1, a2, a3 (Å)
     lat(1, :) = [a, 0.0_dp, 0.0_dp]
     lat(2, :) = [-a / 2.0_dp, a * sqrt(3.0_dp) / 2.0_dp, 0.0_dp]
     lat(3, :) = [0.0_dp, 0.0_dp, 20.0_dp]
-    ! Rows b_i with b_i·a_j = 2π δ_ij  ->  B = 2π (A^{-1})^T
+    ! Linhas b_i com b_i·a_j = 2π δ_ij  ->  B = 2π (A^{-1})^T
     recip = 2.0_dp * pi * transpose(inv3(lat))
 
     ok = .true.
@@ -61,7 +61,7 @@ program test_kpath
         call check_close(path%kdist(19) - path%kdist(11), 2.0_dp * pi / (a * sqrt(3.0_dp)), 1.0e-12_dp, &
                          "KGM: kdist(19)-kdist(11) = |M|")
 
-        ! Uniform steps inside each segment
+        ! Passos uniformes dentro de cada segmento
         ok = .true.
         step0 = path%kdist(2) - path%kdist(1)
         do k = 2, 11
@@ -77,14 +77,14 @@ program test_kpath
         end do
         call check(ok, "KGM: uniform steps in segment G-M")
 
-        ! Fractional points follow the linear interpolation
+        ! Pontos fracionários seguem a interpolação linear
         call check(maxval(abs(path%kfrac(:, 6) - 0.5_dp * vertex(:, 1))) < 1.0e-15_dp, &
                    "KGM: midpoint of K-G")
         call check(maxval(abs(path%kfrac(:, 15) - 0.5_dp * vertex(:, 3))) < 1.0e-15_dp, &
                    "KGM: midpoint of G-M")
     end if
 
-    ! ---- 2. Errors -------------------------------------------------------
+    ! ---- 2. Erros -------------------------------------------------------
     call build_kpath(vertex(:, 1:1), [integer ::], label(1:1), recip, path, ierr, errmsg)
     call check(ierr /= 0, "error: nvertex = 1")
     call check(len_trim(errmsg) > 0, "error: nvertex = 1 has message")
@@ -111,10 +111,10 @@ program test_kpath
 
 contains
 
-    !> Inverse of a 3x3 matrix via the adjugate.
+    !> Inversa de uma matriz 3x3 via adjunta.
     pure function inv3(m) result(r)
         real(dp), intent(in) :: m(3,3)
-        real(dp) :: r(3,3), det
+        real(dp)             :: r(3,3), det
         r(1,1) = m(2,2)*m(3,3) - m(2,3)*m(3,2)
         r(1,2) = m(1,3)*m(3,2) - m(1,2)*m(3,3)
         r(1,3) = m(1,2)*m(2,3) - m(1,3)*m(2,2)

@@ -4,8 +4,8 @@
 ! ----------------------------------------------------------------------------------------------------------
 ! tools/unfold.f90
 !
-! Executavel independente para unfolding de estrutura de bandas de bases LCAO
-! nao-ortogonais, conforme:
+! Executável independente para unfolding de estrutura de bandas de bases LCAO
+! não-ortogonais, conforme:
 !
 !   J. Quan, N. Rybin, M. Scheffler, C. Carbogno,
 !   "Efficient band structure unfolding with atom-centered orbitals: General
@@ -14,78 +14,78 @@
 ! Uso:
 !   unfold <arquivo_de_entrada>
 !
-! O arquivo de entrada e' formado por blocos, nesta ordem: &UNFOLD, depois
-! (&ATOMMAP  OU  nada, se o modo automatico via arquivos de estrutura for
+! O arquivo de entrada é formado por blocos, nesta ordem: &UNFOLD, depois
+! (&ATOMMAP  OU  nada, se o modo automático via arquivos de estrutura for
 ! usado), e por fim &PCPATH.
 !
 !   &UNFOLD
 !       ProjectName = "MeuSistema"
-!       HDataFile   = "SC_H.hsio"      ! H(R) da SUPERCELULA (mesmo formato usado em "bands")
-!       SDataFile   = "SC_S.hsio"      ! S(R) da SUPERCELULA
+!       HDataFile   = "SC_H.hsio"      ! H(R) da SUPERCÉLULA (mesmo formato usado em "bands")
+!       SDataFile   = "SC_S.hsio"      ! S(R) da SUPERCÉLULA
 !       OutputDir   = "./"
 !
-!       ! Matriz de transformacao PC->SC completa (Eq. 1), 3x3: escreva LINHA
-!       ! por LINHA (forma visual, uma atribuicao de secao por linha da
-!       ! matriz). M pode ser diagonal (rotina rapida especializada) ou
-!       ! NAO-diagonal (motor geral, mais caro; det(M) /= 0).
+!       ! Matriz de transformação PC->SC completa (Eq. 1), 3x3: escreva LINHA
+!       ! por LINHA (forma visual, uma atribuição de seção por linha da
+!       ! matriz). M pode ser diagonal (rotina rápida especializada) ou
+!       ! NÃO-diagonal (motor geral, mais caro; det(M) /= 0).
 !       M(1,:)      = 2, 0, 0
 !       M(2,:)      = 0, 2, 0
 !       M(3,:)      = 0, 0, 2
 !
-!       Broadening  = 0.010            ! eV, FWHM Lorentziana da funcao espectral A(k,E)
+!       Broadening  = 0.010            ! eV, FWHM Lorentziana da função espectral A(k,E)
 !       Emin        = -10.0
 !       Emax        =  10.0
 !       nE          = 400
 !       WriteSpectralFunction = .true.
 !
-!       ! --- modo automatico de mapeamento atomo->PC (RECOMENDADO) ---------
+!       ! --- modo automático de mapeamento átomo->PC (RECOMENDADO) ---------
 !       ! Fornecendo os dois arquivos de ESTRUTURA abaixo, o bloco &ATOMMAP
-!       ! NAO e' lido: o mapeamento e' construido por casamento geometrico
-!       ! entre as posicoes da PC e da SC (via M) e o simbolo quimico.
+!       ! NÃO é lido: o mapeamento é construído por casamento geométrico
+!       ! entre as posições da PC e da SC (via M) e o símbolo químico.
 !       PCStructureFile = "pc.nml"
 !       SCStructureFile = "sc.nml"
-!       MatchTolerance  = 1.0e-3       ! coord. fracionaria da PC (opcional)
+!       MatchTolerance  = 1.0e-3       ! coord. fracionária da PC (opcional)
 !   /
 !
 !   Formato de PCStructureFile / SCStructureFile -- MESMO ESTILO .nml do
 !   resto do pacote, um arquivo para a PC e outro para a SC (SCStructureFile
-!   com atomos na MESMA ORDEM do arquivo .hsio). Ate' tres blocos, nesta
-!   ordem: vetores de rede, tabela especie->numero de orbitais (OPCIONAL --
+!   com átomos na MESMA ORDEM do arquivo .hsio). Até três blocos, nesta
+!   ordem: vetores de rede, tabela espécie->número de orbitais (OPCIONAL --
 !   se presente, CONFERE contra o .hsio e pega cedo erros de base/ordenacao;
-!   se ausente, o casamento geometrico continua funcionando via especie
-!   quimica, so' sem essa checagem extra), e a lista de atomos da celula:
+!   se ausente, o casamento geométrico continua funcionando via espécie
+!   química, só sem essa checagem extra), e a lista de átomos da célula:
 !
 !       &STRUCTURE
-!           LatticeVectors(1,:) = a1x, a1y, a1z   ! Angstrom -- MESMA convencao
+!           LatticeVectors(1,:) = a1x, a1y, a1z   ! Angstrom -- MESMA convenção
 !           LatticeVectors(2,:) = a2x, a2y, a2z   ! de POSCAR/ASE/CIF: cada
-!           LatticeVectors(3,:) = a3x, a3y, a3z   ! LINHA e' um vetor de rede.
+!           LatticeVectors(3,:) = a3x, a3y, a3z   ! LINHA é um vetor de rede.
 !       /
 !
 !       &SPECIES              ! OPCIONAL
 !       <nEspecies>
-!       Especie  nOrbitais
+!       Espécie  nOrbitais
 !       ...
 !       /
 !
 !       &ATOMS
 !       <nAtomos>
-!       Especie  x  y  z    ! Cartesiano, Angstrom
+!       Espécie  x  y  z    ! Cartesiano, Angstrom
 !       ...
 !       /
 !
 !   IMPORTANTE:
-!     - Namelist do Fortran usa PARENTESES para indexar array, "M(1,:)" ou
-!       "LatticeVectors(1,:)" -- NAO colchetes ("M[1,:]" da' erro de leitura).
-!     - Para celulas ORTOGONAIS (todos os angulos 90 graus) e' tentador
-!       escrever tudo numa linha so' (ex. "LatticeVectors = 10,0,0, 0,10,0,
-!       0,0,10)"; isso ainda funciona porque nesse caso especial a matriz e'
-!       igual a sua transposta. Para uma celula QUALQUER (hexagonal,
-!       monoclinica, etc.), use SEMPRE a forma explicita por linha acima --
+!     - Namelist do Fortran usa PARÊNTESES para indexar array, "M(1,:)" ou
+!       "LatticeVectors(1,:)" -- NÃO colchetes ("M[1,:]" dá erro de leitura).
+!     - Para células ORTOGONAIS (todos os ângulos 90 graus) é tentador
+!       escrever tudo numa linha só (ex. "LatticeVectors = 10,0,0, 0,10,0,
+!       0,0,10)"; isso ainda funciona porque nesse caso especial a matriz é
+!       igual a sua transposta. Para uma célula QUALQUER (hexagonal,
+!       monoclínica, etc.), use SEMPRE a forma explícita por linha acima --
 !       o preenchimento column-major do Fortran para uma lista "achatada"
 !       transporia a matriz silenciosamente.
 !
-!   Exemplo (celula cubica de 10 A com 2 atomos, Ga na origem com 9 orbitais
-!   de base e N em (0.25,0.25,0.25) fracionario com 4 orbitais):
+!   Exemplo (célula cúbica de 10 A com 2 átomos, Ga na origem com 9 orbitais
+!   de base e N em (0.25,0.25,0.25) fracionário com 4 orbitais):
 !
 !       &STRUCTURE
 !           LatticeVectors(1,:) = 10.0, 0.0, 0.0
@@ -105,16 +105,16 @@
 !       N    2.50  2.50  2.50
 !       /
 !
-!   --- OU, se PCStructureFile/SCStructureFile NAO forem fornecidos em
+!   --- OU, se PCStructureFile/SCStructureFile NÃO forem fornecidos em
 !       &UNFOLD, o mapeamento deve vir explicitamente aqui: -----------------
 !
 !   &ATOMMAP
-!   ! uma linha por atomo da SC, NA MESMA ORDEM do arquivo .hsio (Orbs(:)):
+!   ! uma linha por átomo da SC, NA MESMA ORDEM do arquivo .hsio (Orbs(:)):
 !   !   PCAtom  n1 n2 n3
-!   ! PCAtom  : indice do atomo da celula primitiva (1..nAtomsPC) do qual este
-!   !           atomo e' replica (todas as m1*m2*m3 replicas de um mesmo atomo-PC
-!   !           devem ter o MESMO numero de orbitais)
-!   ! n1 n2 n3: indice inteiro 0-based da celula-PC que este atomo ocupa dentro
+!   ! PCAtom  : índice do átomo da célula primitiva (1..nAtomsPC) do qual este
+!   !           átomo é réplica (todas as m1*m2*m3 réplicas de um mesmo átomo-PC
+!   !           devem ter o MESMO número de orbitais)
+!   ! n1 n2 n3: índice inteiro 0-based da célula-PC que este átomo ocupa dentro
 !   !           da SC ao longo de a1,a2,a3 (0 <= ni < Mi)
 !       1   0 0 0
 !       2   0 0 0
@@ -124,20 +124,21 @@
 !   /
 !
 !   &PCPATH
-!   ! caminho de pontos k da CELULA PRIMITIVA (coordenadas fracionarias na
-!   ! base reciproca da PC), EXATAMENTE no mesmo formato do bloco &BANDS
+!   ! caminho de pontos k da CÉLULA PRIMITIVA (coordenadas fracionárias na
+!   ! base recíproca da PC), EXATAMENTE no mesmo formato do bloco &BANDS
 !       <npaths>
 !       fx fy fz  nkpts
 !       ...
 !   /
 !
-! Saidas (em OutputDir/ProjectName.*):
+! Saídas (em OutputDir/ProjectName.*):
 !   .unfold.dat           -> (x, E, W) formato "scatter" para plot com peso como cor
 !   .unfold_spectral.dat  -> A(k,E) numa grade de energias (se WriteSpectralFunction)
 !
-! Paralelizacao: o laco sobre os pontos k e' paralelizado com OpenMP (mesma
-! tecnica de calc_band_structure_non_orth em mod_core.f90, usada por
-! "bands"), respeitando OMP_NUM_THREADS. Progresso e' impresso apos cada ponto concluido, com o tempo individual.
+! Paralelização: o laço sobre os pontos k é paralelizado com OpenMP (mesma
+! técnica de calc_band_structure_non_orth em mod_core.f90, usada por
+! "bands"), respeitando OMP_NUM_THREADS. Progresso é impresso após cada ponto concluído, com o tempo
+! individual.
 !
 ! Nathanael N. Batista, Agosto de 2026
 ! ----------------------------------------------------------------------------------------------------------
@@ -153,19 +154,19 @@ program unfold_tool
     implicit none
 
     character(len=1024) :: input_path
-    integer :: iu, ios, nargs
+    integer             :: iu, ios, nargs
 
-    type(UnfoldConfig)      :: cfg
-    type(HSDataFormat)      :: HData, SData
+    type(UnfoldConfig)       :: cfg
+    type(HSDataFormat)       :: HData, SData
     type(UnfoldResultFormat) :: Result
     type(UnfoldPerformance)  :: Performance
 
     character(len=:), allocatable :: BaseName, ScatterFile, SpectralFile
-    integer :: ik
-    integer :: nOrbitsPC_expected
-    real(dp) :: worst_dev
-    integer(int64) :: total_start, preparation_end, writing_start, writing_end, total_end, clock_rate
-    real(dp) :: preparation_time, writing_time, total_time
+    integer                       :: ik
+    integer                       :: nOrbitsPC_expected
+    real(dp)                      :: worst_dev
+    integer(int64)                :: total_start, preparation_end, writing_start, writing_end, total_end, clock_rate
+    real(dp)                      :: preparation_time, writing_time, total_time
 
     call system_clock(count_rate=clock_rate)
     call system_clock(count=total_start)
@@ -178,7 +179,7 @@ program unfold_tool
     call get_command_argument(1, input_path)
 
     ! ------------------------------------------------------------------
-    ! 1. Le o bloco &UNFOLD (nomes de arquivo, tamanho da SC, saida)
+    ! 1. Lê o bloco &UNFOLD (nomes de arquivo, tamanho da SC, saída)
     ! ------------------------------------------------------------------
     open(newunit=iu, file=trim(input_path), status='old', action='read', iostat=ios)
     if (ios /= 0) then
@@ -189,7 +190,7 @@ program unfold_tool
     call ReadUnfoldNamelist(iu, cfg)
 
     ! ------------------------------------------------------------------
-    ! 2. Carrega H(R) e S(R) da supercelula
+    ! 2. Carrega H(R) e S(R) da supercélula
     ! ------------------------------------------------------------------
     call print_box("Carregando dados da Supercelula (SC)")
     call HData%ReadFile(trim(cfg%HDataFile))
@@ -197,14 +198,11 @@ program unfold_tool
     call print_box_close()
 
     ! ------------------------------------------------------------------
-    ! 3. Le o mapeamento atomo(SC) -> (atomo-PC, celula) e o caminho k da PC
-    ! ------------------------------------------------------------------
-    ! ------------------------------------------------------------------
-    ! 3. Determina o mapeamento atomo(SC) -> (atomo-PC, celula):
-    !    - se &UNFOLD forneceu PCStructureFile/SCStructureFile, constroi
-    !      automaticamente por casamento geometrico (RECOMENDADO);
-    !    - caso contrario, le o bloco manual &ATOMMAP do proprio arquivo
-    !      de entrada (modo antigo, util para casos pequenos/depuracao).
+    ! 3. Determina o mapeamento átomo(SC) -> (átomo-PC, célula):
+    !    - se &UNFOLD forneceu PCStructureFile/SCStructureFile, constrói
+    !      automaticamente por casamento geométrico (RECOMENDADO);
+    !    - caso contrário, lê o bloco manual &ATOMMAP do próprio arquivo
+    !      de entrada (modo antigo, útil para casos pequenos/depuração).
     !    Em qualquer um dos dois casos, o caminho k da PC vem de &PCPATH.
     ! ------------------------------------------------------------------
     if (UsesAutomaticAtomMap(cfg)) then
@@ -226,10 +224,10 @@ program unfold_tool
     call system_clock(count=preparation_end)
     call RunUnfolding(cfg, HData, SData, Result, Performance)
 
-    ! Diagnostico: soma_N W^k_KN deveria ser p, o numero de orbitais-PC por
-    ! celula (= NOrbsSC / (m1*m2*m3)) -- NAO 1, exceto no caso especial p=1
-    ! [Eq. (28)+(51) do artigo: a soma em `orbit` na definicao do peso ja'
-    ! projeta no subespaco degenerado inteiro de dimensao p, entao somar
+    ! Diagnóstico: soma_N W^k_KN deveria ser p, o número de orbitais-PC por
+    ! célula (= NOrbsSC / (m1*m2*m3)) -- NÃO 1, exceto no caso especial p=1
+    ! [Eq. (28)+(51) do artigo: a soma em `orbit` na definição do peso já
+    ! projeta no subespaço degenerado inteiro de dimensão p, então somar
     ! ainda sobre N acumula um fator p adicional por completude].
     nOrbitsPC_expected = HData%NOrbs / cfg%nCells
     worst_dev = 0.0_dp
@@ -269,7 +267,7 @@ contains
 
     subroutine PrintPerformanceSummary(perf, prep_time, write_time, elapsed_total)
         type(UnfoldPerformance), intent(in) :: perf
-        real(dp), intent(in) :: prep_time, write_time, elapsed_total
+        real(dp),                intent(in) :: prep_time, write_time, elapsed_total
 
         call print_box("Resumo de Desempenho")
         print '(A, I12)',      "  Pontos k calculados             : ", perf%PointsCalculated

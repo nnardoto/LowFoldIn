@@ -1,16 +1,16 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Tests for module spectral_projection (contracts §4), synthetic matrices only.
+!> Testes do módulo spectral_projection (contracts §4), somente com matrizes sintéticas.
 program test_projection
-    use types,   only: dp
+    use types,               only: dp
     use spectral_projection, only: orbital_groups_t, atom_orbital_offsets, build_orbital_groups, &
                                    overlap_times_vectors, mulliken_weights, generalized_eigensolve, &
                                    lowdin_weights
-    use testing, only: check, check_close, test_summary
+    use testing,             only: check, check_close, test_summary
     implicit none
 
-    integer(8) :: lcg_state = 20260315_8   ! fixed seed
+    integer(8) :: lcg_state = 20260315_8   ! semente fixa
 
     call test_offsets_and_groups()
     call test_identity_overlap()
@@ -31,11 +31,11 @@ program test_projection
 contains
 
     ! ------------------------------------------------------------------
-    ! Helpers
+    ! Rotinas auxiliares
     ! ------------------------------------------------------------------
 
-    !> Deterministic uniform deviate in [-1, 1): Park-Miller minimal standard
-    !> generator (x <- 48271 x mod (2^31-1)); int64 arithmetic never overflows.
+    !> Desvio uniforme determinístico em [-1, 1): gerador padrão mínimo de Park-Miller
+    !> (x <- 48271 x mod (2^31-1)); a aritmética int64 nunca estoura.
     real(dp) function rnd()
         integer(8), parameter :: amul = 48271_8, mmod = 2147483647_8
         lcg_state = mod(amul * lcg_state, mmod)
@@ -45,7 +45,7 @@ contains
     subroutine random_hermitian(n, A)
         integer,     intent(in)  :: n
         complex(dp), intent(out) :: A(n, n)
-        integer :: i, j
+        integer                  :: i, j
         do j = 1, n
             do i = 1, j - 1
                 A(i, j) = cmplx(rnd(), rnd(), dp)
@@ -55,13 +55,13 @@ contains
         end do
     end subroutine random_hermitian
 
-    !> HPD S = (X^H X)/n + I, then normalised to unit diagonal (like an LCAO overlap).
+    !> S HPD = (X^H X)/n + I, depois normalizada para diagonal unitária (como um overlap LCAO).
     subroutine random_hpd(n, S)
         integer,     intent(in)  :: n
         complex(dp), intent(out) :: S(n, n)
-        complex(dp) :: X(n, n)
-        real(dp) :: d(n)
-        integer :: i, j
+        complex(dp)              :: X(n, n)
+        real(dp)                 :: d(n)
+        integer                  :: i, j
         do j = 1, n
             do i = 1, n
                 X(i, j) = cmplx(rnd(), rnd(), dp)
@@ -82,11 +82,11 @@ contains
         end do
     end subroutine random_hpd
 
-    !> Groups made of single atoms 1..nat (a full partition).
+    !> Grupos formados por átomos individuais 1..nat (uma partição completa).
     subroutine atom_partition(orbs, groups)
         integer,                intent(in)  :: orbs(:)
         type(orbital_groups_t), intent(out) :: groups
-        integer :: a, starts(size(orbs) + 1), atoms(size(orbs))
+        integer                             :: a, starts(size(orbs) + 1), atoms(size(orbs))
         do a = 1, size(orbs)
             starts(a) = a
             atoms(a) = a
@@ -96,16 +96,16 @@ contains
     end subroutine atom_partition
 
     ! ------------------------------------------------------------------
-    ! 8. Offsets and groups for orbs = [2,1,3]
+    ! 8. Offsets e grupos para orbs = [2,1,3]
     ! ------------------------------------------------------------------
     subroutine test_offsets_and_groups()
-        integer :: offset(4)
+        integer                :: offset(4)
         type(orbital_groups_t) :: groups
 
         call atom_orbital_offsets([2, 1, 3], offset)
         call check(all(offset == [0, 2, 3, 6]), "offsets for orbs=[2,1,3]")
 
-        ! g1 = {atom 3, atom 1} (order kept), g2 = {atom 2}, g3 = {} , g4 = {1,2,3}
+        ! g1 = {atom 3, atom 1} (ordem mantida), g2 = {atom 2}, g3 = {} , g4 = {1,2,3}
         call build_orbital_groups([2, 1, 3], 4, [1, 3, 4, 4, 7], [3, 1, 2, 1, 2, 3], groups)
         call check(groups%ngroup == 4, "groups: ngroup")
         call check(groups%norb == 6, "groups: norb")
@@ -116,16 +116,16 @@ contains
     end subroutine test_offsets_and_groups
 
     ! ------------------------------------------------------------------
-    ! 1. S = I: W = Σ |C|^2 over the group
+    ! 1. S = I: W = Σ |C|^2 sobre o grupo
     ! ------------------------------------------------------------------
     subroutine test_identity_overlap()
-        integer, parameter :: n = 7
-        integer, parameter :: orbs(4) = [2, 1, 3, 1]
-        complex(dp) :: H(n, n), S(n, n), C(n, n), SC(n, n)
-        real(dp) :: E(n), W(n, 4), expect
+        integer, parameter     :: n = 7
+        integer, parameter     :: orbs(4) = [2, 1, 3, 1]
+        complex(dp)            :: H(n, n), S(n, n), C(n, n), SC(n, n)
+        real(dp)               :: E(n), W(n, 4), expect
         type(orbital_groups_t) :: groups
-        integer :: ierr, i, b, g
-        logical :: ok
+        integer                :: ierr, i, b, g
+        logical                :: ok
 
         call random_hermitian(n, H)
         S = (0.0_dp, 0.0_dp)
@@ -152,15 +152,15 @@ contains
     end subroutine test_identity_overlap
 
     ! ------------------------------------------------------------------
-    ! 2. S HPD: orthonormality, residual, total = 1, partition sums to 1
+    ! 2. S HPD: ortonormalidade, resíduo, total = 1, partição soma 1
     ! ------------------------------------------------------------------
     subroutine test_hpd_overlap()
-        integer, parameter :: n = 7
-        integer, parameter :: orbs(4) = [2, 1, 3, 1]
-        complex(dp) :: H(n, n), S(n, n), C(n, n), SC(n, n), R(n, n), M(n, n)
-        real(dp) :: E(n), Wp(n, 4), Wt(n, 1), dev
+        integer, parameter     :: n = 7
+        integer, parameter     :: orbs(4) = [2, 1, 3, 1]
+        complex(dp)            :: H(n, n), S(n, n), C(n, n), SC(n, n), R(n, n), M(n, n)
+        real(dp)               :: E(n), Wp(n, 4), Wt(n, 1), dev
         type(orbital_groups_t) :: part, tot
-        integer :: ierr, i, b
+        integer                :: ierr, i, b
 
         call random_hermitian(n, H)
         call random_hpd(n, S)
@@ -193,22 +193,22 @@ contains
     end subroutine test_hpd_overlap
 
     ! ------------------------------------------------------------------
-    ! 3. Overlapping groups: no error, additive over individual atoms
+    ! 3. Grupos sobrepostos: sem erro, aditivo sobre átomos individuais
     ! ------------------------------------------------------------------
     subroutine test_overlapping_groups()
-        integer, parameter :: n = 7
-        integer, parameter :: orbs(4) = [2, 1, 3, 1]
-        complex(dp) :: H(n, n), S(n, n), C(n, n), SC(n, n)
-        real(dp) :: E(n), Wo(n, 2), Wa(n, 4)
+        integer, parameter     :: n = 7
+        integer, parameter     :: orbs(4) = [2, 1, 3, 1]
+        complex(dp)            :: H(n, n), S(n, n), C(n, n), SC(n, n)
+        real(dp)               :: E(n), Wo(n, 2), Wa(n, 4)
         type(orbital_groups_t) :: ov, part
-        integer :: ierr
+        integer                :: ierr
 
         call random_hermitian(n, H)
         call random_hpd(n, S)
         call generalized_eigensolve(n, H, S, E, C, ierr)
         call overlap_times_vectors(n, n, S, C, SC)
 
-        ! g1 = {1,2,3}, g2 = {3,4}: atom 3 in both
+        ! g1 = {1,2,3}, g2 = {3,4}: átomo 3 em ambos
         call build_orbital_groups(orbs, 2, [1, 4, 6], [1, 2, 3, 3, 4], ov)
         call check(ov%ngroup == 2 .and. size(ov%orb) == 6 + 4, "overlap: groups built")
         call mulliken_weights(n, n, C, SC, ov, Wo)
@@ -224,30 +224,30 @@ contains
     end subroutine test_overlapping_groups
 
     ! ------------------------------------------------------------------
-    ! 4. Negative Mulliken population, preserved (no clipping)
+    ! 4. População de Mulliken negativa, preservada (sem recorte)
     ! ------------------------------------------------------------------
-    !> Two atoms with one real orbital each:
+    !> Dois átomos com um orbital real cada:
     !>   S = [[1, s],[s, 1]], s = 0.8;  H = [[e1, t],[t, e2]], e1 = 0, e2 = 1, t = 0.2.
-    !> Generalized secular equation det(H - E S) = 0:
+    !> Equação secular generalizada det(H - E S) = 0:
     !>   (1-s^2) E^2 - (e1 + e2 - 2 t s) E + (e1 e2 - t^2) = 0
     !>   0.36 E^2 - 0.68 E - 0.04 = 0  ->  E = (0.68 ∓ sqrt(0.68^2 + 4*0.36*0.04)) / 0.72
     !>   E_1 = -0.0570975765..., E_2 = 1.9459864654...
-    !> Eigenvector from row 1: (e1 - E) c1 + (t - s E) c2 = 0, normalised with
+    !> Autovetor a partir da linha 1: (e1 - E) c1 + (t - s E) c2 = 0, normalizado com
     !>   c1^2 + c2^2 + 2 s c1 c2 = 1.
-    !> Mulliken population on atom 1: w_1 = |c1|^2 + s Re(c1* c2); on atom 2:
+    !> População de Mulliken no átomo 1: w_1 = |c1|^2 + s Re(c1* c2); no átomo 2:
     !>   w_2 = |c2|^2 + s Re(c1* c2), with w_1 + w_2 = 1.
-    !> For band 1 (bonding-like, mostly atom 1): c ∝ (-1.2108, 0.2814) (opposite signs,
-    !>   |c2| small) -> w_2 = 0.0792 - 0.2725 = -0.19337524528153...
-    !> For band 2: c ∝ (1.1454, -1.6427) -> w_1 = 1.3119 - 1.5052 = -0.19337524528153...
-    !> Both bands carry one negative population; the value is kept as-is.
+    !> Para a banda 1 (tipo ligante, majoritariamente átomo 1): c ∝ (-1.2108, 0.2814) (sinais opostos,
+    !>   |c2| pequeno) -> w_2 = 0.0792 - 0.2725 = -0.19337524528153...
+    !> Para a banda 2: c ∝ (1.1454, -1.6427) -> w_1 = 1.3119 - 1.5052 = -0.19337524528153...
+    !> Ambas as bandas carregam uma população negativa; o valor é mantido como está.
     subroutine test_negative_mulliken()
-        integer, parameter :: n = 2
-        real(dp), parameter :: sov = 0.8_dp, e1 = 0.0_dp, e2 = 1.0_dp, t = 0.2_dp
-        real(dp), parameter :: wneg_ref = -0.1933752452815365_dp
-        complex(dp) :: H(n, n), S(n, n), C(n, n), SC(n, n)
-        real(dp) :: E(n), W(n, 2), w_an(n, 2), Eref(2), disc
+        integer, parameter     :: n = 2
+        real(dp), parameter    :: sov = 0.8_dp, e1 = 0.0_dp, e2 = 1.0_dp, t = 0.2_dp
+        real(dp), parameter    :: wneg_ref = -0.1933752452815365_dp
+        complex(dp)            :: H(n, n), S(n, n), C(n, n), SC(n, n)
+        real(dp)               :: E(n), W(n, 2), w_an(n, 2), Eref(2), disc
         type(orbital_groups_t) :: part
-        integer :: ierr, b
+        integer                :: ierr, b
 
         H = reshape([cmplx(e1, 0, dp), cmplx(t, 0, dp), cmplx(t, 0, dp), cmplx(e2, 0, dp)], [2, 2])
         S = reshape([cmplx(1, 0, dp), cmplx(sov, 0, dp), cmplx(sov, 0, dp), cmplx(1, 0, dp)], [2, 2])
@@ -276,13 +276,13 @@ contains
     end subroutine test_negative_mulliken
 
     ! ------------------------------------------------------------------
-    ! 5. Edge localization on a 1D chain with non-orthogonal S
+    ! 5. Localização de borda em uma cadeia 1D com S não ortogonal
     ! ------------------------------------------------------------------
     subroutine test_edge_localization()
-        integer, parameter :: n = 12
-        complex(dp) :: H(n, n), S(n, n), C(n, n), SC(n, n)
-        real(dp) :: E(n), W(n, 2)
-        integer :: orbs(n), i, ierr, atoms(n)
+        integer, parameter     :: n = 12
+        complex(dp)            :: H(n, n), S(n, n), C(n, n), SC(n, n)
+        real(dp)               :: E(n), W(n, 2)
+        integer                :: orbs(n), i, ierr, atoms(n)
         type(orbital_groups_t) :: groups
 
         H = (0.0_dp, 0.0_dp)
@@ -302,7 +302,7 @@ contains
         call overlap_times_vectors(n, n, S, C, SC)
 
         orbs = 1
-        ! g1 = edges {1,2,11,12}, g2 = centre {3..10}
+        ! g1 = edges {1,2,11,12}, g2 = centro {3..10}
         atoms(1:4) = [1, 2, 11, 12]
         atoms(5:12) = [(i, i = 3, 10)]
         call build_orbital_groups(orbs, 2, [1, 5, 13], atoms, groups)
@@ -317,17 +317,17 @@ contains
     end subroutine test_edge_localization
 
     ! ------------------------------------------------------------------
-    ! 6. Exact degeneracy: subspace weights invariant under unitary rotation
+    ! 6. Degenerescência exata: pesos do subespaço invariantes sob rotação unitária
     ! ------------------------------------------------------------------
     subroutine test_degeneracy()
-        integer, parameter :: m = 4, n = 2 * m
-        complex(dp) :: H0(m, m), S0(m, m), C0(m, m), SC0(m, m)
-        complex(dp) :: H(n, n), S(n, n), C(n, n), SC(n, n), U(2, 2)
-        complex(dp) :: Cr(n, 2), SCr(n, 2)
-        real(dp) :: E0(m), E(n), W(n, 2), W0(m, 1), Wr(2, 2), th, ph
+        integer, parameter     :: m = 4, n = 2 * m
+        complex(dp)            :: H0(m, m), S0(m, m), C0(m, m), SC0(m, m)
+        complex(dp)            :: H(n, n), S(n, n), C(n, n), SC(n, n), U(2, 2)
+        complex(dp)            :: Cr(n, 2), SCr(n, 2)
+        real(dp)               :: E0(m), E(n), W(n, 2), W0(m, 1), Wr(2, 2), th, ph
         type(orbital_groups_t) :: groups, g0
-        integer :: ierr, k, i, orbs(n)
-        logical :: okdeg, okrot, oktrace
+        integer                :: ierr, k, i, orbs(n)
+        logical                :: okdeg, okrot, oktrace
 
         call random_hermitian(m, H0)
         call random_hpd(m, S0)
@@ -341,14 +341,14 @@ contains
         call overlap_times_vectors(n, n, S, C, SC)
         call overlap_times_vectors(m, m, S0, C0, SC0)
 
-        ! g1 = orbitals {1,3} of block 1 plus {2} of block 2; g2 = block-1 orbitals {1,3}
+        ! g1 = orbitais {1,3} do bloco 1 mais {2} do bloco 2; g2 = orbitais {1,3} do bloco 1
         orbs = 1
         call build_orbital_groups(orbs, 2, [1, 4, 6], [1, 3, m + 2, 1, 3], groups)
         call mulliken_weights(n, n, C, SC, groups, W)
         call build_orbital_groups(orbs(1:m), 1, [1, 3], [1, 3], g0)
         call mulliken_weights(m, m, C0, SC0, g0, W0)
 
-        ! Arbitrary 2x2 unitary
+        ! Unitária 2x2 arbitrária
         th = 0.7_dp;  ph = 1.3_dp
         U(1, 1) = cos(th);                         U(1, 2) = -sin(th) * exp(cmplx(0, -ph, dp))
         U(2, 1) = sin(th) * exp(cmplx(0, ph, dp));  U(2, 2) = cos(th)
@@ -363,9 +363,9 @@ contains
             call mulliken_weights(n, 2, Cr, SCr, groups, Wr)
             okrot = okrot .and. abs(sum(Wr(:, 1)) - sum(W(i:i+1, 1))) < 1.0e-10_dp &
                           .and. abs(sum(Wr(:, 2)) - sum(W(i:i+1, 2))) < 1.0e-10_dp
-            ! Trace-based expectation: the degenerate pair spans one copy of the
-            ! block eigenvector in each block, so the block-1 group {1,3} carries
-            ! exactly the single-block weight W0(k).
+            ! Expectativa baseada no traço: o par degenerado abrange uma cópia do
+            ! autovetor de bloco em cada bloco, de modo que o grupo {1,3} do bloco 1 carrega
+            ! exatamente o peso de bloco único W0(k).
             oktrace = oktrace .and. abs(sum(W(i:i+1, 2)) - W0(k, 1)) < 1.0e-10_dp
         end do
         call check(okdeg, "degen: eigenvalues doubly degenerate and equal to block spectrum")
@@ -374,13 +374,13 @@ contains
     end subroutine test_degeneracy
 
     ! ------------------------------------------------------------------
-    ! 7. Inputs untouched; non-PD S returns ierr /= 0 without stopping
+    ! 7. Entradas intocadas; S não PD retorna ierr /= 0 sem parar
     ! ------------------------------------------------------------------
     subroutine test_solver_inputs_and_errors()
         integer, parameter :: n = 5
-        complex(dp) :: H(n, n), S(n, n), Hc(n, n), Sc(n, n), C(n, n)
-        real(dp) :: E(n)
-        integer :: ierr
+        complex(dp)        :: H(n, n), S(n, n), Hc(n, n), Sc(n, n), C(n, n)
+        real(dp)           :: E(n)
+        integer            :: ierr
 
         call random_hermitian(n, H)
         call random_hpd(n, S)
@@ -390,7 +390,7 @@ contains
         call check(all(H == Hc), "inputs: H unchanged")
         call check(all(S == Sc), "inputs: S unchanged")
 
-        ! Non-PD S: identity with one negative diagonal entry
+        ! S não PD: identidade com uma entrada diagonal negativa
         S = (0.0_dp, 0.0_dp)
         S(1, 1) = 1.0_dp;  S(2, 2) = 1.0_dp;  S(3, 3) = -0.5_dp;  S(4, 4) = 1.0_dp;  S(5, 5) = 1.0_dp
         Sc = S
@@ -401,14 +401,14 @@ contains
     end subroutine test_solver_inputs_and_errors
 
     ! ------------------------------------------------------------------
-    ! L1. Löwdin with S = I equals |C|^2 (= Mulliken)
+    ! L1. Löwdin com S = I é igual a |C|^2 (= Mulliken)
     ! ------------------------------------------------------------------
     subroutine test_lowdin_identity()
-        integer, parameter :: n = 5
-        complex(dp) :: H(n, n), S(n, n), C(n, n), SC(n, n)
-        real(dp) :: E(n), WL(n, n), WM(n, n), smin
+        integer, parameter     :: n = 5
+        complex(dp)            :: H(n, n), S(n, n), C(n, n), SC(n, n)
+        real(dp)               :: E(n), WL(n, n), WM(n, n), smin
         type(orbital_groups_t) :: part
-        integer :: ierr, i
+        integer                :: ierr, i
 
         call random_hermitian(n, H)
         S = (0.0_dp, 0.0_dp)
@@ -428,15 +428,15 @@ contains
     end subroutine test_lowdin_identity
 
     ! ------------------------------------------------------------------
-    ! L2. HPD S: non-negative, total = 1, partition sums to 1; S, C untouched
+    ! L2. S HPD: não negativo, total = 1, partição soma 1; S, C intocadas
     ! ------------------------------------------------------------------
     subroutine test_lowdin_hpd()
-        integer, parameter :: n = 7
-        integer, parameter :: orbs(3) = [2, 1, 4]
-        complex(dp) :: H(n, n), S(n, n), C(n, n), Sc(n, n), Cc(n, n)
-        real(dp) :: E(n), W(n, 3), Wt(n, 1), smin
+        integer, parameter     :: n = 7
+        integer, parameter     :: orbs(3) = [2, 1, 4]
+        complex(dp)            :: H(n, n), S(n, n), C(n, n), Sc(n, n), Cc(n, n)
+        real(dp)               :: E(n), W(n, 3), Wt(n, 1), smin
         type(orbital_groups_t) :: part, tot
-        integer :: ierr
+        integer                :: ierr
 
         call random_hermitian(n, H)
         call random_hpd(n, S)
@@ -456,15 +456,15 @@ contains
     end subroutine test_lowdin_hpd
 
     ! ------------------------------------------------------------------
-    ! L3. The 2-orbital negative-Mulliken case: Löwdin is non-negative
+    ! L3. O caso de 2 orbitais com Mulliken negativo: Löwdin é não negativo
     ! ------------------------------------------------------------------
     subroutine test_lowdin_negative_mulliken_case()
-        integer, parameter :: n = 2
-        real(dp), parameter :: sov = 0.8_dp, e1 = 0.0_dp, e2 = 1.0_dp, t = 0.2_dp
-        complex(dp) :: H(n, n), S(n, n), C(n, n)
-        real(dp) :: E(n), W(n, 2), smin
+        integer, parameter     :: n = 2
+        real(dp), parameter    :: sov = 0.8_dp, e1 = 0.0_dp, e2 = 1.0_dp, t = 0.2_dp
+        complex(dp)            :: H(n, n), S(n, n), C(n, n)
+        real(dp)               :: E(n), W(n, 2), smin
         type(orbital_groups_t) :: part
-        integer :: ierr
+        integer                :: ierr
 
         H = reshape([cmplx(e1, 0, dp), cmplx(t, 0, dp), cmplx(t, 0, dp), cmplx(e2, 0, dp)], [2, 2])
         S = reshape([cmplx(1, 0, dp), cmplx(sov, 0, dp), cmplx(sov, 0, dp), cmplx(1, 0, dp)], [2, 2])
@@ -478,19 +478,19 @@ contains
     end subroutine test_lowdin_negative_mulliken_case
 
     ! ------------------------------------------------------------------
-    ! L4. Near-singular / indefinite S: ierr = 1, smin <= tol, S unchanged
+    ! L4. S quase singular / indefinida: ierr = 1, smin <= tol, S inalterada
     ! ------------------------------------------------------------------
     subroutine test_lowdin_not_pd()
-        integer, parameter :: n = 2
-        real(dp), parameter :: tol = 1.0e-10_dp
-        complex(dp) :: S(n, n), Sc(n, n), C(n, n)
-        real(dp) :: W(n, 2), smin
+        integer, parameter     :: n = 2
+        real(dp), parameter    :: tol = 1.0e-10_dp
+        complex(dp)            :: S(n, n), Sc(n, n), C(n, n)
+        real(dp)               :: W(n, 2), smin
         type(orbital_groups_t) :: part
-        integer :: ierr
+        integer                :: ierr
 
         call atom_partition([1, 1], part)
         C = reshape([cmplx(1, 0, dp), cmplx(0, 0, dp), cmplx(0, 0, dp), cmplx(1, 0, dp)], [2, 2])
-        ! eigenvalues 2 + 1e-14 and 1e-14 (<= tol)
+        ! autovalores 2 + 1e-14 e 1e-14 (<= tol)
         S = reshape([cmplx(1 + 1.0e-14_dp, 0, dp), cmplx(1, 0, dp), &
                      cmplx(1, 0, dp), cmplx(1 + 1.0e-14_dp, 0, dp)], [2, 2])
         Sc = S
@@ -498,7 +498,7 @@ contains
         call check(ierr == 1, "lowdin near-singular S: ierr = 1")
         call check(smin <= tol, "lowdin near-singular S: smin <= tol_s_min")
         call check(all(S == Sc), "lowdin near-singular S: S unchanged")
-        ! indefinite: eigenvalues 1 +/- 1.5
+        ! indefinida: autovalores 1 +/- 1.5
         S = reshape([cmplx(1, 0, dp), cmplx(1.5_dp, 0, dp), cmplx(1.5_dp, 0, dp), cmplx(1, 0, dp)], [2, 2])
         call lowdin_weights(n, n, S, C, part, W, tol, smin, ierr)
         call check(ierr == 1, "lowdin indefinite S: ierr = 1")
@@ -506,15 +506,15 @@ contains
     end subroutine test_lowdin_not_pd
 
     ! ------------------------------------------------------------------
-    ! L5. Degenerate pair: summed Löwdin weights invariant under rotation
+    ! L5. Par degenerado: pesos de Löwdin somados invariantes sob rotação
     ! ------------------------------------------------------------------
     subroutine test_lowdin_degeneracy()
-        integer, parameter :: m = 4, n = 2 * m
-        complex(dp) :: H0(m, m), S0(m, m), H(n, n), S(n, n), C(n, n), U(2, 2), Cr(n, 2)
-        real(dp) :: E(n), W(n, 2), Wr(2, 2), smin, th, ph
+        integer, parameter     :: m = 4, n = 2 * m
+        complex(dp)            :: H0(m, m), S0(m, m), H(n, n), S(n, n), C(n, n), U(2, 2), Cr(n, 2)
+        real(dp)               :: E(n), W(n, 2), Wr(2, 2), smin, th, ph
         type(orbital_groups_t) :: groups
-        integer :: ierr, k, i, orbs(n)
-        logical :: okdeg, okrot
+        integer                :: ierr, k, i, orbs(n)
+        logical                :: okdeg, okrot
 
         call random_hermitian(m, H0)
         call random_hpd(m, S0)

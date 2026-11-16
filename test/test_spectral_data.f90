@@ -1,27 +1,27 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Tests for module spectral_data (contracts.md §5).
+!> Testes do módulo spectral_data (contracts.md §5).
 program test_spectral_data
     use, intrinsic :: iso_fortran_env, only: int32, int64, real64
-    use types, only: dp
-    use testing, only: check, test_summary
+    use types,         only: dp
+    use testing,       only: check, test_summary
     use spectral_data, only: spectral_data_t, write_spectral_file, read_spectral_file, &
-        write_spectral_text, find_region, SPIN_NONE, SPIN_COLLINEAR, SPIN_NONCOLLINEAR, &
-        METHOD_MULLIKEN, METHOD_LOWDIN, EREF_FERMI, EREF_ABSOLUTE
+                             write_spectral_text, find_region, SPIN_NONE, SPIN_COLLINEAR, SPIN_NONCOLLINEAR, &
+                             METHOD_MULLIKEN, METHOD_LOWDIN, EREF_FERMI, EREF_ABSOLUTE
     implicit none
 
     character(len=*), parameter :: F1 = "build/test_spectral_tmp.bin"
     character(len=*), parameter :: F2 = "build/test_spectral_tmp2.bin"
     character(len=*), parameter :: FT = "build/test_spectral_tmp.txt"
 
-    type(spectral_data_t) :: a, b
-    integer :: ierr, i, n, sizes(4)
-    integer(int64) :: fsize
-    character(len=512) :: errmsg
+    type(spectral_data_t)         :: a, b
+    integer                       :: ierr, i, n, sizes(4)
+    integer(int64)                :: fsize
+    character(len=512)            :: errmsg
     character(len=:), allocatable :: buf
 
-    ! ---- 1. round trip, collinear ----------------------------------------
+    ! ---- 1. ida e volta, colinear ----------------------------------------
     call make_sd(a, nspin=2, spin_mode=SPIN_COLLINEAR, nvertex=2)
     call write_spectral_file(F1, a, ierr, errmsg)
     call check(ierr == 0, "write collinear: " // trim(errmsg))
@@ -29,7 +29,7 @@ program test_spectral_data
     call check(ierr == 0, "read collinear: " // trim(errmsg))
     if (ierr == 0) call check(sd_equal(a, b), "round trip collinear identical")
 
-    ! ---- 2. round trip, noncollinear, nvertex = 0 ------------------------
+    ! ---- 2. ida e volta, não colinear, nvertex = 0 ------------------------
     call make_sd(a, nspin=1, spin_mode=SPIN_NONCOLLINEAR, nvertex=0)
     call write_spectral_file(F2, a, ierr, errmsg)
     call check(ierr == 0, "write noncollinear: " // trim(errmsg))
@@ -37,7 +37,7 @@ program test_spectral_data
     call check(ierr == 0, "read noncollinear: " // trim(errmsg))
     if (ierr == 0) call check(sd_equal(a, b), "round trip noncollinear identical")
 
-    ! ---- 3. truncated files ----------------------------------------------
+    ! ---- 3. arquivos truncados ----------------------------------------------
     call make_sd(a, nspin=2, spin_mode=SPIN_COLLINEAR, nvertex=2)
     call write_spectral_file(F1, a, ierr, errmsg)
     call slurp(F1, buf)
@@ -48,14 +48,14 @@ program test_spectral_data
         call read_spectral_file(F2, b, ierr, errmsg)
         call check(ierr /= 0, "truncated file rejected")
     end do
-    ! Also a few other cut points (every section boundary region)
+    ! Também alguns outros pontos de corte (região de fronteira de cada seção)
     do i = 8, n - 1, 37
         call dump(F2, buf(1:i))
         call read_spectral_file(F2, b, ierr, errmsg)
         call check(ierr /= 0, "truncated file rejected (scan)")
     end do
 
-    ! ---- 4. corruptions --------------------------------------------------
+    ! ---- 4. corrupções --------------------------------------------------
     call dump(F2, buf)
     call patch_bytes(F2, 1_int64, "XXXXXXXX")
     call read_spectral_file(F2, b, ierr, errmsg)
@@ -67,7 +67,7 @@ program test_spectral_data
     call check(ierr /= 0, "wrong major version rejected")
 
     call dump(F2, buf)
-    call patch_int32(F2, 13_int64, 1_int32)   ! minor version: accepted
+    call patch_int32(F2, 13_int64, 1_int32)   ! versão menor: aceita
     call read_spectral_file(F2, b, ierr, errmsg)
     call check(ierr == 0, "other minor version accepted: " // trim(errmsg))
     if (ierr == 0) call check(b%version_minor == 1, "minor version read back")
@@ -77,9 +77,9 @@ program test_spectral_data
     call check(ierr /= 0, "trailing byte rejected")
     call check(index(errmsg, "trailing") > 0, "trailing byte message")
 
-    ! ---- 5. one extension block -----------------------------------------
-    ! Replace final [n_ext=0][trailer] (12 bytes) by
-    ! [n_ext=1][tag char16][nbytes=8 int64][8 bytes payload][trailer].
+    ! ---- 5. um bloco de extensão -----------------------------------------
+    ! Substitui o final [n_ext=0][trailer] (12 bytes) por
+    ! [n_ext=1][tag char16][nbytes=8 int64][8 bytes de carga][trailer].
     call dump(F2, buf(1:n - 12))
     fsize = int(n - 12, int64)
     call append_ext(F2, fsize + 1)
@@ -87,7 +87,7 @@ program test_spectral_data
     call check(ierr == 0, "extension block accepted: " // trim(errmsg))
     if (ierr == 0) call check(sd_equal(a, b), "data identical with extension block")
 
-    ! ---- 6. writer rejects inconsistent sd --------------------------------
+    ! ---- 6. o escritor rejeita sd inconsistente --------------------------------
     call make_sd(a, nspin=2, spin_mode=SPIN_NONE, nvertex=2)
     call write_spectral_file(F2, a, ierr, errmsg)
     call check(ierr /= 0, "writer rejects nspin=2 with spin_mode none")
@@ -109,7 +109,7 @@ program test_spectral_data
     call write_spectral_file(F2, a, ierr, errmsg)
     call check(ierr /= 0, "writer rejects weight shape mismatch")
 
-    ! ---- 7. find_region and text export -----------------------------------
+    ! ---- 7. find_region e exportação em texto -----------------------------------
     call make_sd(a, nspin=2, spin_mode=SPIN_COLLINEAR, nvertex=2)
     call check(find_region(a, 'total') == 1, "find_region total")
     call check(find_region(a, 'bottom') == 3, "find_region bottom")
@@ -120,7 +120,7 @@ program test_spectral_data
     call check(ierr == 0, "write text: " // trim(errmsg))
     call check(count_data_lines(FT) == a%nspin * a%nk * a%nband, "text data line count")
 
-    ! ---- cleanup ------------------------------------------------------------
+    ! ---- limpeza ------------------------------------------------------------
     call remove_file(F1)
     call remove_file(F2)
     call remove_file(FT)
@@ -131,8 +131,8 @@ contains
 
     subroutine make_sd(sd, nspin, spin_mode, nvertex)
         type(spectral_data_t), intent(out) :: sd
-        integer, intent(in) :: nspin, spin_mode, nvertex
-        integer :: ik, ib, ir, is
+        integer, intent(in)                :: nspin, spin_mode, nvertex
+        integer                            :: ik, ib, ir, is
 
         sd%nk = 5; sd%nband = 3; sd%nspin = nspin; sd%nregion = 3; sd%nvertex = nvertex
         sd%spin_mode = spin_mode
@@ -204,10 +204,10 @@ contains
     end function sd_equal
 
     subroutine slurp(fname, s)
-        character(len=*), intent(in) :: fname
+        character(len=*), intent(in)               :: fname
         character(len=:), allocatable, intent(out) :: s
-        integer :: u
-        integer(int64) :: sz
+        integer                                    :: u
+        integer(int64)                             :: sz
         inquire(file=fname, size=sz)
         allocate(character(len=sz) :: s)
         open(newunit=u, file=fname, access='stream', form='unformatted', status='old', action='read')
@@ -217,7 +217,7 @@ contains
 
     subroutine dump(fname, s)
         character(len=*), intent(in) :: fname, s
-        integer :: u
+        integer                      :: u
         open(newunit=u, file=fname, access='stream', form='unformatted', status='replace', &
              action='write')
         write(u) s
@@ -227,7 +227,7 @@ contains
     subroutine patch_bytes(fname, pos, s)
         character(len=*), intent(in) :: fname, s
         integer(int64),   intent(in) :: pos
-        integer :: u
+        integer                      :: u
         open(newunit=u, file=fname, access='stream', form='unformatted', status='old', &
              action='readwrite')
         write(u, pos=pos) s
@@ -238,7 +238,7 @@ contains
         character(len=*), intent(in) :: fname
         integer(int64),   intent(in) :: pos
         integer(int32),   intent(in) :: v
-        integer :: u
+        integer                      :: u
         open(newunit=u, file=fname, access='stream', form='unformatted', status='old', &
              action='readwrite')
         write(u, pos=pos) v
@@ -248,8 +248,8 @@ contains
     subroutine append_ext(fname, pos)
         character(len=*), intent(in) :: fname
         integer(int64),   intent(in) :: pos
-        integer :: u
-        character(len=16) :: tag
+        integer                      :: u
+        character(len=16)            :: tag
         tag = 'TESTEXT'
         open(newunit=u, file=fname, access='stream', form='unformatted', status='old', &
              action='readwrite')
@@ -259,8 +259,8 @@ contains
 
     integer function count_data_lines(fname) result(nl)
         character(len=*), intent(in) :: fname
-        integer :: u, ios
-        character(len=4096) :: line
+        integer                      :: u, ios
+        character(len=4096)          :: line
         nl = 0
         open(newunit=u, file=fname, status='old', action='read')
         do
@@ -275,8 +275,8 @@ contains
 
     subroutine remove_file(fname)
         character(len=*), intent(in) :: fname
-        integer :: u, ios
-        logical :: ex
+        integer                      :: u, ios
+        logical                      :: ex
         inquire(file=fname, exist=ex)
         if (.not. ex) return
         open(newunit=u, file=fname, status='old', iostat=ios)
