@@ -105,8 +105,10 @@ contains
         NOrbsTotal   = 2 * NOrbsSpatial
         ncell        = size(Hin, 3)
 
-        if (size(Hin, 1) /= NOrbsTotal) then
-            print '(A)', "[openmx_convert] Erro: dimensao de Hin incompativel com 2*NOrbsSpatial " // &
+        if (size(Hin, 1) /= NOrbsTotal .or. size(Hin, 2) /= NOrbsTotal .or. &
+            size(Sin, 1) /= NOrbsTotal .or. size(Sin, 2) /= NOrbsTotal .or. &
+            size(Sin, 3) /= ncell) then
+            print '(A)', "[openmx_convert] Erro: dimensao de Hin/Sin incompativel com 2*NOrbsSpatial " // &
                           "em ReorderSpinorAtomMajor."
             stop 1
         end if
