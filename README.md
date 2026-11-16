@@ -304,7 +304,7 @@ The program automatically classifies `M`:
 - **Diagonal `M`** uses a specialized closed-form routine (Eqs. 33-38 of the reference paper), cost `O(m)` per primitive-cell orbital per k-point, where `m = |det(M)|`.
 - **General (nondiagonal) `M`** uses a direct group-projector formula (Eq. 14 of the reference paper, proven equivalent to the eigenvector-sum definition in Appendix A), cost `O(m^2)` per primitive-cell orbital per k-point. This is more expensive but requires no eigenvector construction or degenerate-subspace handling.
 
-A message is printed at startup indicating which routine was selected. `LatticeVectors` in the structure files must be given as rows (POSCAR/ASE/CIF convention, see below); the relation used internally is `A_rows = M @ a_rows`, consistent with `F_K = f_k . M` (Eq. 7 of the reference paper).
+A message is printed at startup indicating which routine was selected. `LatticeVectors` in the structure files must be given as rows (POSCAR/ASE/CIF convention, see below); the relation used internally is `A_rows = M @ a_rows`. Fractional positions then transform as `xi_PC = xi_SC . M` (row vector), while fractional k-points transform with the transpose, `F_K = M . f_k` (column vector, Eq. 7 of the reference paper). The two coincide only for symmetric `M`; `test_unfold_nonsym` (graphene-like √3×√3 R30° supercell, non-symmetric `M`) guards this.
 
 ### Structure-file format
 

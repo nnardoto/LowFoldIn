@@ -36,15 +36,19 @@
 !
 !      onde a soma em n percorre os p "orbitais primitivos" distintos da PC.
 !
-!   4. O ponto K da SC ao qual um dado k da PC é mapeado segue da Eq. (7),
-!      que para M diagonal se reduz a FK_i = mod(fk_i * m_i, 1).
+!   4. O ponto K da SC ao qual um dado k da PC é mapeado segue da Eq. (7).
+!      Com a convenção deste código (vetores de rede como LINHAS,
+!      A_i = sum_j M_ij a_j), as coordenadas fracionárias se transformam de
+!      formas DIFERENTES no espaço real e no recíproco:
+!         posições  (covariantes):     xi_PC = xi_SC . M   (vetor-linha)
+!         pontos k  (contravariantes): F_K   = M . f_k     (vetor-coluna)
+!      pois F_K,i = K.A_i/2pi = sum_j M_ij f_j. Para M diagonal ambas se
+!      reduzem a FK_i = mod(fk_i * m_i, 1).
 !
-! LIMITAÇÃO ATUAL: apenas matrizes de transformação M DIAGONAIS (M = diag(m1,
-! m2,m3)) são suportadas, i.e., supercelulas "ortogonais" obtidas por simples
-! multiplicação da PC ao longo de cada vetor de rede (o caso mais comum em
-! cálculos de defeitos, dopagem, ligas e fônons). O formalismo geral do artigo
-! (M não-diagonal, Eq. 30-32, com blocos D_i genericos) fica para trabalho
-! futuro.
+!   5. M diagonal usa a fórmula fechada das Eqs. (33)-(38); M não-diagonal usa
+!      o projetor de grupo sobre Z^3/M.Z^3 (Eq. 14). Nesse grupo, os vetores
+!      da SC em coordenadas inteiras da PC são as LINHAS de M, isto é, as
+!      colunas de M^T: rotulo ~ rotulo + M^T.s.
 !
 ! Nathanael N. Batista, Agosto de 2026
 ! ----------------------------------------------------------------------------------------------------------
@@ -423,14 +427,12 @@ contains
             xiSC = modulo(SCPos(:, i), 1.0_dp)                 ! defensivo: garante [0,1)
             ! xi_PC = xi_SC . M (vetor-LINHA) -- NÃO matmul(M,xiSC) (vetor-coluna).
             ! Esta base de código guarda LatticeVectors como LINHAS (convenção
-            ! POSCAR/ASE/CIF, ver ReadStructureFile) e usa coordenadas fracionárias
-            ! em vetor-linha em toda parte (é a MESMA convenção de ScK=matmul(fk,M)
-            ! [Eq. 7] alguns parágrafos abaixo, em RunUnfolding) -- diferente da
-            ! notação vetor-coluna do artigo (A=a.M column-vector), que só bate
-            ! com matmul(M,xiSC) se a base de vetores de rede for tratada como
-            ! COLUNAS. Para M diagonal as duas formas coincidem (M=M^T), por isso
-            ! esse descasamento ficou latente até ser testado com M não-diagonal
-            ! e rede não-ortogonal de verdade.
+            ! POSCAR/ASE/CIF, ver ReadStructureFile): r = sum_i xiSC_i A_i =
+            ! sum_ij xiSC_i M_ij a_j. ATENÇÃO: pontos k se transformam com a
+            ! TRANSPOSTA (F_K = M . f_k, ver seção 5.1 de RunUnfolding), porque
+            ! coordenadas recíprocas são contravariantes. Para M simétrica as
+            ! duas formas coincidem, por isso a diferença só aparece com M
+            ! não-diagonal E não-simétrica (ex.: grafeno sqrt3 x sqrt3 R30).
             xiPC = matmul(xiSC, real(cfg%M, kind=dp))
 
             ! "Arredonda para a fronteira" quando xiPC(j) está a menos de
@@ -1013,7 +1015,7 @@ contains
             allocate(filled(nCells, nOrbitsPC), source=.false.)
             do orbit = 1, nOrbitsPC
                 do ic = 1, nCells
-                    rep_idx = FindCellIndex(Reps, OrbitMemberCell(:, ic, orbit), nCells, cfg%M, shift_s)
+                    rep_idx = FindCellIndex(Reps, OrbitMemberCell(:, ic, orbit), nCells, transpose(cfg%M), shift_s)
                     if (rep_idx < 0) then
                         print '(A)', "[Unfold Error] Rotulo de celula inconsistente entre orbitais-PC " // &
                                        "(M nao-diagonal) -- verifique o &ATOMMAP"
@@ -1033,7 +1035,7 @@ contains
 
             deallocate(filled)
 
-            call BuildGroupTable(cfg%M, Reps, nCells, DestIndex, WrapT)
+            call BuildGroupTable(transpose(cfg%M), Reps, nCells, DestIndex, WrapT)
         end if
 
         ! --------------------------------------------------------------
@@ -1087,13 +1089,15 @@ contains
 
             fk = cfg%PCPath%FullPath(:, ik)
 
-            ! 5.1 Ponto K da SC ao qual este k da PC é mapeado [Eq. (7): F_K = f_k . M]
+            ! 5.1 Ponto K da SC ao qual este k da PC é mapeado [Eq. (7)]. Com
+            !     A_i = sum_j M_ij a_j (linhas), F_K = M . f_k (vetor-COLUNA);
+            !     NÃO f_k . M, que só coincide quando M é simétrica.
             if (cfg%DiagonalM) then
                 do L = 1, 3
                     ScK(L) = modulo(fk(L) * real(cfg%MDiag(L), kind=dp), 1.0_dp)
                 end do
             else
-                ScK = modulo(matmul(fk, real(cfg%M, kind=dp)), 1.0_dp)
+                ScK = modulo(matmul(real(cfg%M, kind=dp), fk), 1.0_dp)
             end if
 
             ! 5.2 Monta H(K) e S(K) por transformada de Fourier do espaço real
@@ -1249,6 +1253,9 @@ contains
     !> inconsistente entre orbitais-PC".
     function FindCellIndex(Reps, target, nCells, M, shift) result(idx)
         integer, intent(in) :: nCells
+        !> M aqui é a matriz cujas COLUNAS são os vetores da SC em unidades
+        !> inteiras da PC, i.e. transpose(cfg%M) (os vetores da SC são as
+        !> LINHAS de cfg%M). O chamador passa transpose(cfg%M).
         integer, intent(in) :: Reps(3, nCells), target(3), M(3, 3)
         !> Opcional: s inteiro tal que target = Reps(:,idx) + M.s (0 se igualdade exata)
         integer,  intent(out), optional :: shift(3)
@@ -1306,14 +1313,13 @@ contains
                 do b = 1, nCells
                     ! diff = raw - Reps(b) é o vetor SC-latice (candidato) EXPRESSO
                     ! em coeficientes INTEIROS da base da PC (mesmas unidades de
-                    ! Reps). tvec = Minv . diff (vetor-COLUNA) dá os coeficientes
-                    ! inteiros s tais que diff = M . s -- validado empiricamente
-                    ! contra o exemplo Chain1D com M cisalhada-mas-fisicamente-
-                    ! equivalente (M(1,:)=4,1,0 em vez de 4,0,0, mesmo .hsio e
-                    ! ATOMMAP): a convenção vetor-linha (diff@Minv) usada em
-                    ! BuildAtomMapFromPositions/ScK NÃO se aplica aqui -- ver
-                    ! nota extensa no cabeçalho do módulo sobre a diferença entre
-                    ! as duas convenções.
+                    ! Reps). tvec = Minv . diff dá os coeficientes inteiros s tais
+                    ! que diff = M . s, onde o argumento M é transpose(cfg%M): suas
+                    ! COLUNAS são os vetores da SC em unidades da PC. (Com cfg%M
+                    ! sem transpor, o resultado só é correto para M simétrica --
+                    ! erro que a cadeia 1D cisalhada não detecta, pois y é
+                    ! desacoplado; o teste test_unfold_core com grafeno sqrt3
+                    ! detecta.)
                     tvec = matmul(Minv, real(raw - Reps(:, b), kind=dp))
                     if (all(abs(tvec - real(nint(tvec), kind=dp)) < 1.0e-6_dp)) then
                         DestIndex(a, c) = b
