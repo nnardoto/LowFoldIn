@@ -26,14 +26,13 @@
 !
 !       ! Matriz de transformacao PC->SC completa (Eq. 1), 3x3: escreva LINHA
 !       ! por LINHA (forma visual, uma atribuicao de secao por linha da
-!       ! matriz). O MOTOR atual so' aceita M DIAGONAL (SC "ortogonal"); M
-!       ! nao-diagonal e' rejeitado com um erro claro (suporte planejado
-!       ! para o futuro).
+!       ! matriz). M pode ser diagonal (rotina rapida especializada) ou
+!       ! NAO-diagonal (motor geral, mais caro; det(M) /= 0).
 !       M(1,:)      = 2, 0, 0
 !       M(2,:)      = 0, 2, 0
 !       M(3,:)      = 0, 0, 2
 !
-!       Broadening  = 0.010            ! eV, largura Lorentziana da funcao espectral A(k,E)
+!       Broadening  = 0.010            ! eV, FWHM Lorentziana da funcao espectral A(k,E)
 !       Emin        = -10.0
 !       Emax        =  10.0
 !       nE          = 400
