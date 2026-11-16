@@ -1,590 +1,190 @@
 # LowFoldIn
 
-**LowFoldIn** is a modern Fortran toolkit for post-processing electronic-structure calculations in localized atomic-orbital (LCAO) bases. Its current focus is the calculation of conventional band structures and the unfolding of supercell bands into a primitive-cell Brillouin zone.
+[![CI](https://github.com/nnardoto/LowFoldIn/actions/workflows/ci.yml/badge.svg)](https://github.com/nnardoto/LowFoldIn/actions/workflows/ci.yml)
+[![Licença: GPL v3+](https://img.shields.io/badge/licen%C3%A7a-GPL--3.0--or--later-blue.svg)](LICENSE)
+[![Wiki](https://img.shields.io/badge/docs-wiki%20em%20portugu%C3%AAs-2a62c9.svg)](https://github.com/nnardoto/LowFoldIn/wiki)
 
-The project includes a native OpenMX converter, so an OpenMX `.scfout` file can be transformed directly into the internal Hamiltonian and overlap format used by the band and unfolding solvers.
+**Pós-processamento de estrutura eletrônica em bases localizadas (LCAO), em Fortran moderno.**
 
-> **Project status:** research software under active development. The unfolding implementation supports both diagonal and general (non-diagonal) primitive-cell-to-supercell transformation matrices; the diagonal case uses a specialized O(m) closed-form routine, while the general case uses an O(m^2) group-projector formula (see "Transformation matrix M" below).
+Você rodou um cálculo DFT numa supercélula com defeito, liga ou interface, ou num slab, e agora precisa enxergar a física por trás dele. O LowFoldIn pega o Hamiltoniano `H(R)` e a sobreposição `S(R)` do seu cálculo e oferece:
 
-## Main features
+- 🔁 **Unfolding de bandas:** traz as bandas da supercélula de volta para a zona de Brillouin da célula primitiva, para comparar com o material puro ou com ARPES.
+- 🧭 **Análise espectral por região:** mostra em que parte do material (superfície de cima, de baixo, interior, uma camada, uma sub-rede…) cada estado vive, em mapas `A(k,E)` e em mapas `kx × ky` de energia constante.
+- 📈 **Estrutura de bandas convencional**, com o problema de autovalores generalizado `H(k)c = εS(k)c` para bases não ortogonais.
 
-- Conventional band-structure calculation from real-space Hamiltonian matrices `H(R)`.
-- Generalized eigenvalue problem for non-orthogonal bases using `H(k)c = E S(k)c`.
-- Band unfolding for LCAO bases with non-orthogonal orbitals.
-- Automatic atom mapping between primitive and supercells from atomic positions.
-- Optional manual atom mapping for testing and debugging.
-- Lorentzian spectral-function output `A(k,E)`.
-- OpenMP parallelization over k-points.
-- Per-k-point progress and elapsed-time reporting.
-- Native conversion of OpenMX 3.9/4.0 `.scfout` files.
-- Support for non-spin-polarized, collinear-spin and non-collinear/spinor OpenMX calculations.
+Os dados entram direto do **OpenMX** (`.scfout`), por um conversor nativo.
 
-## Scientific basis
+<p align="center">
+  <img src="docs/images/unfold_conceito_2x2.png" width="820" alt="Supercélula 2x2 de grafeno: bandas dobradas e resultado do unfolding">
+  <br><sub>Supercélula 2×2 de grafeno: as 8 bandas dobradas (esquerda) e o unfolding recuperando as bandas da célula primitiva (direita).</sub>
+</p>
 
-The unfolding implementation follows the formalism described in:
+---
 
-> J. Quan, N. Rybin, M. Scheffler and C. Carbogno,  
-> *Efficient band structure unfolding with atom-centered orbitals: General theory and application*,  
-> **Physical Review B 113**, 085112 (2026).  
-> DOI: https://doi.org/10.1103/7xym-7388
+## ✨ Destaques
 
-## Requirements
+- **Unfolding com qualquer supercélula:** a matriz `M` pode ser diagonal (rotina fechada, custo O(m)) ou geral, girada ou cisalhada (projetor de grupo, custo O(m²)). Por exemplo, √3×√3 R30°.
+- **Mapeamento automático de átomos** entre a célula primitiva e a supercélula, a partir das posições.
+- **Bases não ortogonais** de ponta a ponta, com ortogonalização de Löwdin e pesos de Mulliken ou Löwdin.
+- **Spin:** sem spin, colinear e não colinear (espinores).
+- **Separação entre cálculo e visualização:** o `spectral` diagonaliza uma única vez; o `specmap` refaz alargamentos, janelas de energia e combinações de regiões em segundos.
+- **Paralelismo OpenMP** sobre os pontos k, com resultados idênticos bit a bit para qualquer número de threads.
+- **Verificações embutidas** em cada execução: regra de soma do unfolding e normalização dos pesos.
+- **Testado:** 12 suítes de testes unitários, mais testes de linha de comando e dos exemplos, rodando no CI.
 
-- A Fortran compiler with Fortran 2023 support, such as recent `gfortran`.
-- [Fortran Package Manager (fpm)](https://fpm.fortran-lang.org/), version 0.13 or newer recommended.
-- BLAS.
-- LAPACK.
-- OpenMP support for parallel execution.
+<table>
+<tr>
+<td width="50%"><img src="docs/images/unfold_impureza.png" alt="Função espectral desdobrada com impureza"></td>
+<td width="50%"><img src="docs/images/grhbn_camadas.png" alt="Mapa grafeno menos hBN e gap em K"></td>
+</tr>
+<tr>
+<td><sub>Grafeno 3×3 com uma impureza: função espectral desdobrada, com gaps de hibridização e bandas-fantasma.</sub></td>
+<td><sub>Grafeno sobre hBN: mapa por camada (vermelho = grafeno, azul = hBN) e o gap de 68 meV aberto em K.</sub></td>
+</tr>
+</table>
 
-On Arch Linux, the basic dependencies can be installed with:
+<sub>Figuras geradas com modelos tight-binding sintéticos (não é DFT). As entradas para reproduzi-las estão na wiki, em [Modelos Sintéticos](https://github.com/nnardoto/LowFoldIn/wiki/Modelos-Sinteticos).</sub>
+
+---
+
+## 🚀 Começando
+
+### Requisitos
+
+- GNU Fortran **≥ 14** (o código usa `-std=f2023`)
+- [fpm](https://fpm.fortran-lang.org/) **≥ 0.13**
+- BLAS e LAPACK (OpenBLAS, Accelerate, MKL…)
+- OpenMP (opcional, recomendado) e gnuplot (opcional, para os gráficos)
 
 ```bash
+# Debian/Ubuntu
+sudo apt install gfortran-14 liblapack-dev libblas-dev
+# Arch Linux
 sudo pacman -S gcc-fortran blas lapack
+# macOS (Homebrew; LAPACK vem do Accelerate)
+brew install gcc fpm gnuplot
 ```
 
-Install `fpm` using your preferred package source or the instructions from the official fpm documentation.
+> O `pip install fpm` instala a versão 0.12, que é antiga demais. Use o binário oficial disponível nas [releases do fpm](https://github.com/fortran-lang/fpm/releases).
 
-## Building
-
-Clone the repository and enter its directory:
+### Compilar e testar
 
 ```bash
-git clone https://github.com/SEU-USUARIO/LowFoldIn.git
+git clone https://github.com/nnardoto/LowFoldIn.git
 cd LowFoldIn
+fpm build --profile release     # -O3 + OpenMP
+fpm test  --profile release     # suíte de testes
 ```
 
-Build the project:
+### Ver tudo funcionando em um minuto
 
 ```bash
-fpm build --profile release
+bash examples/surface_spectral/run_example.sh
 ```
 
-The `fpm.toml` file defines optimization, diagnostics and OpenMP flags through the `meus_flags` feature. Depending on the installed fpm version, it may be necessary to activate the feature explicitly or pass the compiler flags directly:
+Esse script roda o fluxo completo de análise de superfícies num slab sintético e gera os mapas em PNG/PDF.
 
-```bash
-fpm build --profile release --flag "-std=f2023 -O3 -Wall -Wextra -fopenmp"
-```
+---
 
-For runtime debugging, a useful alternative is:
+## 🧰 As ferramentas
 
-```bash
-fpm build --flag "-std=f2023 -O0 -g -Wall -Wextra -fcheck=all -fbacktrace -fopenmp"
-```
-
-## Executables
-
-The package builds the following command-line programs.
-
-| Executable | Purpose |
+| Programa | Para que serve |
 |---|---|
-| `LowFoldIn` | Conventional band-structure calculation. Reads its input from standard input. |
-| `openmx2hsio` | Converts an OpenMX `.scfout` file into the internal `.hsio` format. |
-| `unfold` | Unfolds a supercell band structure into the primitive-cell Brillouin zone. |
-| `atomselect` | Creates and validates named atomic regions (`regions.nml`); see [Surface spectral analysis](#análise-espectral-de-superfícies--surface-spectral-analysis). |
-| `spectral` | Band energies and per-region projection weights along a k-path or on a 2D k-grid (`.spectral.bin`). |
-| `specmap` | Broadened spectral maps A_P(k,E), constant-energy kx × ky maps and region combinations from a `.spectral.bin` file. |
+| `openmx2hsio` | Converte o `.scfout` do OpenMX nas matrizes `H(R)`/`S(R)` (formato `.hsio`) e, com `--write-structure`, extrai a estrutura |
+| `LowFoldIn` | Estrutura de bandas ao longo de um caminho k |
+| `unfold` | Unfolding das bandas da supercélula para a célula primitiva |
+| `atomselect` | Define regiões atômicas nomeadas: por índices, camadas, superfícies, caixas… |
+| `spectral` | Energias e pesos de projeção por região, num caminho k ou numa grade 2D |
+| `specmap` | Mapas espectrais alargados, combinações como `top-bottom` e mapas de energia constante |
 
-They can be launched through fpm:
-
-```bash
-fpm run LowFoldIn < bands.nml
-fpm run openmx2hsio -- calculation.scfout
-fpm run unfold -- unfold.nml
-fpm run atomselect -- inspect slab.nml
-fpm run spectral -- spectral.nml
-fpm run specmap -- specmap.nml
-```
-
-After building, the corresponding binaries are also available inside the fpm build directory.
-
----
-
-## Workflow with OpenMX
-
-A typical workflow is:
-
-1. Run an OpenMX calculation and retain the `.scfout` file.
-2. Convert the Hamiltonian, overlap and structure with `openmx2hsio --write-structure`.
-3. Inspect or adjust the generated structure file if needed.
-4. Define the primitive-cell k-path in `unfold.nml`.
-5. Run `unfold`.
-6. Plot either the discrete spectral weights or the broadened spectral function.
-
-### 1. Convert an OpenMX `.scfout` file
-
-Basic usage:
-
-```bash
-fpm run openmx2hsio -- system.scfout
-```
-
-By default, the output prefix is derived from the `.scfout` filename.
-
-Available options:
+### Fluxos de trabalho
 
 ```text
-openmx2hsio <file.scfout> [--out-prefix PREFIX] \
-             [--fermi E_F_HARTREE] [--no-fermi-shift] \
-             [--write-structure] [--structure-file FILE]
+OpenMX .scfout ──► openmx2hsio ──► H.hsio, S.hsio (+ estrutura)
+                                        │
+             ┌──────────────────────────┼──────────────────────────────┐
+             ▼                          ▼                              ▼
+        LowFoldIn                    unfold                  atomselect → spectral → specmap
+     (bandas comuns)       (bandas desdobradas, A(k,E))      (mapas por região, contornos de Fermi)
 ```
 
-Example:
-
-```bash
-fpm run openmx2hsio -- supercell.scfout --out-prefix data/supercell
-```
-
-To also extract the lattice, atomic coordinates, labels and HSIO-compatible
-orbital counts into the structure format used by `atomselect`, `spectral` and
-`unfold`, add:
-
-```bash
-fpm run openmx2hsio -- calculation.scfout --write-structure
-```
-
-This writes `calculation.structure.nml` next to the HSIO files. Use
-`--structure-file structures/slab.nml` to choose another path. Geometry is
-read from the binary `.scfout` records (Bohr converted to Å); labels are read
-from the OpenMX input embedded in the `.scfout`. For non-collinear calculations
-the `&SPECIES` orbital counts are doubled automatically to match the atom-major
-spinor HSIO files. Structure extraction stops with an explicit error if the
-embedded atom block is missing or inconsistent, while ordinary H/S conversion
-without `--write-structure` remains available.
-
-For a non-spin-polarized calculation, the converter generates:
-
-```text
-data/supercell_H.hsio
-data/supercell_S.hsio
-```
-
-For collinear spin, it generates:
-
-```text
-data/supercell_H_up.hsio
-data/supercell_H_dn.hsio
-data/supercell_S.hsio
-```
-
-Run the unfolding separately for the up and down Hamiltonians, using the same overlap matrix and atom mapping.
-
-For a non-collinear/spinor calculation, the converter writes atom-major spinor matrices compatible with the unfolding code.
-
-By default, the Hamiltonian is shifted so that the Fermi energy is zero. The Fermi level is read from `ChemP` in the `.scfout`, unless overridden with `--fermi`. Use `--no-fermi-shift` to preserve the original energy reference.
-
----
-
-## Band-structure calculation
-
-The main `LowFoldIn` executable reads a `&SYSTEM` namelist followed by a `&BANDS` block from standard input.
-
-Example `bands.nml`:
-
-```fortran
-&SYSTEM
-    ProjectName = "example"
-    Calculation = "bands"
-    nonOrtho    = .true.
-    HDataFile   = "data/example_H.hsio"
-    SDataFile   = "data/example_S.hsio"
-    OutputDir   = "results"
-/
-
-&BANDS
-4
-0.0  0.0  0.0   50
-0.5  0.0  0.0   50
-0.5  0.5  0.0   50
-0.0  0.0  0.0    1
-/
-```
-
-Run it with:
-
-```bash
-mkdir -p results
-fpm run LowFoldIn < bands.nml
-```
-
-The program produces:
-
-```text
-results/example.bands.dat
-results/example.bands.bin
-results/example.bands.gnuplot.dat
-```
-
-- `.bands.dat`: text output with path coordinate and band energies.
-- `.bands.bin`: binary output intended for subsequent processing.
-- `.bands.gnuplot.dat`: bands separated into blocks for direct use with Gnuplot.
-
-Set `nonOrtho = .true.` whenever an overlap matrix `S(R)` is required. In this mode, the code solves the generalized Hermitian eigenvalue problem.
-
----
-
-## Band unfolding
-
-The dedicated `unfold` executable reads an input file containing:
-
-1. `&UNFOLD` configuration;
-2. an optional manual `&ATOMMAP` block;
-3. the primitive-cell path in `&PCPATH`.
-
-Automatic atom mapping from structure files is recommended.
-
-### Minimal unfolding input
+### Um gostinho: unfolding
 
 ```fortran
 &UNFOLD
-    ProjectName = "example"
-    HDataFile   = "data/supercell_H.hsio"
-    SDataFile   = "data/supercell_S.hsio"
-    OutputDir   = "results"
-
-    M(1,:) = 4, 0, 0
-    M(2,:) = 0, 1, 0
+    ProjectName = "sc"
+    HDataFile   = "sc_H.hsio"
+    SDataFile   = "sc_S.hsio"
+    OutputDir   = "resultados"
+    M(1,:) = 2, 0, 0            ! linhas de M: A_i = Σ_j M_ij a_j
+    M(2,:) = 0, 2, 0
     M(3,:) = 0, 0, 1
-
-    PCStructureFile = "structures/primitive.nml"
-    SCStructureFile = "structures/supercell.nml"
-    MatchTolerance  = 1.0e-3
-
+    PCStructureFile = "pc.nml"  ! mapeamento automático de átomos
+    SCStructureFile = "sc.structure.nml"
     WriteSpectralFunction = .true.
-    Broadening = 0.02   ! Lorentzian FWHM (eV)
-    Emin = -5.0
-    Emax =  5.0
-    nE   = 1000
+    Broadening = 0.05
+    Emin = -5.0, Emax = 5.0, nE = 1000
 /
-
 &PCPATH
 4
-0.0  0.0  0.0   80
-0.5  0.0  0.0   80
-0.5  0.5  0.0   80
-0.0  0.0  0.0    1
+0.000000  0.000000  0.0   100   ! Γ
+0.500000  0.000000  0.0    58   ! M
+0.666667  0.333333  0.0   115   ! K
+0.000000  0.000000  0.0     1   ! Γ
 /
 ```
-
-Run:
 
 ```bash
-mkdir -p results
-export OMP_NUM_THREADS=8
-fpm run unfold -- unfold.nml
+mkdir -p resultados
+OMP_NUM_THREADS=8 fpm run unfold --profile release -- unfold.nml
 ```
 
-During diagonalization, a message is printed immediately after each k-point is completed:
-
-```text
-k-point 7 completed | progress 5 / 120 (4.2%) | time: 12.384 s
-```
-
-Because the calculation is parallel, completed k-points may be reported out of numerical order. The progress counter always represents the total number of finished points.
-
-### Transformation matrix `M`
-
-The matrix relates primitive-cell and supercell lattice vectors. It must be written explicitly by rows:
-
-```fortran
-M(1,:) = 4, 0, 0
-M(2,:) = 0, 2, 0
-M(3,:) = 0, 0, 1
-```
-
-`M` may be diagonal or a general nonsingular integer matrix (nondiagonal/rotated supercells are supported):
-
-```fortran
-M(1,:) = 2,  2, 0
-M(2,:) = 2, -2, 0
-M(3,:) = 0,  0, 1
-```
-
-The program automatically classifies `M`:
-
-- **Diagonal `M`** uses a specialized closed-form routine (Eqs. 33-38 of the reference paper), cost `O(m)` per primitive-cell orbital per k-point, where `m = |det(M)|`.
-- **General (nondiagonal) `M`** uses a direct group-projector formula (Eq. 14 of the reference paper, proven equivalent to the eigenvector-sum definition in Appendix A), cost `O(m^2)` per primitive-cell orbital per k-point. This is more expensive but requires no eigenvector construction or degenerate-subspace handling.
-
-A message is printed at startup indicating which routine was selected. `LatticeVectors` in the structure files must be given as rows (POSCAR/ASE/CIF convention, see below); the relation used internally is `A_rows = M @ a_rows`. Fractional positions then transform as `xi_PC = xi_SC . M` (row vector), while fractional k-points transform with the transpose, `F_K = M . f_k` (column vector, Eq. 7 of the reference paper). The two coincide only for symmetric `M`; `test_unfold_nonsym` (graphene-like √3×√3 R30° supercell, non-symmetric `M`) guards this.
-
-### Structure-file format
-
-The primitive- and supercell structure files use the same simple text format.
-
-```fortran
-&STRUCTURE
-    LatticeVectors(1,:) = 4.4566,  0.0000, 0.0000
-    LatticeVectors(2,:) = -2.2283, 3.8596, 0.0000
-    LatticeVectors(3,:) = 0.0000,  0.0000, 5.9280
-/
-
-&SPECIES
-1
-Te  13
-/
-
-&ATOMS
-3
-Te  1.1732  0.0000  1.9760
-Te  3.2834  1.9270  3.9520
-Te  2.2283  3.8596  0.0000
-/
-```
-
-Important details:
-
-- Lattice vectors are given in ångström.
-- Each **row** of `LatticeVectors` is one lattice vector, following the convention commonly used by POSCAR, ASE and CIF tools.
-- Atomic coordinates are Cartesian and given in ångström.
-- Atoms in the supercell structure file must appear in the same order as in the `.hsio` file.
-- The `&SPECIES` block is optional, but strongly recommended because it allows the program to verify the number of orbitals per atom against the actual `.hsio` data.
-- Fortran namelists use parentheses, such as `M(1,:)`, not square brackets.
-- Do not flatten a non-orthogonal lattice matrix into a single assignment. Fortran fills arrays in column-major order, which may silently transpose the intended lattice.
-
-### Automatic atom mapping
-
-When both `PCStructureFile` and `SCStructureFile` are present, the program constructs the map
-
-```text
-supercell atom -> primitive-cell atom + primitive-cell translation
-```
-
-using:
-
-- atomic species;
-- atomic positions;
-- periodic minimum-image distances;
-- the transformation matrix `M`;
-- optionally, the number of orbitals declared in `&SPECIES`.
-
-`MatchTolerance` is expressed in primitive-cell fractional coordinates.
-
-### Manual atom mapping
-
-For small systems or debugging, omit the two structure filenames and provide `&ATOMMAP` directly:
-
-```fortran
-&ATOMMAP
-1  0 0 0
-2  0 0 0
-1  1 0 0
-2  1 0 0
-/
-```
-
-Each line contains:
-
-```text
-primitive_atom_index  n1  n2  n3
-```
-
-The lines must follow exactly the atom order stored in the `.hsio` file. Translation indices are zero-based. For **diagonal** `M`, each component must satisfy `0 <= ni < M(i,i)`. For **general (nondiagonal)** `M`, there is no simple per-axis box constraint -- cell labels are elements of the quotient group `Z^3 / M.Z^3` (order `m = |det(M)|`), and consistency across primitive-cell orbitals is checked via group-coset equivalence (tolerant of the different but equivalent integer representatives real structure-file generators commonly produce, e.g. when atoms are wrapped back into the home unit cell) rather than a fixed numeric range.
-
-### Unfolding outputs
-
-The program writes:
-
-```text
-results/example.unfold.dat
-results/example.unfold_spectral.dat
-```
-
-`example.unfold.dat` contains triples:
-
-```text
-x   energy   weight
-```
-
-It is suitable for a scatter plot in which marker intensity, size or color represents the unfolded spectral weight.
-
-`example.unfold_spectral.dat` contains the Lorentzian-broadened spectral function `A(k,E)` on the energy grid defined by `Emin`, `Emax`, `nE` and `Broadening` (the Lorentzian FWHM, in eV).
-
-The code also reports the unfolding sum rule. For `p` primitive-cell orbitals, the expected value is:
-
-```text
-sum_N W = p
-```
-
-The largest observed deviation is printed after the calculation. A large deviation generally indicates an inconsistent transformation matrix, atom mapping, structure ordering or orbital count.
+Ao final, o programa informa o desvio da **regra de soma** (Σ W = número de orbitais da célula primitiva). Esse valor deve ficar na precisão de máquina.
 
 ---
 
-## Análise espectral de superfícies / Surface spectral analysis
+## 📚 Documentação
 
-Three tools resolve the electronic states of a slab by atomic region (for example top surface, bottom surface and interior) along a k-path. They are independent of `unfold`.
+A documentação completa, **em português**, está na **[wiki do projeto](https://github.com/nnardoto/LowFoldIn/wiki)**:
 
-| Step | Tool | Role | Main input | Main output |
-|---|---|---|---|---|
-| Select | `atomselect` | Defines named atomic regions by index lists, projection ranges along an arbitrary Cartesian normal, Cartesian boxes, detected layers or top/bottom surface layers; validates them against the structure (fingerprint). | structure file (same format as `unfold`) | `regions.nml` |
-| Compute | `spectral` | Solves `H(k)c = E S(k)c` along a k-path (`&KPATH`) or on a 2D k-grid (`&KGRID`) and computes Mulliken (default) or Löwdin weights of every band on every region; never shifts energies. OpenMP over k-points. | `spectral.nml` (`&SPECTRAL` + `&KPATH` or `&KGRID`), HSIO files, structure, `regions.nml` | `<prefix>.spectral.bin` (+ optional `.spectral.txt`) |
-| Represent | `specmap` | Broadens the weights into maps A_P(k,E) (Lorentzian or Gaussian), forms region combinations such as `top-bottom`, optional Fermi–Dirac occupation. For k-grid files, constant-energy maps at the energies listed in `energies`. No diagonalisation: re-run it freely to change width or window. | `specmap.nml`, `.spectral.bin` | `<prefix>.<map>.map.dat` + `<prefix>.kticks.gp`, or `<prefix>.<map>.E<±x.xxx>.cemap.dat` + `<prefix>.cegrid.gp` |
+| Comece por | Aprofunde em | Consulte |
+|---|---|---|
+| [Instalação](https://github.com/nnardoto/LowFoldIn/wiki/Instalacao-e-Compilacao) | [Fundamentos teóricos](https://github.com/nnardoto/LowFoldIn/wiki/Fundamentos-Teoricos) | [Formatos de arquivo](https://github.com/nnardoto/LowFoldIn/wiki/Formatos-de-Arquivo) |
+| [Guia rápido](https://github.com/nnardoto/LowFoldIn/wiki/Guia-Rapido) | [Metodologia do unfolding](https://github.com/nnardoto/LowFoldIn/wiki/Metodologia-do-Unfolding) | [Solução de problemas](https://github.com/nnardoto/LowFoldIn/wiki/Solucao-de-Problemas) |
+| [Modelos sintéticos (grafeno, hBN)](https://github.com/nnardoto/LowFoldIn/wiki/Modelos-Sinteticos) | [Metodologia da análise espectral](https://github.com/nnardoto/LowFoldIn/wiki/Metodologia-da-Analise-Espectral) | [Desempenho e paralelismo](https://github.com/nnardoto/LowFoldIn/wiki/Desempenho-e-Paralelismo) |
 
-Data flow:
-
-```text
-OpenMX .scfout ── openmx2hsio ──> <prefix>_H.hsio, <prefix>_S.hsio ─────┐
-structure.nml ─── atomselect ───> regions.nml ──────────────────────────┤
-                                                                         ├─> spectral ─> <prefix>.spectral.bin
-spectral.nml (&SPECTRAL, &KPATH|&KGRID) ────────────────────────────────┘
-<prefix>.spectral.bin ── specmap (specmap.nml) ──> *.map.dat + *.kticks.gp      ── gnuplot (tools/gnuplot/*.gp)
-                                                   or *.cemap.dat + *.cegrid.gp (k-grid: constant-energy maps)
-```
-
-Important conventions:
-
-- Energies in eV, positions in Å, k-points in fractional reciprocal coordinates, k-distance in 1/Å.
-- `spectral` never shifts energies, and HSIO files store no Fermi level. `openmx2hsio` shifts H by −E_F·S by default, so for default conversions set `energy_reference = 'fermi'`; for `--no-fermi-shift` conversions use `'absolute'`. The default `'unknown'` is always safe.
-- Mulliken weights are populations, not probabilities, and can be slightly negative in a non-orthogonal basis. The `total` group equals 1 per band by construction (a numerical check).
-- The maps are broadened projection weights, **not** simulated ARPES intensities: no photoemission matrix elements, final states or many-body effects are included. Constant-energy kx × ky maps are evaluated directly on the k-grid given to `spectral` (no interpolation or symmetrisation).
-- The tools have been exercised on synthetic models and small test fixtures only.
-
-Build and test:
-
-```bash
-fpm build                      # serial build
-fpm test                       # all unit tests
-bash test/test_atomselect_cli.sh   # atomselect command-line tests
-fpm build --profile release    # adds -fopenmp: k-point loop of spectral in parallel
-```
-
-Documentation:
-
-- [`docs/atomselect.md`](docs/atomselect.md) — subcommands, options, `regions.nml` syntax, fingerprint;
-- [`docs/spectral.md`](docs/spectral.md) — `spectral.nml`, equations, spin handling, binary format;
-- [`docs/specmap.md`](docs/specmap.md) — `specmap.nml`, kernels, map expressions, output files, gnuplot scripts;
-- [`docs/performance.md`](docs/performance.md) — OpenMP, thread settings and measured timings;
-- [`examples/surface_spectral`](examples/surface_spectral/README.md) — complete pipeline on a synthetic slab (`bash examples/surface_spectral/run_example.sh`).
+A referência detalhada de cada ferramenta de superfície, em inglês, fica em [`docs/`](docs): [`atomselect`](docs/atomselect.md), [`spectral`](docs/spectral.md), [`specmap`](docs/specmap.md) e [desempenho](docs/performance.md).
 
 ---
 
-## Build profiles
+## 🔬 Base científica
 
-LowFoldIn requires `fpm` 0.13 or newer and is configured for GNU Fortran 14 or newer. The compiler version is not automatically enforced by the manifest, so select it explicitly when needed.
+O unfolding segue o formalismo para orbitais centrados em átomos de:
 
-```bash
-# Full runtime checks and debugging information
-fpm build --profile debug --compiler gfortran-14
+> J. Quan, N. Rybin, M. Scheffler e C. Carbogno,
+> *Efficient band structure unfolding with atom-centered orbitals: General theory and application*,
+> **Phys. Rev. B 113**, 085112 (2026). DOI: [10.1103/7xym-7388](https://doi.org/10.1103/7xym-7388)
 
-# Balanced optimization
-fpm build --profile balanced --compiler gfortran-14
+Se você usar o unfolding, cite esse trabalho. Uma citação própria do LowFoldIn (com DOI) será adicionada quando houver uma release arquivada.
 
-# Portable production build
-fpm build --profile release --compiler gfortran-14
+> Os mapas espectrais são **pesos de projeção alargados**, não simulações de ARPES: não incluem elementos de matriz de fotoemissão, estados finais nem efeitos de muitos corpos.
 
-# Optimized for the machine performing the compilation
-fpm build --profile native --compiler gfortran-14
+---
 
-# AMD Ryzen 9 7950X / Zen 4
-fpm build --profile ryzen7950x --compiler gfortran-14
-```
+## 🚧 Estado do projeto
 
-The `ryzen7950x-fast` profile additionally enables `-ffast-math` and loop unrolling. It may change floating-point behavior and should only be used after validating eigenvalues and spectral weights against the conservative `ryzen7950x` profile.
+Software de pesquisa em desenvolvimento ativo. As ferramentas foram validadas em modelos sintéticos, em pequenos casos de teste e no exemplo DFT do artigo de referência. Antes de publicar, confira sempre a regra de soma e as normalizações. As limitações atuais (por exemplo: só OpenMX 3.9/4.0 e coordenadas cartesianas em Å) estão listadas na [wiki](https://github.com/nnardoto/LowFoldIn/wiki/Limitacoes).
 
-## Parallel execution
+## 🤝 Contribuindo
 
-The expensive k-point loops are parallelized with OpenMP. Set the thread count before running:
+Issues e pull requests são muito bem-vindos, e uma boa porta de entrada é um conversor para outro código de base local (SIESTA, FHI-aims, CP2K…). Em mudanças numéricas, informe:
 
-```bash
-export OMP_NUM_THREADS=8
-export OMP_PROC_BIND=close
-export OMP_PLACES=cores
-fpm run unfold -- unfold.nml
-```
+- compilador e versão, implementação de BLAS/LAPACK e número de threads;
+- uma entrada mínima que reproduza o resultado;
+- os desvios da regra de soma esperados e obtidos.
 
-For reproducibility or debugging, run serially:
+## 📄 Licença
 
-```bash
-OMP_NUM_THREADS=1 fpm run unfold -- unfold.nml
-```
+Software livre sob a **GNU General Public License, versão 3 ou posterior** (`GPL-3.0-or-later`). Veja [`LICENSE`](LICENSE).
 
-Each thread owns its working matrices for `H(k)`, `S(k)`, eigenvectors and auxiliary data. Results from different k-points are independent.
-
-## Repository structure
-
-```text
-LowFoldIn/
-├── app/
-│   └── main.f90                 # Conventional band-structure executable
-├── src/
-│   ├── mod_bands_io.f90         # Band-result writers
-│   ├── mod_config.f90           # Main-program input parser
-│   ├── mod_core.f90             # Fourier transforms and eigensolvers
-│   ├── mod_hs_io.f90            # Internal H(R)/S(R) binary format
-│   ├── mod_openmx_convert.f90    # OpenMX matrix assembly and conversion
-│   ├── mod_scfout_io.f90        # OpenMX .scfout reader
-│   ├── mod_terminal_ui.f90       # Terminal formatting
-│   ├── mod_types.f90             # Numerical kinds and shared types
-│   └── mod_unfold.f90            # Unfolding implementation
-├── tools/
-│   ├── openmx2hsio.f90          # OpenMX conversion CLI
-│   ├── unfold.f90               # Unfolding CLI
-│   ├── atomselect.f90           # Named atomic regions CLI
-│   ├── spectral.f90             # Region-projected bands along a k-path or k-grid
-│   ├── specmap.f90              # Broadened spectral maps and constant-energy maps
-│   └── gnuplot/                 # map_positive.gp, map_difference.gp, map_compare.gp
-├── fpm.toml
-├── LICENSE
-└── README.md
-```
-
-## Current limitations
-
-- Only OpenMX `.scfout` format version 3 is supported, corresponding to OpenMX 3.9/4.0.
-- The unfolding transformation matrix `M` may be diagonal or general (nondiagonal); the general case is `O(m)` times more expensive per k-point (`m = |det(M)|`, see "Transformation matrix M").
-- The structure-file parser expects Cartesian coordinates in ångström.
-- The supercell atom order must match the order represented in the converted `.hsio` file.
-- There is not yet a stable public library API; the command-line programs are the primary interface.
-- Automated regression tests and packaged examples should be added before treating the project as production software.
-
-## Recommended additions before a public release
-
-The following repository additions would make the project easier to reproduce and cite:
-
-- `CITATION.cff`;
-- small test datasets under `examples/`;
-- plotting scripts for `.bands.gnuplot.dat`, `.unfold.dat` and `.unfold_spectral.dat`;
-- continuous integration for serial and OpenMP builds;
-- numerical regression tests for the unfolding sum rule and spin channels.
-
-## Citation
-
-When using the unfolding functionality, cite the theoretical reference above. A dedicated citation for LowFoldIn can be added when the repository receives an archived release and DOI.
-
-## License
-
-LowFoldIn is free software distributed under the **GNU General Public License, version 3 or any later version** (`GPL-3.0-or-later`). See [`LICENSE`](LICENSE) for the complete license text.
-
-## Author
-
-Nathanael Nardoto Batista
-
-## Contributing
-
-Issues and pull requests are welcome. For numerical changes, please include:
-
-- the compiler and compiler version;
-- BLAS/LAPACK implementation;
-- OpenMP thread count;
-- a minimal input reproducing the result;
-- the expected and obtained sum-rule deviations.
-
-### Resumo de desempenho do `unfold`
-
-Ao final da execução, o `unfold` apresenta um resumo com:
-
-- número de pontos k calculados e threads OpenMP utilizadas;
-- tempos de preparação, cálculo, escrita e execução total;
-- tempos mínimo, médio e máximo por ponto k;
-- desvio-padrão dos tempos individuais;
-- tempo efetivo por ponto, considerando a execução paralela;
-- vazão em pontos por segundo e por minuto;
-- eficiência paralela aproximada.
-
-A eficiência paralela é estimada por
-
-```text
-soma dos tempos individuais / (threads × tempo de cálculo)
-```
-
-Ela mede a ocupação média das threads durante a etapa principal e pode ficar
-abaixo de 100% por desbalanceamento entre pontos, sincronização, contenção de
-memória ou custos fora do laço paralelo.
+**Autor:** Nathanael Nardoto Batista
