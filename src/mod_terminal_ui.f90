@@ -7,6 +7,7 @@ module terminal_ui
     ! Largura fixa padrão para toda a interface do software
     integer, parameter :: UI_WIDTH = 65
     integer, parameter :: dp       = kind(1.0d0)
+    private :: dp
 
 contains
 
@@ -35,7 +36,7 @@ contains
         right_spaces = total_spaces - left_spaces
 
         call print_box_close()
-        print '(A, A, A, A, A)', "|", repeat(" ", left_spaces), clean_text, repeat(" ", right_spaces), "|"
+        print '(A, A, A, A, A)', "|", repeat(" ", max(0, left_spaces)), clean_text, repeat(" ", max(0, right_spaces)), "|"
         call print_box_close()
     end subroutine print_box
 
@@ -53,7 +54,7 @@ contains
         ! Calcula o preenchimento para bater na borda direita fixa
         remaining_spaces = UI_WIDTH - 2 - content_len
         
-        print '(A, A, A, A)', "|", trim(full_line), repeat(" ", remaining_spaces), "|"
+        print '(A, A, A, A)', "|", trim(full_line), repeat(" ", max(0, remaining_spaces)), "|"
     end subroutine print_row
 
     ! 5. Desenha um CABEÇALHO DE PAINEL (Linhas duplas com texto centralizado)
@@ -70,7 +71,7 @@ contains
         right_spaces = total_spaces - left_spaces
 
         call print_line("=")
-        print '(A, A, A, A, A)', "|", repeat(" ", left_spaces), clean_title, repeat(" ", right_spaces), "|"
+        print '(A, A, A, A, A)', "|", repeat(" ", max(0, left_spaces)), clean_title, repeat(" ", max(0, right_spaces)), "|"
         call print_line("=")
     end subroutine print_header
 
