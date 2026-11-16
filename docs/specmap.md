@@ -3,9 +3,16 @@
 `specmap` is the **Represent** step of the surface spectral pipeline
 (`atomselect` → `spectral` → `specmap` → gnuplot). It reads the discrete
 energies and projection weights written by [`spectral`](spectral.md) and
-broadens them into continuous maps A_P(k,E) on a (k, E) grid, for single
-regions or ± combinations of regions, plus a gnuplot include with the k-path
-ticks.
+broadens them into continuous maps, for single regions or ± combinations of
+regions:
+
+- **k-path file** (`spectral` with `&KPATH`): maps A_P(k,E) on a (k, E) grid,
+  plus a gnuplot include with the k-path ticks;
+- **k-grid file** (`spectral` with `&KGRID`): **constant-energy maps**
+  I_P(kx, ky) at each energy listed in `energies`, plus a gnuplot include with
+  the grid axes (see [Constant-energy maps](#constant-energy-maps-k-grid-files)).
+
+The mode is chosen automatically from the file.
 
 `specmap` reads **only** the `.spectral.bin` file: no HSIO, no structure, no
 LAPACK, no diagonalisation. Changing the kernel, width, energy window, maps
@@ -42,6 +49,7 @@ before any file is written.
 | `mu_ev` | real (eV) | `0.0` | chemical potential, used only if `mu_set` |
 | `mu_set` | logical | `.false.` | `mu_ev` is given explicitly |
 | `output_prefix` | string | `'specmap'` | output file prefix (must not be empty) |
+| `energies` | reals (eV) | — | constant energies, up to 64; **required** for k-grid files, an error for k-path files |
 
 Energy grid: `E_i = emin + (i−1)(emax−emin)/(ne−1)`, `i = 1..ne`.
 
@@ -151,6 +159,64 @@ ELABEL = "E - E_F (eV)"
   otherwise `NaN`. `ELABEL` = `"E - E_F (eV)"`, `"E (eV)"` or
   `"E (eV, reference unknown)"`.
 
+## Constant-energy maps (k-grid files)
+
+When the spectral file was written by `spectral` with `&KGRID`, `specmap`
+produces one map per (map expression, energy) instead of (k, E) maps:
+
+```text
+I_P(k; E₀) = Σ_n w_n^P(k) K(E₀ − ε_n(k))        (× f(E₀) with occupation)
+```
+
+for every k of the grid and every `E₀` in `energies`. Kernel, width, map
+expressions, spin channel, occupation and μ work exactly as for path maps;
+`emin`, `emax` and `ne` are ignored. The width plays the role of an energy
+integration window around `E₀` (a band at distance ≫ width from `E₀`
+contributes only through the kernel tails — keep this in mind with the
+Lorentzian).
+
+```fortran
+&SPECMAP                                   ! specmap_ce.nml (example)
+    spectral_file = 'model_kgrid.spectral.bin'
+    kernel        = 'lorentzian'
+    width_ev      = 0.05
+    energies      = -1.0, 0.0, 1.0
+    maps          = 'total', 'top', 'top-bottom'
+    output_prefix = 'model_ce'
+/
+```
+
+### Output
+
+`<prefix>.<tag>.E<±x.xxx>.cemap.dat` — `tag` as for path maps, the energy
+rounded to meV with an explicit sign (e.g. `model_ce.top.E+0.000.cemap.dat`,
+`model_ce.top_minus_bottom.E-1.000.cemap.dat`). Two energies that round to the
+same meV are rejected. The `#` header is the same as for path maps, with
+`constant energy: E = … eV` instead of the energy window, followed by the grid
+size, the recommended plot columns and
+
+```text
+# columns: kx_invA ky_invA kz_invA k_u_invA k_v_invA intensity
+```
+
+Rows follow the grid order `ik = i + (j−1)·n1`: `n2` blocks of `n1` rows,
+each followed by a blank line (gnuplot `pm3d` format). `kx, ky, kz` are
+Cartesian (1/Å); `k_u, k_v` are coordinates in the plane of the grid along an
+orthonormal basis with `e_u ∥ span1` (Γ projects to (0, 0)); they are the
+natural axes when the grid is not perpendicular to z.
+
+`<prefix>.cegrid.gp` — gnuplot include: `COLS = "1:2:6"` (kx, ky) when the
+grid plane is perpendicular to z, otherwise `"4:5:6"` (k_u, k_v);
+`set size ratio -1` (equal aspect); x/y ranges and labels; `ELABEL`.
+
+```bash
+gnuplot -e "datafile='model_ce.top.E+0.000.cemap.dat'; grid='model_ce.cegrid.gp'; out='top_EF'" tools/gnuplot/cemap.gp
+gnuplot -e "datafile='model_ce.top_minus_bottom.E+0.000.cemap.dat'; grid='model_ce.cegrid.gp'; diff=1; out='diff_EF'" tools/gnuplot/cemap.gp
+```
+
+`cemap.gp` uses the sequential palette by default and the divergent palette
+centred at 0 with `diff=1`; optional `title`, `cbmax`.
+
 ## Plotting with gnuplot
 
 Generic scripts in `tools/gnuplot/` (each writes `<out>.png` and
@@ -175,7 +241,9 @@ gnuplot -e "datafile1='slab.top.map.dat'; datafile2='slab.bottom.map.dat'; ticks
   intensities: no matrix elements, photon energy/polarisation, final
   states, k_z broadening, experimental resolution or many-body
   self-energies. The broadening is an artificial, user-chosen width.
-- Only k-path (line) maps; no constant-energy kx × ky maps.
+- Constant-energy maps are evaluated on the grid given to `spectral`; there is
+  no interpolation between k-points and no symmetrisation (use a grid that
+  covers the region of interest).
 - No normalisation of combined maps; overlapping regions double-count.
 - Region names containing `+` or `-` could not be addressed (such names are
   rejected by `atomselect`/`regions.nml` anyway).
@@ -198,7 +266,10 @@ checks: kernel normalisation, intensity conservation, re-broadening of the
 same file with a different width, map combinations (`+`, `-`, repeated and
 unknown regions), negative weights kept with their sign, Fermi–Dirac
 (including T = 0 and overflow safety), the map file layout, file-name tags,
-the kticks file and rejection of a truncated spectral file.
+the kticks file and rejection of a truncated spectral file; for k-grid files:
+energy tags, constant-energy intensity against a direct kernel sum, the
+`.cemap.dat` layout (n1·n2 rows, n2 blank lines, kx/ky per row), rejection of
+a k-path file and the `.cegrid.gp` include.
 
 ## Worked example
 

@@ -12,6 +12,7 @@ tight-binding slab that has well-defined surface states:
 
 ```
 gen_model  ->  atomselect  ->  spectral  ->  specmap (x2)  ->  gnuplot
+                              spectral (&KGRID) -> specmap (energies) -> gnuplot   (constant-energy maps)
 ```
 
 ## Running
@@ -80,6 +81,8 @@ $ATOMSELECT validate model.nml regions.nml               # reports "partition : 
 $SPECTRAL spectral.nml                                   # Mulliken, X-G-M, write_text
 $SPECMAP  specmap.nml                                    # Lorentzian, eta = 0.05 eV
 $SPECMAP  specmap_gauss.nml                              # Gaussian, sigma = 0.10 eV
+$SPECTRAL spectral_kgrid.nml                             # 81 x 81 k-grid over the surface BZ
+$SPECMAP  specmap_ce.nml                                 # constant-energy maps at E = -1, 0, +1 eV
 gnuplot plot_spectral.gp                                 # skipped if NO_PLOT=1 / no gnuplot
 ```
 
@@ -96,7 +99,9 @@ kernel, width or energy window never requires re-running `spectral`
 | `model.spectral.bin`, `model.spectral.txt` | spectral |
 | `model.{total,top,bottom,interior,top_minus_bottom,top_plus_bottom}.map.dat`, `model.kticks.gp` | specmap (Lorentzian) |
 | `model_gauss.{total,top,bottom,top_minus_bottom}.map.dat`, `model_gauss.kticks.gp` | specmap (Gaussian) |
-| `model_total`, `model_top`, `model_top_minus_bottom`, `model_top_vs_bottom` (`.png` + `.pdf`) | plot_spectral.gp |
+| `model_kgrid.spectral.bin` | spectral (`spectral_kgrid.nml`, `&KGRID`) |
+| `model_ce.{total,top,top_minus_bottom}.E{-1.000,+0.000,+1.000}.cemap.dat`, `model_ce.cegrid.gp` | specmap (`specmap_ce.nml`) |
+| `model_total`, `model_top`, `model_top_minus_bottom`, `model_top_vs_bottom`, `model_ce_top_EF`, `model_ce_top_minus_bottom_EF` (`.png` + `.pdf`) | plot_spectral.gp |
 
 `plot_spectral.gp` is a thin wrapper around `tools/gnuplot/map_positive.gp`,
 `map_difference.gp` (divergent palette centred at 0; red = top, blue = bottom)
@@ -139,6 +144,18 @@ weight 0.840. The bulk gap along the path is [−0.991, +0.858] eV (maximum of
 band 3, minimum of band 6), and top+bottom weight never exceeds 0.552 on any
 bulk band. E_F = 0 crosses the bottom band on X–Γ and Γ–M and the top band
 on Γ–M.
+
+## Constant-energy maps
+
+`spectral_kgrid.nml` replaces `&KPATH` by an 81 × 81 `&KGRID` covering the
+whole surface Brillouin zone (`origin = -0.5,-0.5,0`, `span1 = b1`,
+`span2 = b2`, Γ at the centre); `specmap_ce.nml` then cuts it at
+E = −1, 0 and +1 eV. At E = E_F = 0 the `top − bottom` map
+(`model_ce_top_minus_bottom_EF.png`) shows the two Fermi contours of the
+model: a small pocket of the **bottom** surface state around Γ (blue) and the
+**top** surface state around the M corners (red), consistent with the path
+results above (E_F crosses the bottom band on both X–Γ and Γ–M, the top band
+only on Γ–M).
 
 ## Band, weight, spectral function, map, ARPES
 

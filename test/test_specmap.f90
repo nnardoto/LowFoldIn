@@ -13,7 +13,8 @@ program test_specmap
     use spectral_broadening, only: KERNEL_LORENTZIAN, KERNEL_GAUSSIAN, lorentzian, gaussian, &
                                    fermi_dirac, energy_grid, broaden
     use spectral_map,        only: parse_map_expression, write_map_file, write_kticks_file, &
-                                   map_file_tag
+                                   map_file_tag, write_cemap_file, write_cegrid_file, &
+                                   cemap_energy_tag, kgrid_coordinates
     implicit none
 
     real(dp), parameter         :: PI = acos(-1.0_dp)
@@ -21,6 +22,9 @@ program test_specmap
     character(len=*), parameter :: TRUNC = 'build/test_specmap.truncated.bin'
     character(len=*), parameter :: MAPF  = 'build/test_specmap.map.dat'
     character(len=*), parameter :: TICKF = 'build/test_specmap.kticks.gp'
+    character(len=*), parameter :: CEF   = 'build/test_specmap.cemap.dat'
+    character(len=*), parameter :: CEGF  = 'build/test_specmap.cegrid.gp'
+    character(len=*), parameter :: GBIN  = 'build/test_specmap.grid.spectral.bin'
 
     type(spectral_data_t) :: sd0, sd
     integer               :: ierr
@@ -42,11 +46,15 @@ program test_specmap
     call test_tags()
     call test_kticks()
     call test_truncated_file()
+    call test_constant_energy()
 
     call delete_file(BIN)
     call delete_file(TRUNC)
     call delete_file(MAPF)
     call delete_file(TICKF)
+    call delete_file(CEF)
+    call delete_file(CEGF)
+    call delete_file(GBIN)
     call test_summary("test_specmap")
 
 contains
@@ -380,6 +388,112 @@ contains
         call check(.not. allocated(st%energy) .and. .not. allocated(st%kfrac) .and. st%nk == 0, &
                    "failed read leaves sd reset")
     end subroutine test_truncated_file
+
+    !> 11. Mapas de energia constante numa grade k 2D: tags de energia, valores
+    !> (alargamento na lista de energias = soma direta), layout do arquivo
+    !> (n1*n2 linhas de dados, n2 linhas em branco), coordenadas e include.
+    subroutine test_constant_energy()
+        type(spectral_data_t)   :: g, g2
+        real(dp), allocatable   :: A(:,:), kc(:,:), kuv(:,:)
+        real(dp)                :: ce(2), ref, maxdev, v(6)
+        integer                 :: ierr, ik, ib, ie, u, ios, ndata, nblank, i, j
+        character(len=512)      :: msg, line
+        logical                 :: xy, has_cols, has_ratio
+
+        call check(cemap_energy_tag(-0.5_dp) == 'E-0.500', "energy tag -0.5")
+        call check(cemap_energy_tag(0.0_dp) == 'E+0.000', "energy tag 0")
+        call check(cemap_energy_tag(1.25_dp) == 'E+1.250', "energy tag 1.25")
+        call check(cemap_energy_tag(-0.0001_dp) == 'E+0.000', "energy tag rounds to meV")
+        call check(cemap_energy_tag(-12.3456_dp) == 'E-12.346', "energy tag -12.3456")
+
+        ! Grade 4 x 3 numa rede quadrada (a = 2 Angstrom), plano kx-ky, G no centro.
+        g%nk = 12; g%nband = 2; g%nspin = 1; g%nregion = 2; g%nvertex = 0
+        g%spin_mode = SPIN_NONE; g%method = METHOD_MULLIKEN; g%energy_ref = EREF_FERMI
+        g%fermi_known = .true.
+        g%is_grid = .true.; g%grid_n1 = 4; g%grid_n2 = 3
+        g%grid_origin = [-0.5_dp, -0.5_dp, 0.0_dp]
+        g%grid_span1 = [1.0_dp, 0.0_dp, 0.0_dp]; g%grid_span2 = [0.0_dp, 1.0_dp, 0.0_dp]
+        g%recip = 0.0_dp
+        g%recip(1, 1) = PI; g%recip(2, 2) = PI; g%recip(3, 3) = 0.2_dp * PI
+        allocate(g%kfrac(3, 12), g%kdist(12), g%vertex_k(0), g%vertex_label(0))
+        allocate(g%region_name(2), g%region_natoms(2), g%energy(2, 12, 1), g%weight(2, 12, 2, 1))
+        g%region_name(1) = 'total'; g%region_name(2) = 'top'; g%region_natoms = [2, 1]
+        g%kdist = 0.0_dp
+        do j = 1, 3
+            do i = 1, 4
+                ik = i + (j - 1) * 4
+                g%kfrac(:, ik) = g%grid_origin + real(i - 1, dp) / 3.0_dp * g%grid_span1 &
+                                               + real(j - 1, dp) / 2.0_dp * g%grid_span2
+                g%energy(1, ik, 1) = -1.0_dp + 0.1_dp * ik
+                g%energy(2, ik, 1) =  0.5_dp - 0.05_dp * ik
+            end do
+        end do
+        g%weight(:, :, 1, 1) = 1.0_dp
+        g%weight(1, :, 2, 1) = 0.7_dp
+        g%weight(2, :, 2, 1) = 0.2_dp
+        call write_spectral_file(GBIN, g, ierr, msg)
+        call check(ierr == 0, "write grid spectral file: " // trim(msg))
+        call read_spectral_file(GBIN, g2, ierr, msg)
+        call check(ierr == 0 .and. g2%is_grid, "read grid spectral file: " // trim(msg))
+        if (ierr /= 0) return
+
+        ce = [-0.3_dp, 0.1_dp]
+        allocate(A(2, 12))
+        call broaden(g2%energy(:, :, 1), g2%weight(:, :, 2, 1), ce, KERNEL_LORENTZIAN, 0.05_dp, A)
+        maxdev = 0.0_dp
+        do ik = 1, 12
+            do ie = 1, 2
+                ref = 0.0_dp
+                do ib = 1, 2
+                    ref = ref + g2%weight(ib, ik, 2, 1) * lorentzian(ce(ie) - g2%energy(ib, ik, 1), 0.05_dp)
+                end do
+                maxdev = max(maxdev, abs(A(ie, ik) - ref))
+            end do
+        end do
+        call check_close(maxdev, 0.0_dp, 1.0e-12_dp, "constant-energy map = direct kernel sum")
+
+        call kgrid_coordinates(g2, kc, kuv, xy, ierr, msg)
+        call check(ierr == 0 .and. xy, "grid in kx-ky plane detected")
+        call check_close(kc(1, 1), -0.5_dp * PI, 1.0e-12_dp, "kx of first grid point")
+        call check_close(kc(2, 12), 0.5_dp * PI, 1.0e-12_dp, "ky of last grid point")
+
+        call write_cemap_file(CEF, g2, A(2, :), ['test cemap header'], ierr, msg)
+        call check(ierr == 0, "write_cemap_file: " // trim(msg))
+        ndata = 0; nblank = 0; maxdev = 0.0_dp
+        open(newunit=u, file=CEF, status='old', action='read')
+        do
+            read(u, '(A)', iostat=ios) line
+            if (ios /= 0) exit
+            if (len_trim(line) == 0) then
+                nblank = nblank + 1
+            else if (line(1:1) /= '#') then
+                ndata = ndata + 1
+                read(line, *) v
+                maxdev = max(maxdev, abs(v(1) - kc(1, ndata)), abs(v(2) - kc(2, ndata)), &
+                             abs(v(6) - A(2, ndata)) / max(abs(A(2, ndata)), 1.0e-300_dp))
+            end if
+        end do
+        close(u)
+        call check(ndata == 12, "cemap file has n1*n2 data lines")
+        call check(nblank == 3, "cemap file has n2 blank lines")
+        call check(maxdev < 1.0e-8_dp, "cemap rows follow ik = i + (j-1)*n1 with kx, ky, intensity")
+
+        call write_cemap_file(CEF, sd, A(2, 1:sd%nk), ['x'], ierr, msg)
+        call check(ierr /= 0, "write_cemap_file rejects a k-path file")
+
+        call write_cegrid_file(CEGF, g2, ierr, msg)
+        call check(ierr == 0, "write_cegrid_file: " // trim(msg))
+        has_cols = .false.; has_ratio = .false.
+        open(newunit=u, file=CEGF, status='old', action='read')
+        do
+            read(u, '(A)', iostat=ios) line
+            if (ios /= 0) exit
+            if (index(line, 'COLS = "1:2:6"') > 0) has_cols = .true.
+            if (index(line, 'set size ratio -1') > 0) has_ratio = .true.
+        end do
+        close(u)
+        call check(has_cols .and. has_ratio, "cegrid include: COLS (kx,ky) and equal aspect")
+    end subroutine test_constant_energy
 
     subroutine delete_file(fn)
         character(len=*), intent(in) :: fn

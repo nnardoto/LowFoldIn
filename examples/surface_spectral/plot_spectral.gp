@@ -11,6 +11,8 @@
 #   model_top        top-layer projected A(k,E)            (map_positive.gp)
 #   model_top_minus_bottom  top - bottom, divergent palette (map_difference.gp)
 #   model_top_vs_bottom     top | bottom, common colour scale (map_compare.gp)
+#   model_ce_top_EF         top layer, constant-energy map at E = E_F (cemap.gp)
+#   model_ce_top_minus_bottom_EF  top - bottom at E = E_F, divergent (cemap.gp, diff=1)
 # Each block starts with "reset session" so that the generic scripts never
 # inherit variables or settings from the previous plot.
 
@@ -34,3 +36,14 @@ datafile1 = 'model.top.map.dat'; datafile2 = 'model.bottom.map.dat'
 ticks = 'model.kticks.gp'; out = 'model_top_vs_bottom'
 title1 = 'top layer (atom 8)'; title2 = 'bottom layer (atom 1)'
 load '../../tools/gnuplot/map_compare.gp'
+
+reset session
+datafile = 'model_ce.top.E+0.000.cemap.dat'; grid = 'model_ce.cegrid.gp'; out = 'model_ce_top_EF'
+title = 'top layer at E = E_F, kx x ky (synthetic model)'
+load '../../tools/gnuplot/cemap.gp'
+
+reset session
+datafile = 'model_ce.top_minus_bottom.E+0.000.cemap.dat'; grid = 'model_ce.cegrid.gp'
+out = 'model_ce_top_minus_bottom_EF'; diff = 1
+title = 'top - bottom at E = E_F (red: top, blue: bottom) (synthetic model)'
+load '../../tools/gnuplot/cemap.gp'

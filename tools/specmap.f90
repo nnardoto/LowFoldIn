@@ -15,8 +15,12 @@
 !
 ! Entrada: namelist &SPECMAP (opções em docs/specmap.md) apontando para o
 !          arquivo <prefix>.spectral.bin escrito por `spectral`.
-! Saída  : <output_prefix>.<tag>.map.dat para cada expressão de mapa e
-!          <output_prefix>.kticks.gp (include do gnuplot com as marcas do caminho k).
+! Saída  : arquivo de caminho k (&KPATH):
+!            <output_prefix>.<tag>.map.dat para cada expressão de mapa e
+!            <output_prefix>.kticks.gp (include do gnuplot com as marcas do caminho k);
+!          arquivo de grade k (&KGRID) — mapas de energia constante kx x ky:
+!            <output_prefix>.<tag>.E<+-x.xxx>.cemap.dat para cada expressão e cada
+!            energia de `energies`, e <output_prefix>.cegrid.gp (eixos da grade).
 ! Código : 0 em caso de sucesso; 1 em uso incorreto ou qualquer erro (mensagem com
 !          prefixo "[specmap error]" em stderr). Todas as entradas e expressões
 !          de mapa são validadas antes de escrever o primeiro arquivo.
@@ -32,11 +36,14 @@ program specmap_main
     use spectral_broadening, only: KERNEL_LORENTZIAN, KERNEL_GAUSSIAN, &
                                    energy_grid, broaden, fermi_dirac
     use spectral_map,        only: parse_map_expression, write_map_file, &
-                                   write_kticks_file, map_file_tag
+                                   write_kticks_file, map_file_tag, &
+                                   write_cemap_file, write_cegrid_file, cemap_energy_tag
     use terminal_ui,         only: print_box, print_box_close
     implicit none
 
     integer, parameter :: MAX_MAPS = 32
+    integer, parameter :: MAX_CE   = 64                ! máximo de energias constantes
+    real(dp), parameter :: UNSET   = huge(1.0_dp)      ! sentinela de 'energies' não definida
 
     ! Variáveis da namelist (os valores padrão aqui são os padrões documentados)
     character(len=512) :: spectral_file = ''
@@ -51,15 +58,19 @@ program specmap_main
     real(dp)           :: mu_ev         = 0.0_dp
     logical            :: mu_set        = .false.
     character(len=512) :: output_prefix = 'specmap'
+    real(dp)           :: energies(MAX_CE) = UNSET   ! só para arquivos de grade k (eV)
 
     namelist /SPECMAP/ spectral_file, spin_channel, kernel, width_ev, emin, emax, ne, &
-                       maps, occupation, temperature_k, mu_ev, mu_set, output_prefix
+                       maps, occupation, temperature_k, mu_ev, mu_set, output_prefix, energies
 
     type(spectral_data_t)         :: sd
     character(len=1024)           :: input_path, errmsg, iomsg
     character(len=:), allocatable :: tag, fname, kname, wmeaning, occ_line, eref_line
     character(len=640)            :: hdr(12)     ! linhas de cabeçalho do .map.dat (11 usadas)
-    integer                       :: u, ios, ierr, im, jm, it, ie, nmaps, kern, map_number
+    integer                       :: u, ios, ierr, im, jm, it, ie, je, nmaps, kern, map_number, &
+                                     nce, ngrid, nfiles
+    logical                       :: grid_mode
+    real(dp), allocatable         :: ce(:)
     integer(int64)                :: total_start, map_start, map_end, clock_rate
     real(dp)                      :: mu, map_seconds, total_seconds
     real(dp), allocatable         :: grid(:), wcomb(:,:), A(:,:), focc(:)
@@ -110,12 +121,32 @@ program specmap_main
     if (len_trim(output_prefix) == 0) call die("output_prefix must not be empty")
     nmaps = count(len_trim(maps) > 0)
     if (nmaps == 0) call die("no map expression given in 'maps'")
+    ce = pack(energies, energies /= UNSET)
+    nce = size(ce)
 
     call read_spectral_file(trim(spectral_file), sd, ierr, errmsg)
     if (ierr /= 0) call die(trim(errmsg))
 
     if (spin_channel < 1 .or. spin_channel > sd%nspin) &
         call die("spin_channel must be in 1.." // itoa(sd%nspin))
+
+    ! Arquivo de grade k -> mapas de energia constante nas energias de `energies`;
+    ! arquivo de caminho k -> mapas (k, E) na grade emin..emax.
+    grid_mode = sd%is_grid
+    if (grid_mode) then
+        if (nce == 0) call die("'" // trim(spectral_file) // "' holds a k-grid (&KGRID): " // &
+                               "give the constant energies in 'energies' (eV)")
+        do ie = 1, nce
+            do je = 1, ie - 1
+                if (cemap_energy_tag(ce(je)) == cemap_energy_tag(ce(ie))) &
+                    call die("energies " // rtoa(ce(je)) // " and " // rtoa(ce(ie)) // &
+                             " coincide at 1 meV resolution (same output file)")
+            end do
+        end do
+    else if (nce > 0) then
+        call die("'energies' is only used with k-grid spectral files (written by spectral " // &
+                 "with &KGRID); '" // trim(spectral_file) // "' holds a k-path")
+    end if
 
     ! Potencial químico para a ocupação de Fermi-Dirac. Apenas a referência
     ! 'fermi' tem zero conhecido (E_F = 0); caso contrário o usuário deve fornecer mu.
@@ -149,8 +180,17 @@ program specmap_main
     ! ================================================================
     ! 2. Prepara a grade de energia, a ocupação e o texto do cabeçalho
     ! ================================================================
-    allocate(grid(ne), A(ne, sd%nk), wcomb(sd%nband, sd%nk), focc(ne))
-    call energy_grid(emin, emax, ne, grid)
+    ! No modo de grade a "grade de energia" do alargamento é a lista de energias
+    ! constantes: A(ie, ik) = intensidade em E = ce(ie) no ponto ik da grade k.
+    if (grid_mode) then
+        ngrid = nce
+        grid = ce
+    else
+        ngrid = ne
+        allocate(grid(ne))
+        call energy_grid(emin, emax, ne, grid)
+    end if
+    allocate(A(ngrid, sd%nk), wcomb(sd%nband, sd%nk), focc(ngrid))
     if (occupation) then
         focc = fermi_dirac(grid, mu, temperature_k)
         occ_line = 'occupation: Fermi-Dirac, T = ' // rtoa(temperature_k) // ' K, mu = ' // &
@@ -176,8 +216,15 @@ program specmap_main
 
     print '(A,I0,A,I0,A,I0,A)', '      source: ', sd%nk, ' k-points, ', sd%nband, &
         ' bands, ', sd%nregion, ' regions'
-    print '(A,A,A,A,A,I0)', '      grid: ', trim(kname), ', width ', rtoa(width_ev), &
-        ' eV, energy points ', ne
+    if (grid_mode) then
+        print '(A,I0,A,I0,A)', '      k-grid: ', sd%grid_n1, ' x ', sd%grid_n2, &
+            ' points -> constant-energy maps'
+        print '(A,A,A,A,A,I0)', '      kernel: ', trim(kname), ', width ', rtoa(width_ev), &
+            ' eV, constant energies ', nce
+    else
+        print '(A,A,A,A,A,I0)', '      grid: ', trim(kname), ', width ', rtoa(width_ev), &
+            ' eV, energy points ', ne
+    end if
     print '(A)', '[2/3] Broadening and writing maps'
 
     ! ================================================================
@@ -185,6 +232,7 @@ program specmap_main
     !    (as expressões são analisadas de novo aqui; já foram validadas acima)
     ! ================================================================
     map_number = 0
+    nfiles = 0
     do im = 1, MAX_MAPS
         if (len_trim(maps(im)) == 0) cycle
         map_number = map_number + 1
@@ -201,7 +249,7 @@ program specmap_main
         end do
         call broaden(sd%energy(:, :, spin_channel), wcomb, grid, kern, width_ev, A)
         if (occupation) then
-            do ie = 1, ne
+            do ie = 1, ngrid
                 A(ie, :) = A(ie, :) * focc(ie)
             end do
         end if
@@ -223,20 +271,46 @@ program specmap_main
                   'overlapping regions in a sum may double-count atoms'
 
         tag = map_file_tag(trim(maps(im)))
-        fname = trim(output_prefix) // '.' // tag // '.map.dat'
-        call write_map_file(fname, sd, A, grid, hdr(1:11), ierr, errmsg)
-        if (ierr /= 0) call die(trim(errmsg))
-        call system_clock(map_end)
-        map_seconds = real(map_end - map_start, dp) / real(max(clock_rate, 1_int64), dp)
-        print '(A,A,A,F0.3,A)', '          wrote ', fname, ' in ', map_seconds, ' s'
+        if (grid_mode) then
+            ! Um arquivo por energia constante: I(kx, ky) em E = ce(ie).
+            hdr(1) = 'specmap constant-energy map (broadened projection weights; ' // &
+                     'NOT a photoemission simulation)'
+            hdr(9) = 'units: k 1/Angstrom, intensity states/eV (Mulliken/Lowdin-weighted)'
+            do ie = 1, nce
+                hdr(7) = 'constant energy: E = ' // rtoa(ce(ie)) // ' eV'
+                fname = trim(output_prefix) // '.' // tag // '.' // cemap_energy_tag(ce(ie)) // &
+                        '.cemap.dat'
+                call write_cemap_file(fname, sd, A(ie, :), hdr(1:11), ierr, errmsg)
+                if (ierr /= 0) call die(trim(errmsg))
+                nfiles = nfiles + 1
+            end do
+            call system_clock(map_end)
+            map_seconds = real(map_end - map_start, dp) / real(max(clock_rate, 1_int64), dp)
+            print '(A,I0,A,A,A,F0.3,A)', '          wrote ', nce, ' files ', &
+                trim(output_prefix) // '.' // tag // '.E*.cemap.dat', ' in ', map_seconds, ' s'
+        else
+            fname = trim(output_prefix) // '.' // tag // '.map.dat'
+            call write_map_file(fname, sd, A, grid, hdr(1:11), ierr, errmsg)
+            if (ierr /= 0) call die(trim(errmsg))
+            nfiles = nfiles + 1
+            call system_clock(map_end)
+            map_seconds = real(map_end - map_start, dp) / real(max(clock_rate, 1_int64), dp)
+            print '(A,A,A,F0.3,A)', '          wrote ', fname, ' in ', map_seconds, ' s'
+        end if
     end do
 
     ! ================================================================
     ! 4. Marcas do caminho k para o gnuplot e, depois, o resumo
     ! ================================================================
-    print '(A)', '[3/3] Writing k-path metadata'
-    fname = trim(output_prefix) // '.kticks.gp'
-    call write_kticks_file(fname, sd, ierr, errmsg)
+    if (grid_mode) then
+        print '(A)', '[3/3] Writing k-grid metadata'
+        fname = trim(output_prefix) // '.cegrid.gp'
+        call write_cegrid_file(fname, sd, ierr, errmsg)
+    else
+        print '(A)', '[3/3] Writing k-path metadata'
+        fname = trim(output_prefix) // '.kticks.gp'
+        call write_kticks_file(fname, sd, ierr, errmsg)
+    end if
     if (ierr /= 0) call die(trim(errmsg))
     print '(A,A)', '      wrote ', fname
 
@@ -244,7 +318,8 @@ program specmap_main
     total_seconds = real(map_end - total_start, dp) / real(max(clock_rate, 1_int64), dp)
     print '(A)', ''
     call print_box('specmap | summary')
-    print '(A,I0)',   '  Maps written     : ', nmaps
+    print '(A,I0)',   '  Map expressions  : ', nmaps
+    print '(A,I0)',   '  Files written    : ', nfiles
     print '(A,A)',    '  Output prefix    : ', trim(output_prefix)
     print '(A,F10.3,A)', '  Total time       : ', total_seconds, ' s'
     call print_box_close()

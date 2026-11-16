@@ -4,6 +4,7 @@
 #
 # Full surface-spectral pipeline on a SYNTHETIC model slab (NOT DFT, NOT ARPES):
 #   gen_model -> atomselect -> spectral -> specmap (x2) -> gnuplot
+#   + constant-energy maps: spectral (&KGRID) -> specmap (energies) -> gnuplot
 #
 # Usage (from anywhere; the script cd's into its own directory):
 #   bash examples/surface_spectral/run_example.sh
@@ -34,7 +35,8 @@ step() { printf '\n==== %s ====\n' "$*"; }
 #      replace the committed regions.nml only after validation succeeds) ----
 step "0. clean"
 rm -f model_H.hsio model_S.hsio model.nml regions.tmp.nml \
-      ./*.spectral.bin ./*.spectral.txt ./*.map.dat ./*.kticks.gp ./*.png ./*.pdf
+      ./*.spectral.bin ./*.spectral.txt ./*.map.dat ./*.kticks.gp ./*.png ./*.pdf \
+      ./*.cemap.dat ./*.cegrid.gp
 
 # ---- 1. synthetic model -----------------------------------------------------
 step "1. generate synthetic model (NOT DFT)"
@@ -65,8 +67,14 @@ step "5. specmap (Lorentzian, eta = 0.05 eV)"
 step "6. specmap (Gaussian, sigma = 0.10 eV; same spectral file, no diagonalisation)"
 "$SPECMAP" specmap_gauss.nml
 
-# ---- 7. plots -------------------------------------------------------------------
-step "7. gnuplot"
+# ---- 7./8. constant-energy maps (2D k-grid) --------------------------------------
+step "7. spectral (Mulliken, 81 x 81 k-grid over the surface Brillouin zone)"
+"$SPECTRAL" spectral_kgrid.nml
+step "8. specmap (constant-energy maps at E = -1, 0, +1 eV)"
+"$SPECMAP" specmap_ce.nml
+
+# ---- 9. plots -------------------------------------------------------------------
+step "9. gnuplot"
 if [[ "${NO_PLOT:-0}" == "1" ]]; then
     echo "NO_PLOT=1: skipping gnuplot step"
 elif ! command -v gnuplot >/dev/null 2>&1; then

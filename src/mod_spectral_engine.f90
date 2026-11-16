@@ -3,7 +3,8 @@
 
 !> Motor spectral (docs/design/contracts.md §3, §3.2; usa §4 e §5): lê
 !> spectral.nml, os arquivos HSIO de H/S, o arquivo de estrutura e regions.nml,
-!> diagonaliza H(k) ao longo de um caminho k e calcula os pesos de projeção por
+!> diagonaliza H(k) ao longo de um caminho k (&KPATH) ou numa grade k 2D (&KGRID,
+!> para mapas de energia constante) e calcula os pesos de projeção por
 !> região (Mulliken ou Löwdin, escolhido por `method`).
 !>
 !> Posição no pipeline: backend do executável `spectral`. A saída é um
@@ -41,7 +42,7 @@ module spectral_engine
     use spectral_projection, only: orbital_groups_t, build_orbital_groups, &
                                    overlap_times_vectors, mulliken_weights, lowdin_weights, &
                                    generalized_eigensolve
-    use kpath, only: kpath_t, build_kpath
+    use kpath, only: kpath_t, build_kpath, kgrid_t, build_kgrid
     !$ use omp_lib, only: omp_get_num_threads
     use spectral_data, only: spectral_data_t, SPIN_NONE, SPIN_COLLINEAR, SPIN_NONCOLLINEAR, &
                              METHOD_MULLIKEN, METHOD_LOWDIN, EREF_UNKNOWN, EREF_FERMI, EREF_ABSOLUTE
@@ -57,7 +58,7 @@ module spectral_engine
     !> Limite de avisos impressos por categoria em check_weights.
     integer, parameter :: MAX_WARN_LINES = 20
 
-    !> Espelho dos namelists &SPECTRAL e &KPATH (contracts §3). Os valores
+    !> Espelho dos namelists &SPECTRAL e &KPATH ou &KGRID (contracts §3). Os valores
     !> padrão aqui são os padrões do arquivo de entrada. Os campos são
     !> strings/números simples; a validação ocorre em read_spectral_input.
     !> vertex(:, i) = i-ésimo vértice do caminho k (fracionário); npoints(i) = pontos
@@ -85,6 +86,13 @@ module spectral_engine
         real(dp)                     :: vertex(3, MAX_KVERTEX) = 0.0_dp
         character(len=16)            :: label(MAX_KVERTEX)   = ''
         integer                      :: npoints(MAX_KVERTEX - 1) = 0
+        ! &KGRID (alternativa a &KPATH; veja kpath::build_kgrid)
+        character(len=8)             :: kmode                = 'path'   ! 'path' (&KPATH) ou 'grid' (&KGRID)
+        real(dp)                     :: grid_origin(3)       = 0.0_dp
+        real(dp)                     :: grid_span1(3)        = 0.0_dp
+        real(dp)                     :: grid_span2(3)        = 0.0_dp
+        integer                      :: grid_n1              = 0
+        integer                      :: grid_n2              = 0
     end type spectral_input_t
 
     !> Todos os valores são medidos com system_clock (tempo de parede), em segundos.
@@ -111,8 +119,9 @@ contains
     ! Entrada
     ! ==================================================================
 
-    !> Lê e valida os namelists &SPECTRAL e &KPATH de `filename`
-    !> (os dois grupos podem aparecer em qualquer ordem no arquivo).
+    !> Lê e valida os namelists &SPECTRAL e &KPATH ou &KGRID de `filename`
+    !> (os grupos podem aparecer em qualquer ordem no arquivo). Exatamente um
+    !> entre &KPATH e &KGRID deve estar presente; inp%kmode = 'path' ou 'grid'.
     !> inp é inicializado com seus padrões primeiro, de modo que as chaves ausentes
     !> do arquivo os mantêm. spin_mode / method / energy_reference são convertidos para minúsculas.
     !> energy_reference='fermi' força fermi_known=.true. e E_F = 0.
@@ -146,6 +155,9 @@ contains
         real(dp)                     :: vertex(3, MAX_KVERTEX)
         character(len=64)            :: label(MAX_KVERTEX)   ! mais largo que o armazenado (16) para detectar truncamento
         integer                      :: npoints(MAX_KVERTEX - 1)
+        ! --- variáveis do namelist &KGRID ---
+        real(dp)                     :: origin(3), span1(3), span2(3)
+        integer                      :: n1, n2
 
         namelist /SPECTRAL/ h_file, h_up_file, h_dn_file, s_file, structure_file, regions_file, &
                             allow_no_fingerprint, &
@@ -154,10 +166,11 @@ contains
                             output_prefix, write_text, &
                             tol_norm, tol_negative_warn, tol_s_min
         namelist /KPATH/ nvertex, vertex, label, npoints
+        namelist /KGRID/ origin, span1, span2, n1, n2
 
         integer            :: iu, ios, is
         character(len=512) :: iomsg
-        logical            :: exists
+        logical            :: exists, have_path, have_grid
 
         ierr   = 0
         errmsg = ''
@@ -193,6 +206,14 @@ contains
         label                = inp%label
         npoints              = inp%npoints
 
+        origin               = inp%grid_origin
+        span1                = inp%grid_span1
+        span2                = inp%grid_span2
+        n1                   = inp%grid_n1
+        n2                   = inp%grid_n2
+        have_path            = .false.
+        have_grid            = .false.
+
         ! 2. Abre o arquivo e lê os dois namelists (rewind: independe da ordem).
         inquire(file=filename, exist=exists)
         if (falhou(.not. exists, "input file not found: '" // trim(filename) // "'")) return
@@ -205,8 +226,17 @@ contains
             if (falhou(ios /= 0, "error reading &SPECTRAL: " // trim(iomsg))) exit leitura
             rewind(iu)
             read(iu, nml=KPATH, iostat=ios, iomsg=iomsg)
-            if (falhou(ios == iostat_end, "namelist &KPATH not found in '" // trim(filename) // "'")) exit leitura
-            if (falhou(ios /= 0, "error reading &KPATH: " // trim(iomsg))) exit leitura
+            have_path = (ios /= iostat_end)
+            if (falhou(have_path .and. ios /= 0, "error reading &KPATH: " // trim(iomsg))) exit leitura
+            rewind(iu)
+            read(iu, nml=KGRID, iostat=ios, iomsg=iomsg)
+            have_grid = (ios /= iostat_end)
+            if (falhou(have_grid .and. ios /= 0, "error reading &KGRID: " // trim(iomsg))) exit leitura
+            if (falhou(.not. have_path .and. .not. have_grid, &
+                       "neither &KPATH nor &KGRID found in '" // trim(filename) // "'")) exit leitura
+            if (falhou(have_path .and. have_grid, &
+                       "&KPATH and &KGRID are mutually exclusive (found both in '" // &
+                       trim(filename) // "')")) exit leitura
         end block leitura
         close(iu)
         if (ierr /= 0) return
@@ -241,6 +271,14 @@ contains
         if (falhou(any(len_trim(label) > len(inp%label)), '&KPATH label longer than 16 characters')) return
         inp%label                = label
         inp%npoints              = npoints
+
+        inp%kmode = 'path'
+        if (have_grid) inp%kmode = 'grid'
+        inp%grid_origin          = origin
+        inp%grid_span1           = span1
+        inp%grid_span2           = span2
+        inp%grid_n1              = n1
+        inp%grid_n2              = n2
 
         ! --- enumerações -------------------------------------------------
         select case (trim(inp%spin_mode))
@@ -284,6 +322,16 @@ contains
         if (falhou(.not. (inp%tol_norm > 0.0_dp), 'tol_norm must be > 0')) return
         if (falhou(.not. (inp%tol_negative_warn > 0.0_dp), 'tol_negative_warn must be > 0')) return
         if (falhou(.not. (inp%tol_s_min > 0.0_dp), 'tol_s_min must be > 0')) return
+
+        ! --- grade k (a geometria completa é verificada em build_kgrid) ----
+        if (have_grid) then
+            if (falhou(inp%grid_n1 < 2 .or. inp%grid_n2 < 2, &
+                       '&KGRID n1 and n2 must be >= 2 (got n1=' // itoa(inp%grid_n1) // &
+                       ', n2=' // itoa(inp%grid_n2) // ')')) return
+            if (falhou(all(inp%grid_span1 == 0.0_dp) .or. all(inp%grid_span2 == 0.0_dp), &
+                       '&KGRID span1 and span2 must be non-zero')) return
+            return
+        end if
 
         ! --- caminho k ---------------------------------------------------
         if (falhou(inp%nvertex < 2 .or. inp%nvertex > MAX_KVERTEX, &
@@ -344,6 +392,8 @@ contains
         type(HSDataFormat)              :: sdat
         type(orbital_groups_t)          :: groups
         type(kpath_t)                   :: path
+        type(kgrid_t)                   :: kg
+        real(dp), allocatable           :: kfrac(:,:)          ! (3,nk) pontos do caminho ou da grade
         integer, allocatable            :: list_start(:), list_atoms(:)
         complex(dp), allocatable        :: Hk(:,:), Sk(:,:), C(:,:), SC(:,:)
         real(dp), allocatable           :: E(:), W(:,:)
@@ -493,22 +543,34 @@ contains
         partition = .false.
         if (have_regions) partition = regions_are_partition(rs)
 
-        ! ---------------- 4. caminho k ----------------------------------
-        call build_kpath(inp%vertex(:, 1:inp%nvertex), inp%npoints(1:inp%nvertex - 1), &
-                         inp%label(1:inp%nvertex), reciprocal_lattice(st), path, ierr, msg)
-        if (ierr /= 0) then
-            call fail('k-path: ' // trim(msg))
-            return
+        ! ---------------- 4. caminho k ou grade k -----------------------
+        if (trim(inp%kmode) == 'grid') then
+            call build_kgrid(inp%grid_origin, inp%grid_span1, inp%grid_span2, inp%grid_n1, &
+                             inp%grid_n2, reciprocal_lattice(st), kg, ierr, msg)
+            if (ierr /= 0) then
+                call fail(trim(msg))
+                return
+            end if
+            kfrac = kg%kfrac
+        else
+            call build_kpath(inp%vertex(:, 1:inp%nvertex), inp%npoints(1:inp%nvertex - 1), &
+                             inp%label(1:inp%nvertex), reciprocal_lattice(st), path, ierr, msg)
+            if (ierr /= 0) then
+                call fail('k-path: ' // trim(msg))
+                return
+            end if
+            kfrac = path%kfrac
         end if
+        nk = size(kfrac, 2)
 
         ! ---------------- 5. metadados dos dados espectrais -------------
         ! Preenche tudo em sd exceto os resultados do laço em k (energy/weight são
         ! alocados zerados aqui e escritos na etapa 6).
-        sd%nk        = path%nk
+        sd%nk        = nk
         sd%nband     = n
         sd%nspin     = nspin
         sd%nregion   = ngroup
-        sd%nvertex   = path%nvertex
+        sd%nvertex   = path%nvertex     ! 0 para grade (path vazio)
         sd%spin_mode = smode
         sd%method    = METHOD_MULLIKEN
         if (use_lowdin) sd%method = METHOD_LOWDIN
@@ -531,11 +593,24 @@ contains
         else
             sd%source = 'H=' // trim(inp%h_file) // ' S=' // trim(inp%s_file)
         end if
-        sd%kfrac = path%kfrac
-        sd%kdist = path%kdist
-        sd%vertex_k = path%vertex_k
-        allocate(sd%vertex_label(path%nvertex))
-        sd%vertex_label = path%label
+        sd%kfrac = kfrac
+        if (trim(inp%kmode) == 'grid') then
+            ! Grade: kdist não tem significado (zeros); a geometria vai no bloco KGRID.
+            allocate(sd%kdist(nk), source=0.0_dp)
+            allocate(sd%vertex_k(0), sd%vertex_label(0))
+            sd%is_grid     = .true.
+            sd%grid_n1     = kg%n1
+            sd%grid_n2     = kg%n2
+            sd%grid_origin = kg%origin
+            sd%grid_span1  = kg%span1
+            sd%grid_span2  = kg%span2
+            sd%recip       = reciprocal_lattice(st)
+        else
+            sd%kdist = path%kdist
+            sd%vertex_k = path%vertex_k
+            allocate(sd%vertex_label(path%nvertex))
+            sd%vertex_label = path%label
+        end if
         allocate(sd%region_name(ngroup), sd%region_natoms(ngroup))
         sd%region_name(1) = 'total'
         sd%region_natoms(1) = nat
@@ -543,8 +618,8 @@ contains
             sd%region_name(ir + 1) = rs%regions(ir)%name
             sd%region_natoms(ir + 1) = size(rs%regions(ir)%atoms)
         end do
-        allocate(sd%energy(n, path%nk, nspin), source=0.0_dp)
-        allocate(sd%weight(n, path%nk, ngroup, nspin), source=0.0_dp)
+        allocate(sd%energy(n, nk, nspin), source=0.0_dp)
+        allocate(sd%weight(n, nk, ngroup, nspin), source=0.0_dp)
 
         ! ---------------- 6. laço em k (OpenMP sobre o índice plano (ispin, ik)) --
         ! it = (ispin-1)*nk + ik (invertido abaixo como ispin = (it-1)/nk + 1).
@@ -556,7 +631,6 @@ contains
         ! região. A primeira iteração que falha (menor it) é reportada após a região paralela.
         ! Iterações acima da menor falha vista até então são puladas; as abaixo dela
         ! sempre executam, então a falha reportada é determinística.
-        nk = path%nk
         nit = nspin * nk
         allocate(it_kerr(nit), it_perr(nit), it_smin(nit))
         it_kerr = 0
@@ -574,7 +648,7 @@ contains
         call system_clock(cl0)
 
         !$omp parallel default(none) &
-        !$omp shared(n, ngroup, nk, nit, hdat, sdat, path, groups, use_lowdin, inp, sd, &
+        !$omp shared(n, ngroup, nk, nit, hdat, sdat, kfrac, groups, use_lowdin, inp, sd, &
         !$omp        it_kerr, it_perr, it_smin, first_fail, nthr, report_progress, completed, &
         !$omp        next_report, report_step, cl0, crate, cp, progress_elapsed, progress_eta) &
         !$omp private(it, ispin, ik, g, ff, kerr, perr, smin, Hk, Sk, C, SC, E, W) &
@@ -591,7 +665,7 @@ contains
             ispin = (it - 1) / nk + 1
             ik = it - (ispin - 1) * nk
             call process_kpoint(n, ngroup, hdat(ispin)%Data, sdat%Data, sdat%IndexList, &
-                                path%kfrac(:, ik), groups, Hk, Sk, C, SC, E, W, &
+                                kfrac(:, ik), groups, Hk, Sk, C, SC, E, W, &
                                 t_b, t_d, t_p, kerr, &
                                 lowdin=use_lowdin, tol_s_min=inp%tol_s_min, smin=smin, &
                                 proj_ierr=perr)
@@ -646,20 +720,20 @@ contains
             if (perr == 1) then
                 write(msg, '(A,I0,A,I0,A,3F12.7,A,ES12.4,A,ES10.3,A)') &
                     'overlap matrix not positive definite above tol_s_min at ispin=', ispin, &
-                    ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), '): min eigenvalue smin=', smin, &
+                    ' ik=', ik, ' kfrac=(', kfrac(:, ik), '): min eigenvalue smin=', smin, &
                     ' (tol_s_min=', inp%tol_s_min, ')'
             else if (perr /= 0) then
                 write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'Lowdin projection failed (ierr=', &
-                    perr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
+                    perr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', kfrac(:, ik), ')'
             else if (kerr > n) then
                 ! Convenção do zhegv (LAPACK): info > n significa que o menor principal líder
                 ! de S(k) de ordem info-n não é definido positivo.
                 write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') &
                     'overlap S(k) not positive definite (zhegv info=', &
-                    kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
+                    kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', kfrac(:, ik), ')'
             else
                 write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'generalized eigensolver failed (info=', &
-                    kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
+                    kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', kfrac(:, ik), ')'
             end if
             call fail(trim(msg))
             return

@@ -63,6 +63,14 @@ module spectral_data
         integer,  allocatable          :: region_natoms(:)   ! (nregion)
         real(dp), allocatable          :: energy(:,:,:)      ! (nband, nk, nspin) eV
         real(dp), allocatable          :: weight(:,:,:,:)    ! (nband, nk, nregion, nspin)
+        ! Grade k 2D (bloco de extensão 'KGRID', versão 1.1). Se is_grid, os nk pontos
+        ! formam uma grade grid_n1 x grid_n2 com ik = i + (j-1)*grid_n1 (veja kpath::kgrid_t),
+        ! kdist não tem significado (zeros) e nvertex = 0. recip guarda b_i como LINHAS
+        ! (1/Angstrom, inclui 2*pi), para que os leitores obtenham k cartesiano.
+        logical                        :: is_grid = .false.
+        integer                        :: grid_n1 = 0, grid_n2 = 0
+        real(dp)                       :: grid_origin(3) = 0, grid_span1(3) = 0, grid_span2(3) = 0
+        real(dp)                       :: recip(3,3) = 0
     end type spectral_data_t
 
     public :: write_spectral_file, read_spectral_file, write_spectral_text, find_region
@@ -73,6 +81,13 @@ module spectral_data
     character(len=8), parameter :: SD_MAGIC   = "LFSPECT" // achar(0)
     character(len=8), parameter :: SD_TRAILER = "LFSPEND" // achar(0)
     integer(int32),   parameter :: SD_VER_MAJOR = 1_int32, SD_VER_MINOR = 0_int32
+    !> Arquivos com grade k são escritos como versão 1.1 (bloco 'KGRID'); arquivos
+    !> de caminho continuam 1.0, byte a byte iguais aos anteriores.
+    integer(int32),   parameter :: SD_VER_MINOR_GRID = 1_int32
+    character(len=16), parameter :: KGRID_TAG = 'KGRID'
+    !> Carga do bloco KGRID: n1, n2 (int32) + origin, span1, span2 (3 real64 cada)
+    !> + recip (9 real64).
+    integer(int64),   parameter :: KGRID_BYTES = 2*4 + 18*8
     integer(int32),   parameter :: SD_CANARY    = 168496141_int32   ! 0x0A0B0C0D, sonda de ordem de bytes
 
     !> Tamanho fixo do cabeçalho em bytes (itens 1..9 da tabela de layout):
@@ -114,7 +129,7 @@ contains
         character(len=*),      intent(out) :: errmsg
 
         integer        :: u, ios, i
-        integer(int32) :: fk
+        integer(int32) :: fk, vmin
 
         call validate(sd, ierr, errmsg)
         if (ierr /= 0) return
@@ -129,11 +144,13 @@ contains
 
         fk = 0_int32
         if (sd%fermi_known) fk = 1_int32
+        vmin = SD_VER_MINOR
+        if (sd%is_grid) vmin = SD_VER_MINOR_GRID
 
         ! Os registros seguem a ordem da tabela de layout. Qualquer erro de escrita
         ! deixa ios diferente de zero, o que interrompe as escritas restantes.
         ! Cabeçalho (itens 1..9)
-        write(u, iostat=ios) SD_MAGIC, SD_VER_MAJOR, SD_VER_MINOR, SD_CANARY, &
+        write(u, iostat=ios) SD_MAGIC, SD_VER_MAJOR, vmin, SD_CANARY, &
             int(storage_size(0_int32)/8, int32), int(storage_size(0_int64)/8, int32), &
             int(storage_size(0.0_real64)/8, int32), &
             int(sd%nk, int32), int(sd%nband, int32), int(sd%nspin, int32), &
@@ -152,10 +169,19 @@ contains
             if (ios == 0) write(u, iostat=ios) sd%region_name(i)
         end do
         if (ios == 0) write(u, iostat=ios) int(sd%region_natoms, int32)
-        ! Arrays volumosos (15-16), depois n_ext = 0 (sem blocos de extensão na v1.0) e trailer
+        ! Arrays volumosos (15-16), depois os blocos de extensão (só 'KGRID', se
+        ! houver grade) e o trailer
         if (ios == 0) write(u, iostat=ios) real(sd%energy, real64)
         if (ios == 0) write(u, iostat=ios) real(sd%weight, real64)
-        if (ios == 0) write(u, iostat=ios) 0_int32, SD_TRAILER
+        if (sd%is_grid) then
+            if (ios == 0) write(u, iostat=ios) 1_int32, KGRID_TAG, KGRID_BYTES, &
+                int(sd%grid_n1, int32), int(sd%grid_n2, int32), &
+                real(sd%grid_origin, real64), real(sd%grid_span1, real64), &
+                real(sd%grid_span2, real64), real(sd%recip, real64)
+        else
+            if (ios == 0) write(u, iostat=ios) 0_int32
+        end if
+        if (ios == 0) write(u, iostat=ios) SD_TRAILER
         if (ios /= 0) then
             close(u, iostat=i)
             ierr = 2
@@ -194,9 +220,9 @@ contains
         integer(int64)              :: fsize, pos, nbytes_ext
         character(len=8)            :: magic, trailer
         character(len=16)           :: tag
-        integer(int32)              :: vmaj, vmin, canary, sz(3), dims(5), flags(4), n_ext
+        integer(int32)              :: vmaj, vmin, canary, sz(3), dims(5), flags(4), n_ext, gn(2)
         integer(int32), allocatable :: itmp(:)
-        real(real64)                :: ef
+        real(real64)                :: ef, gvec(18)
 
         ierr = 0
         errmsg = ''
@@ -357,8 +383,8 @@ contains
         pos = pos + nbytes_ext
 
         ! ---- blocos de extensão ----------------------------------------
-        ! Gancho de compatibilidade futura: cada bloco é {tag char(16), nbytes
-        ! int64, payload}. Aqui os payloads são ignorados, nunca interpretados.
+        ! Cada bloco é {tag char(16), nbytes int64, payload}. 'KGRID' é
+        ! interpretado (grade k 2D); os demais são ignorados pelo tamanho.
         if (.not. have(4_int64, "n_ext")) return
         read(u, iostat=ios) n_ext
         if (.not. ok_read("n_ext")) return
@@ -377,6 +403,33 @@ contains
                 return
             end if
             if (.not. have(nbytes_ext, "extension block payload")) return
+            if (tag == KGRID_TAG) then
+                if (sd%is_grid) then
+                    call fail_close(6, "duplicate KGRID extension block")
+                    return
+                end if
+                if (nbytes_ext /= KGRID_BYTES) then
+                    call fail_close(6, "KGRID extension block has wrong size")
+                    return
+                end if
+                read(u, pos=pos, iostat=ios) gn, gvec
+                if (.not. ok_read("KGRID extension block")) return
+                sd%is_grid = .true.
+                sd%grid_n1 = int(gn(1)); sd%grid_n2 = int(gn(2))
+                sd%grid_origin = real(gvec(1:3), dp)
+                sd%grid_span1  = real(gvec(4:6), dp)
+                sd%grid_span2  = real(gvec(7:9), dp)
+                sd%recip       = reshape(real(gvec(10:18), dp), [3, 3])
+                if (sd%grid_n1 < 2 .or. sd%grid_n2 < 2 .or. &
+                    int(sd%grid_n1, int64) * int(sd%grid_n2, int64) /= int(sd%nk, int64)) then
+                    call fail_close(6, "KGRID: need n1, n2 >= 2 and n1*n2 = nk")
+                    return
+                end if
+                if (sd%nvertex /= 0) then
+                    call fail_close(6, "KGRID: a k-grid file must have nvertex = 0")
+                    return
+                end if
+            end if
             pos = pos + nbytes_ext
         end do
 
@@ -474,6 +527,13 @@ contains
         if (ios == 0) write(u, '(A,A)', iostat=ios) "# fingerprint ", trim(sd%fingerprint)
         if (ios == 0) write(u, '(A,A)', iostat=ios) "# source ", trim(sd%source)
         if (ios == 0) write(u, '(A)', iostat=ios) "# units energy eV, k_distance 1/Angstrom"
+        if (sd%is_grid) then
+            if (ios == 0) write(u, '(A,I0,A,I0,A)', iostat=ios) "# kgrid n1 ", sd%grid_n1, &
+                "  n2 ", sd%grid_n2, "  (ik = i + (j-1)*n1; kdist not meaningful, set to 0)"
+            if (ios == 0) write(u, '(A,3ES23.15)', iostat=ios) "# kgrid origin ", sd%grid_origin
+            if (ios == 0) write(u, '(A,3ES23.15)', iostat=ios) "# kgrid span1  ", sd%grid_span1
+            if (ios == 0) write(u, '(A,3ES23.15)', iostat=ios) "# kgrid span2  ", sd%grid_span2
+        end if
         do i = 1, sd%nvertex
             if (ios == 0) write(u, '(A,I0,A,A,A,I0,A,ES23.15)', iostat=ios) "# vertex ", i, &
                 " label ", trim(sd%vertex_label(i)), " ik ", sd%vertex_k(i), &
@@ -610,6 +670,16 @@ contains
         if (trim(adjustl(sd%region_name(1))) /= 'total') then
             errmsg = "spectral_data: region 1 must be named 'total'"
             return
+        end if
+        if (sd%is_grid) then
+            if (sd%grid_n1 < 2 .or. sd%grid_n2 < 2 .or. sd%grid_n1 * sd%grid_n2 /= sd%nk) then
+                errmsg = "spectral_data: k-grid needs grid_n1, grid_n2 >= 2 and grid_n1*grid_n2 = nk"
+                return
+            end if
+            if (sd%nvertex /= 0) then
+                errmsg = "spectral_data: a k-grid must have nvertex = 0"
+                return
+            end if
         end if
         ierr = 0
     end subroutine validate

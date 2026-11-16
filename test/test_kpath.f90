@@ -4,7 +4,7 @@
 !> Testes do módulo kpath (contracts §3.1).
 program test_kpath
     use types,   only: dp
-    use kpath,   only: kpath_t, build_kpath, KLABEL_LEN
+    use kpath,   only: kpath_t, build_kpath, KLABEL_LEN, kgrid_t, build_kgrid
     use testing, only: check, check_close, test_summary
     implicit none
 
@@ -14,6 +14,7 @@ program test_kpath
     character(len=KLABEL_LEN) :: label(3)
     character(len=256)        :: errmsg
     type(kpath_t)             :: path
+    type(kgrid_t)             :: kg
     integer                   :: ierr, k
     logical                   :: ok
 
@@ -106,6 +107,39 @@ program test_kpath
 
     call build_kpath(vertex, [10], label, recip, path, ierr, errmsg)
     call check(ierr /= 0, "error: wrong size(npoints)")
+
+    ! ---- grade k 2D (mapas de energia constante) --------------------------
+    ! Célula hexagonal: b1 e b2 a 60 graus; grade centrada em G cobrindo b1 x b2.
+    call build_kgrid([-0.5_dp, -0.5_dp, 0.0_dp], [1.0_dp, 0.0_dp, 0.0_dp], &
+                     [0.0_dp, 1.0_dp, 0.0_dp], 5, 3, recip, kg, ierr, errmsg)
+    call check(ierr == 0, "kgrid: ierr == 0 ("//trim(errmsg)//")")
+    if (ierr == 0) then
+        call check(kg%nk == 15 .and. kg%n1 == 5 .and. kg%n2 == 3, "kgrid: nk = n1*n2 = 15")
+        call check(all(kg%kfrac(:, 1) == [-0.5_dp, -0.5_dp, 0.0_dp]), "kgrid: first point = origin")
+        call check(all(kg%kfrac(:, 15) == [0.5_dp, 0.5_dp, 0.0_dp]), "kgrid: last point = origin+span1+span2")
+        call check(all(kg%kfrac(:, 5) == [0.5_dp, -0.5_dp, 0.0_dp]), "kgrid: i runs fastest (ik=n1 -> end of span1)")
+        call check(all(abs(kg%kfrac(:, 8)) < 1.0e-15_dp), "kgrid: centre point (i=3,j=2) is G")
+        call check(maxval(abs(kg%kcart(:, 15) - (0.5_dp * recip(1, :) + 0.5_dp * recip(2, :)))) &
+                   < 1.0e-12_dp, "kgrid: kcart = kfrac . recip")
+        call check_close(norm2(kg%e_u), 1.0_dp, 1.0e-14_dp, "kgrid: |e_u| = 1")
+        call check_close(norm2(kg%e_v), 1.0_dp, 1.0e-14_dp, "kgrid: |e_v| = 1")
+        call check_close(dot_product(kg%e_u, kg%e_v), 0.0_dp, 1.0e-14_dp, "kgrid: e_u . e_v = 0")
+        ok = .true.
+        do k = 1, kg%nk
+            ok = ok .and. abs(norm2(kg%kuv(:, k)) - norm2(kg%kcart(:, k))) < 1.0e-12_dp
+        end do
+        call check(ok, "kgrid: in-plane |k_uv| = |k_cart| (grid plane through G)")
+    end if
+
+    call build_kgrid([0.0_dp, 0.0_dp, 0.0_dp], [1.0_dp, 0.0_dp, 0.0_dp], &
+                     [0.0_dp, 1.0_dp, 0.0_dp], 1, 3, recip, kg, ierr, errmsg)
+    call check(ierr == 1 .and. kg%nk == 0, "kgrid error: n1 < 2")
+    call build_kgrid([0.0_dp, 0.0_dp, 0.0_dp], [0.0_dp, 0.0_dp, 0.0_dp], &
+                     [0.0_dp, 1.0_dp, 0.0_dp], 3, 3, recip, kg, ierr, errmsg)
+    call check(ierr == 2, "kgrid error: zero-length span1")
+    call build_kgrid([0.0_dp, 0.0_dp, 0.0_dp], [1.0_dp, 1.0_dp, 0.0_dp], &
+                     [-0.5_dp, -0.5_dp, 0.0_dp], 3, 3, recip, kg, ierr, errmsg)
+    call check(ierr == 3, "kgrid error: collinear spans")
 
     call test_summary("test_kpath")
 

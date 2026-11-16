@@ -1,7 +1,9 @@
-# `spectral` — band energies and region projection weights along a k-path
+# `spectral` — band energies and region projection weights along a k-path or on a k-grid
 
 `spectral` is the **Compute** step of the surface spectral pipeline
-(`atomselect` → `spectral` → `specmap`). For every k-point of a path it
+(`atomselect` → `spectral` → `specmap`). For every k-point of a path
+(`&KPATH`, for (k, E) maps) or of a 2D grid (`&KGRID`, for constant-energy
+kx × ky maps) it
 builds H(k) and S(k) from HSIO files, solves the generalised eigenproblem
 `H(k) c = ε S(k) c`, and projects every eigenstate on the atomic regions of a
 `regions.nml` file. It writes the discrete data (energies + weights) to a
@@ -11,7 +13,7 @@ without re-diagonalising, by [`specmap`](specmap.md).
 ```text
 OpenMX .scfout ─ openmx2hsio ─> *_H.hsio, *_S.hsio ┐
 structure.nml ─ atomselect ───> regions.nml        ├─> spectral ─> <prefix>.spectral.bin (+ .txt)
-spectral.nml (&SPECTRAL + &KPATH) ─────────────────┘
+spectral.nml (&SPECTRAL + &KPATH|&KGRID) ──────────┘
 ```
 
 ## Usage
@@ -27,7 +29,8 @@ prefixed `[spectral error]` and the exit code is 1.
 
 ## Input: `spectral.nml`
 
-The file contains two namelists, `&SPECTRAL` and `&KPATH`, in any order.
+The file contains `&SPECTRAL` and exactly one of `&KPATH` (line cut) or
+`&KGRID` (2D grid), in any order. Giving both, or neither, is an error.
 
 ### `&SPECTRAL`
 
@@ -70,6 +73,41 @@ points are not duplicated**. The accumulated distance `kdist` (starting at
 (Cartesian), not in fractional units. Two equal consecutive vertices (a
 zero-length segment) are an error. A path cannot contain discontinuities
 (e.g. `…K | M…`): every segment is joined to the next.
+
+### `&KGRID` — 2D k-grid for constant-energy maps
+
+| field | type | meaning |
+|---|---|---|
+| `origin` | 3 reals | corner of the grid, **fractional reciprocal coordinates** |
+| `span1`, `span2` | 3 reals each | edge vectors of the grid (fractional); non-zero and not collinear |
+| `n1`, `n2` | integers ≥ 2 | number of points along `span1` / `span2` (both ends included) |
+
+Point `(i, j)` is `origin + (i−1)/(n1−1)·span1 + (j−1)/(n2−1)·span2`,
+`i = 1..n1`, `j = 1..n2`, stored with the flat index `ik = i + (j−1)·n1`
+(`i` fastest), so `nk = n1·n2` diagonalisations are done. The grid can lie in
+any plane; for a slab with vacuum along z, use spans in the b1–b2 plane.
+Examples:
+
+```fortran
+&KGRID                         ! full surface BZ, Γ at the centre (any 2D lattice)
+    origin = -0.5, -0.5, 0.0
+    span1  =  1.0,  0.0, 0.0
+    span2  =  0.0,  1.0, 0.0
+    n1 = 81, n2 = 81
+/
+&KGRID                         ! zoom around Γ: 20% of b1 and b2 in each direction
+    origin = -0.2, -0.2, 0.0
+    span1  =  0.4,  0.0, 0.0
+    span2  =  0.0,  0.4, 0.0
+    n1 = 101, n2 = 101
+/
+```
+
+For a non-orthogonal surface cell (e.g. hexagonal) the region spanned by
+`b1`, `b2` is a rhombus; the map is still plotted in Cartesian kx, ky, so it
+shows the true shape. The cost grows as `n1·n2`: an 81 × 81 grid of the
+12-orbital example takes ≈ 0.2 s on one thread, but for large DFT slabs the
+grid is usually the dominant cost (OpenMP over k-points applies unchanged).
 
 ### Example
 
@@ -211,12 +249,19 @@ fields contiguous (no record markers). Units are fixed by the format: eV and
 | 14 | region_natoms(nregion) | int32 |
 | 15 | energy(nband, nk, nspin), Fortran order | real64 |
 | 16 | weight(nband, nk, nregion, nspin), Fortran order | real64 |
-| 17 | n_ext (= 0 in v1.0) | int32 |
+| 17 | n_ext (0 for k-path files; 1 for k-grid files) | int32 |
 | 18 | n_ext × {tag char(16), nbytes int64, payload} | — |
 | 19 | trailer `"LFSPEND"` + NUL | char(8) |
 
+**k-grid files** (written with `&KGRID`) have `version_minor = 1`,
+`nvertex = 0`, `kdist = 0` (not meaningful on a grid) and one extension block
+`KGRID` (152 bytes): `n1, n2` (int32), `origin(3), span1(3), span2(3)` and the
+reciprocal lattice `recip(3,3)` (rows b_i in 1/Å incl. 2π), all real64. With
+`recip` stored, `specmap` computes Cartesian k without the structure file.
+k-path files are unchanged (version 1.0, `n_ext = 0`).
+
 The reader (used by `specmap`) checks magic, major version 1 (any minor;
-extension blocks skipped), canary, type sizes, dimensions, that region 1 is
+unknown extension blocks skipped, `KGRID` validated), canary, type sizes, dimensions, that region 1 is
 `total`, vertex indices, the file size before each array, and the trailer;
 truncated or corrupt files give an error message.
 
@@ -224,8 +269,8 @@ truncated or corrupt files give an error message.
 
 For inspection/debugging only; never read back. A `#` header with all
 metadata (version, dimensions, spin mode, method, energy reference, E_F,
-fingerprint, source, units, vertices with `ik` and `kdist`, regions with
-their atom counts), a `#` line naming the columns, then one row per
+fingerprint, source, units, vertices with `ik` and `kdist` — or, for a
+k-grid, `n1`, `n2`, origin and spans —, regions with their atom counts), a `#` line naming the columns, then one row per
 (spin, k, band):
 
 ```text
@@ -258,8 +303,9 @@ measured timings (tiny 18-orbital test case only) are in
 - Weights are projections of Kohn–Sham-like eigenstates of the given H; no
   photoemission matrix elements, photon energy/polarisation, final states,
   k_z broadening or many-body effects are included.
-- Only paths in k (line cuts) are computed; constant-energy kx × ky maps are
-  not supported. Path discontinuities are not supported.
+- k-points are either a path (line cuts) or one planar 2D grid; path
+  discontinuities are not supported, and symmetry is not used to reduce the
+  grid (the full `n1·n2` points are diagonalised).
 - Mulliken weights can be negative and do not sum to 1 per region unless the
   regions form a partition.
 - Overlapping regions are allowed; each region is projected independently,
@@ -291,7 +337,9 @@ measured timings (tiny 18-orbital test case only) are in
 ## Tests
 
 - `fpm test test_kpath` — k-path construction (point count, no duplicated
-  junctions, uniform steps, reciprocal-metric distances, errors).
+  junctions, uniform steps, reciprocal-metric distances, errors) and the 2D
+  k-grid (corners, index order, Cartesian coordinates, in-plane basis,
+  errors).
 - `fpm test test_projection` — Mulliken and Löwdin weights, `S·C`, the
   generalised eigensolver, the `tol_s_min` abort (synthetic matrices).
 - `fpm test test_spectral_data` — binary format round trip and reader
@@ -299,7 +347,8 @@ measured timings (tiny 18-orbital test case only) are in
 - `fpm test test_spectral_engine` — input parsing, consistency on the
   diatomic fixture, Löwdin, partition sums, non-collinear and collinear
   spin, error cases, file round trip and bitwise determinism (1 vs 4
-  threads in an OpenMP build).
+  threads in an OpenMP build); `&KGRID` parsing (exclusive with `&KPATH`) and
+  k-grid energies against an independent `zhegv` at every grid point.
 - `fpm test test_structure_io`, `test_regions` — structure and regions input.
 
 ## Worked example

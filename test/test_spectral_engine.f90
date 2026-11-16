@@ -48,6 +48,8 @@ program test_spectral_engine
     call test_errors()
     call test_roundtrip_file()
     call test_determinism()
+    call test_kgrid_input()
+    call test_kgrid_diatomic()
 
     call test_summary("test_spectral_engine")
 
@@ -550,5 +552,120 @@ contains
         !$ end if
         !$ call omp_set_num_threads(max_thr)
     end subroutine test_determinism
+
+    ! ------------------------------------------------------------------
+    ! &KGRID: leitura e exclusividade com &KPATH
+    ! ------------------------------------------------------------------
+
+    subroutine test_kgrid_input()
+        type(spectral_input_t)      :: inp
+        integer                     :: ierr
+        character(len=512)          :: msg
+        character(len=*), parameter :: f = TMP // 'kgrid.nml'
+
+        call write_lines(f, [character(len=120) :: &
+            '&KGRID', '  origin = -0.5, -0.5, 0.0', '  span1 = 1.0, 0.0, 0.0', &
+            '  span2 = 0.0, 1.0, 0.0', '  n1 = 41', '  n2 = 31', '/', &
+            '&SPECTRAL', "  h_file = 'h.hsio'", "  s_file = 's.hsio'", &
+            "  structure_file = 'st.nml'", '/'])
+        call read_spectral_input(f, inp, ierr, msg)
+        call check(ierr == 0, 'read &KGRID: ' // trim(msg))
+        call check(trim(inp%kmode) == 'grid', "kmode = 'grid'")
+        call check(inp%grid_n1 == 41 .and. inp%grid_n2 == 31, 'KGRID n1, n2')
+        call check(all(inp%grid_origin == [-0.5_dp, -0.5_dp, 0.0_dp]), 'KGRID origin')
+        call check(all(inp%grid_span2 == [0.0_dp, 1.0_dp, 0.0_dp]), 'KGRID span2')
+
+        call write_lines(f, [character(len=120) :: &
+            '&SPECTRAL', "  h_file = 'h.hsio'", "  s_file = 's.hsio'", &
+            "  structure_file = 'st.nml'", '/', &
+            '&KPATH', '  nvertex = 2', '  npoints = 4', '/', &
+            '&KGRID', '  span1 = 1.0, 0.0, 0.0', '  span2 = 0.0, 1.0, 0.0', '  n1 = 3', '  n2 = 3', '/'])
+        call read_spectral_input(f, inp, ierr, msg)
+        call check(ierr /= 0 .and. index(msg, 'mutually exclusive') > 0, '&KPATH + &KGRID rejected')
+
+        call write_lines(f, [character(len=120) :: &
+            '&SPECTRAL', "  h_file = 'h.hsio'", "  s_file = 's.hsio'", &
+            "  structure_file = 'st.nml'", '/'])
+        call read_spectral_input(f, inp, ierr, msg)
+        call check(ierr /= 0 .and. index(msg, 'neither') > 0, 'no k namelist rejected')
+
+        call write_lines(f, [character(len=120) :: &
+            '&SPECTRAL', "  h_file = 'h.hsio'", "  s_file = 's.hsio'", &
+            "  structure_file = 'st.nml'", '/', &
+            '&KGRID', '  span1 = 1.0, 0.0, 0.0', '  span2 = 0.0, 1.0, 0.0', '  n1 = 1', '  n2 = 3', '/'])
+        call read_spectral_input(f, inp, ierr, msg)
+        call check(ierr /= 0, 'KGRID n1 = 1 rejected')
+
+        call write_lines(f, [character(len=120) :: &
+            '&SPECTRAL', "  h_file = 'h.hsio'", "  s_file = 's.hsio'", &
+            "  structure_file = 'st.nml'", '/', &
+            '&KGRID', '  span1 = 1.0, 0.0, 0.0', '  n1 = 3', '  n2 = 3', '/'])
+        call read_spectral_input(f, inp, ierr, msg)
+        call check(ierr /= 0, 'KGRID missing span2 rejected')
+
+        call remove_file(f)
+    end subroutine test_kgrid_input
+
+    ! ------------------------------------------------------------------
+    ! &KGRID no fixture Diatomic: energias vs zhegv independente em cada ponto
+    ! da grade, metadados da grade e ida e volta pelo arquivo binário.
+    ! ------------------------------------------------------------------
+
+    subroutine test_kgrid_diatomic()
+        type(spectral_input_t)      :: inp
+        type(spectral_data_t)       :: sd, sd2
+        type(spectral_timing_t)     :: tm
+        type(HSDataFormat)          :: hd, sdat
+        complex(dp), allocatable    :: Hk(:,:), Sk(:,:), work(:)
+        real(dp), allocatable       :: w(:), rwork(:)
+        integer                     :: ierr, ik, n, info, lwork
+        real(dp)                    :: maxdiff
+        character(len=512)          :: msg
+        character(len=*), parameter :: bf = TMP // 'kgrid.spectral.bin'
+
+        call base_input(inp, DIA_H, DIA_S, DIA_ST)
+        inp%kmode = 'grid'
+        inp%grid_origin = [-0.5_dp, -0.5_dp, 0.0_dp]
+        inp%grid_span1  = [ 1.0_dp,  0.0_dp, 0.0_dp]
+        inp%grid_span2  = [ 0.0_dp,  1.0_dp, 0.0_dp]
+        inp%grid_n1 = 5
+        inp%grid_n2 = 3
+        call run_spectral(inp, sd, tm, ierr, msg)
+        call check(ierr == 0, 'run_spectral Diatomic k-grid: ' // trim(msg))
+        if (ierr /= 0) return
+        call check(sd%is_grid, 'k-grid flag set')
+        call check(sd%nk == 15 .and. sd%grid_n1 == 5 .and. sd%grid_n2 == 3, 'k-grid nk = 15')
+        call check(sd%nvertex == 0, 'k-grid has no vertices')
+        call check(all(sd%kdist == 0.0_dp), 'k-grid kdist = 0')
+        call check(all(abs(sd%kfrac(:, 8)) < 1.0e-15_dp), 'k-grid centre point is G')
+        call check(any(sd%recip /= 0.0_dp), 'k-grid stores the reciprocal lattice')
+
+        call hd%ReadFile(DIA_H)
+        call sdat%ReadFile(DIA_S)
+        n = hd%NOrbs
+        lwork = max(1, 2 * n - 1)
+        allocate(Hk(n, n), Sk(n, n), w(n), work(lwork), rwork(max(1, 3 * n - 2)))
+        maxdiff = 0.0_dp
+        do ik = 1, sd%nk
+            call compute_Hk_at_kpoint(hd%Data, hd%IndexList, Hk, sd%kfrac(:, ik))
+            call compute_Hk_at_kpoint(sdat%Data, sdat%IndexList, Sk, sd%kfrac(:, ik))
+            call zhegv(1, 'N', 'U', n, Hk, n, Sk, n, w, work, lwork, rwork, info)
+            maxdiff = max(maxdiff, maxval(abs(w - sd%energy(:, ik, 1))))
+        end do
+        call check_close(maxdiff, 0.0_dp, 1e-10_dp, 'k-grid energies vs reference zhegv (max diff)')
+        call check_close(max_total_dev(sd), 0.0_dp, 1e-10_dp, 'k-grid total weight = 1')
+
+        call write_spectral_file(bf, sd, ierr, msg)
+        call check(ierr == 0, 'write k-grid file: ' // trim(msg))
+        call read_spectral_file(bf, sd2, ierr, msg)
+        call check(ierr == 0, 'read k-grid file: ' // trim(msg))
+        if (ierr == 0) then
+            call check(sd2%is_grid .and. sd2%grid_n1 == 5 .and. sd2%grid_n2 == 3, 'k-grid metadata read back')
+            call check(all(sd2%recip == sd%recip), 'k-grid recip read back')
+            call check(all(sd2%energy == sd%energy) .and. all(sd2%weight == sd%weight), &
+                       'k-grid energies/weights read back')
+        end if
+        call remove_file(bf)
+    end subroutine test_kgrid_diatomic
 
 end program test_spectral_engine

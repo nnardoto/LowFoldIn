@@ -81,8 +81,8 @@ The package builds the following command-line programs.
 | `openmx2hsio` | Converts an OpenMX `.scfout` file into the internal `.hsio` format. |
 | `unfold` | Unfolds a supercell band structure into the primitive-cell Brillouin zone. |
 | `atomselect` | Creates and validates named atomic regions (`regions.nml`); see [Surface spectral analysis](#análise-espectral-de-superfícies--surface-spectral-analysis). |
-| `spectral` | Band energies and per-region projection weights along a k-path (`.spectral.bin`). |
-| `specmap` | Broadened spectral maps A_P(k,E) and region combinations from a `.spectral.bin` file. |
+| `spectral` | Band energies and per-region projection weights along a k-path or on a 2D k-grid (`.spectral.bin`). |
+| `specmap` | Broadened spectral maps A_P(k,E), constant-energy kx × ky maps and region combinations from a `.spectral.bin` file. |
 
 They can be launched through fpm:
 
@@ -415,8 +415,8 @@ Three tools resolve the electronic states of a slab by atomic region (for exampl
 | Step | Tool | Role | Main input | Main output |
 |---|---|---|---|---|
 | Select | `atomselect` | Defines named atomic regions by index lists, projection ranges along an arbitrary Cartesian normal, Cartesian boxes, detected layers or top/bottom surface layers; validates them against the structure (fingerprint). | structure file (same format as `unfold`) | `regions.nml` |
-| Compute | `spectral` | Solves `H(k)c = E S(k)c` along a k-path and computes Mulliken (default) or Löwdin weights of every band on every region; never shifts energies. OpenMP over k-points. | `spectral.nml` (`&SPECTRAL` + `&KPATH`), HSIO files, structure, `regions.nml` | `<prefix>.spectral.bin` (+ optional `.spectral.txt`) |
-| Represent | `specmap` | Broadens the weights into maps A_P(k,E) (Lorentzian or Gaussian), forms region combinations such as `top-bottom`, optional Fermi–Dirac occupation. No diagonalisation: re-run it freely to change width or window. | `specmap.nml`, `.spectral.bin` | `<prefix>.<map>.map.dat`, `<prefix>.kticks.gp` |
+| Compute | `spectral` | Solves `H(k)c = E S(k)c` along a k-path (`&KPATH`) or on a 2D k-grid (`&KGRID`) and computes Mulliken (default) or Löwdin weights of every band on every region; never shifts energies. OpenMP over k-points. | `spectral.nml` (`&SPECTRAL` + `&KPATH` or `&KGRID`), HSIO files, structure, `regions.nml` | `<prefix>.spectral.bin` (+ optional `.spectral.txt`) |
+| Represent | `specmap` | Broadens the weights into maps A_P(k,E) (Lorentzian or Gaussian), forms region combinations such as `top-bottom`, optional Fermi–Dirac occupation. For k-grid files, constant-energy maps at the energies listed in `energies`. No diagonalisation: re-run it freely to change width or window. | `specmap.nml`, `.spectral.bin` | `<prefix>.<map>.map.dat` + `<prefix>.kticks.gp`, or `<prefix>.<map>.E<±x.xxx>.cemap.dat` + `<prefix>.cegrid.gp` |
 
 Data flow:
 
@@ -424,8 +424,9 @@ Data flow:
 OpenMX .scfout ── openmx2hsio ──> <prefix>_H.hsio, <prefix>_S.hsio ─────┐
 structure.nml ─── atomselect ───> regions.nml ──────────────────────────┤
                                                                          ├─> spectral ─> <prefix>.spectral.bin
-spectral.nml (&SPECTRAL, &KPATH) ───────────────────────────────────────┘
-<prefix>.spectral.bin ── specmap (specmap.nml) ──> *.map.dat + *.kticks.gp ── gnuplot (tools/gnuplot/*.gp)
+spectral.nml (&SPECTRAL, &KPATH|&KGRID) ────────────────────────────────┘
+<prefix>.spectral.bin ── specmap (specmap.nml) ──> *.map.dat + *.kticks.gp      ── gnuplot (tools/gnuplot/*.gp)
+                                                   or *.cemap.dat + *.cegrid.gp (k-grid: constant-energy maps)
 ```
 
 Important conventions:
@@ -433,7 +434,7 @@ Important conventions:
 - Energies in eV, positions in Å, k-points in fractional reciprocal coordinates, k-distance in 1/Å.
 - `spectral` never shifts energies, and HSIO files store no Fermi level. `openmx2hsio` shifts H by −E_F·S by default, so for default conversions set `energy_reference = 'fermi'`; for `--no-fermi-shift` conversions use `'absolute'`. The default `'unknown'` is always safe.
 - Mulliken weights are populations, not probabilities, and can be slightly negative in a non-orthogonal basis. The `total` group equals 1 per band by construction (a numerical check).
-- The maps are broadened projection weights, **not** simulated ARPES intensities: no photoemission matrix elements, final states or many-body effects are included. Only k-path maps are produced (no kx × ky maps).
+- The maps are broadened projection weights, **not** simulated ARPES intensities: no photoemission matrix elements, final states or many-body effects are included. Constant-energy kx × ky maps are evaluated directly on the k-grid given to `spectral` (no interpolation or symmetrisation).
 - The tools have been exercised on synthetic models and small test fixtures only.
 
 Build and test:
@@ -517,8 +518,8 @@ LowFoldIn/
 │   ├── openmx2hsio.f90          # OpenMX conversion CLI
 │   ├── unfold.f90               # Unfolding CLI
 │   ├── atomselect.f90           # Named atomic regions CLI
-│   ├── spectral.f90             # Region-projected bands along a k-path
-│   ├── specmap.f90              # Broadened spectral maps
+│   ├── spectral.f90             # Region-projected bands along a k-path or k-grid
+│   ├── specmap.f90              # Broadened spectral maps and constant-energy maps
 │   └── gnuplot/                 # map_positive.gp, map_difference.gp, map_compare.gp
 ├── fpm.toml
 ├── LICENSE

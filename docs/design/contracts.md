@@ -226,6 +226,18 @@ Geometric selection and layer routines (§6) are added to this module in F8.
 - H and S HSIO files must agree in nAtoms, NOrbs, Orbs, Neighbors, IndexList;
   nAtoms must equal the structure nat.
 - k-path (`kpath` module, §3.1): `MAX_KVERTEX = 100`.
+- **k-grid (`&KGRID`, alternative to `&KPATH`)** for constant-energy maps.
+  Exactly one of `&KPATH` / `&KGRID` must be present (both or neither → error).
+  ```fortran
+  &KGRID
+      origin = -0.5, -0.5, 0.0   ! fractional corner of the grid
+      span1  =  1.0,  0.0, 0.0   ! fractional edge vectors (non-zero, not collinear)
+      span2  =  0.0,  1.0, 0.0
+      n1 = 81, n2 = 81           ! points along span1 / span2 (>= 2), ends included
+  /
+  ```
+  Point (i,j): `kfrac = origin + (i-1)/(n1-1)·span1 + (j-1)/(n2-1)·span2`;
+  flat index `ik = i + (j-1)·n1`; `nk = n1·n2`.
 
 ### §3.1 Module `kpath` (src/mod_kpath.f90)
 
@@ -245,6 +257,16 @@ subroutine build_kpath(vertex, npoints, label, recip, path, ierr, errmsg)
 ! nk = sum(npoints) + 1. No duplicated junction points, uniform steps.
 ! kdist increments = norm2( matmul(dk_frac, recip) ) (Cartesian 1/Å).
 ! A zero-length segment (equal consecutive vertices) is an error.
+type, public :: kgrid_t
+    integer :: n1 = 0, n2 = 0, nk = 0
+    real(dp) :: origin(3), span1(3), span2(3), e_u(3), e_v(3)
+    real(dp), allocatable :: kfrac(:,:), kcart(:,:)   ! (3,nk); kcart in 1/Å
+    real(dp), allocatable :: kuv(:,:)                 ! (2,nk) in-plane coords, 1/Å
+end type
+subroutine build_kgrid(origin, span1, span2, n1, n2, recip, grid, ierr, errmsg)
+! ierr: 1 n1/n2 < 2; 2 zero-length span; 3 collinear spans.
+subroutine kgrid_inplane_axes(span1, span2, recip, eu, ev, ierr, errmsg)
+! e_u ∥ span1·recip; e_v = Gram–Schmidt of span2·recip against e_u.
 ```
 Not reused from `unfold::ReadPCPath` on purpose: that generator uses the
 fractional norm (not the reciprocal metric), a non-uniform last step and no
@@ -256,9 +278,10 @@ duplication.
 ```fortran
 integer, parameter, public :: MAX_KVERTEX = 100, SPEC_PATH_LEN = 512
 type, public :: spectral_input_t      ! &SPECTRAL fields (§3) + &KPATH (vertex, label, npoints, nvertex)
+                                      ! or &KGRID (kmode='grid', grid_origin, grid_span1/2, grid_n1/2)
 type, public :: spectral_timing_t     ! read_s, loop_wall_s, write_s, total_s (wall); build_s, diag_s,
                                       ! proj_s (accumulated thread-seconds); nthreads
-subroutine read_spectral_input(filename, inp, ierr, errmsg)   ! &SPECTRAL and &KPATH, any order
+subroutine read_spectral_input(filename, inp, ierr, errmsg)   ! &SPECTRAL and &KPATH|&KGRID, any order
 subroutine run_spectral(inp, sd, timing, ierr, errmsg, show_progress) ! optional logical; default false
 subroutine process_kpoint(n, ngroup, Hr, Sr, Rpt, kfrac, groups, Hk, Sk, C, SC, E, W, &
                           t_build, t_diag, t_proj, ierr [, lowdin, tol_s_min, smin, proj_ierr])
@@ -356,12 +379,19 @@ canary; all fields contiguous, no record markers):
 | 14 | region_natoms(nregion) | int32 |
 | 15 | energy(nband,nk,nspin) (Fortran order) | real64 |
 | 16 | weight(nband,nk,nregion,nspin) (Fortran order) | real64 |
-| 17 | n_ext (=0 in v1.0) | int32 |
+| 17 | n_ext (0 for k-path files; 1 for k-grid files, v1.1) | int32 |
 | 18 | n_ext × { tag char(16), nbytes int64, payload } | — |
 | 19 | trailer `"LFSPEND"//achar(0)` | char(8) |
 
-Reader checks: magic, `version_major == 1` (any minor accepted; extension
-blocks skipped by nbytes), canary, type sizes, dimensions > 0 (nvertex ≥ 0,
+**Extension block `KGRID` (version 1.1, k-grid files only).** tag `'KGRID'`,
+nbytes = 152, payload `n1, n2` (int32 ×2), `origin(3), span1(3), span2(3)`
+(real64), `recip(3,3)` (real64, rows b_i, 1/Å incl. 2π, Fortran order).
+In a k-grid file `nvertex = 0` and `kdist = 0` (not meaningful); readers check
+`n1, n2 ≥ 2`, `n1·n2 = nk`, `nvertex = 0` and the exact payload size. k-path
+files remain version 1.0 with `n_ext = 0` (byte-identical to before).
+
+Reader checks: magic, `version_major == 1` (any minor accepted; unknown
+extension blocks skipped by nbytes, `KGRID` interpreted), canary, type sizes, dimensions > 0 (nvertex ≥ 0,
 nregion ≥ 1, nspin ∈ {1,2}, nspin=2 iff spin_mode=collinear), region 1 named
 `total`, vertex_k within 1..nk, file size ≥ bytes required before reading each
 array, trailer present at the expected position (truncation/corruption →
@@ -445,6 +475,17 @@ atomselect surface  <structure.nml> --regions <file> --normal nx ny nz [--tol T]
   `VLINE_COLOR`, G/Gamma shown as Γ) containing a gnuplot `set xtics (...)`
   command with vertex labels at their kdist, `set xrange`, and, if the Fermi
   level is known in the file's reference, `EF = <value>` (else `EF = NaN`).
+- **Constant-energy mode** (automatic when the file holds a k-grid):
+  `energies = -0.5, 0.0, 0.3` (eV, up to 64; required for k-grid files and an
+  error for k-path files; `emin/emax/ne` are ignored). Intensity
+  `I(k) = Σ_n w_n^P(k) K(E₀ − ε_n(k))` (× f(E₀) with occupation) at each
+  `E₀`, computed with `broaden` using the energy list as the grid. One file
+  per (map, energy): `<prefix>.<mapname>.E<±x.xxx>.cemap.dat` (energy rounded
+  to meV; two energies with the same tag → error). Columns
+  `kx ky kz k_u k_v intensity` (1/Å), one block of n1 rows per j separated by
+  a blank line (pm3d). Also writes `<prefix>.cegrid.gp` (`COLS = "1:2:6"` if
+  the grid plane is ⟂ z, else `"4:5:6"`; `set size ratio -1`, ranges, axis
+  labels, `ELABEL`). Plot with `tools/gnuplot/cemap.gp`.
 - specmap uses only `spectral_data`, `spectral_broadening`, `spectral_map`
   (no HSIO, no LAPACK, no structure).
 
@@ -466,6 +507,10 @@ subroutine parse_map_expression(expr, sd, region_idx, coeff, ierr, errmsg)
 subroutine write_map_file(filename, sd, A, grid, header_lines, ierr, errmsg)
 subroutine write_kticks_file(filename, sd, ierr, errmsg)
 function map_file_tag(expr) result(tag)
+subroutine kgrid_coordinates(sd, kcart, kuv, inplane_xy, ierr, errmsg)
+subroutine write_cemap_file(filename, sd, A, header_lines, ierr, errmsg)   ! A(nk) at one energy
+subroutine write_cegrid_file(filename, sd, ierr, errmsg)
+function cemap_energy_tag(e) result(tag)                                  ! -0.5 -> 'E-0.500'
 ```
 
 ## §8. Default tolerances

@@ -34,6 +34,7 @@ Branch: `feat/surface-spectral-analysis` (base: `main` @ 692012e)
 | F12 CI | done | 5606970 | not executed (no push authorised) |
 | F12b docs | done | 32c4222 | contracts aligned with CLI defaults |
 | F13 review | done | — | 0 blocker/major; 1 minor + 3 nits fixed in the next commit |
+| F14 constant-energy maps | done | — | `&KGRID` in spectral, KGRID block (format v1.1), specmap `energies`, cemap.gp |
 
 ## Pending / limitations
 - macOS/Accelerate: `--profile debug` (-ffpe-trap) crashes inside libBLAS
@@ -49,3 +50,5 @@ Branch: `feat/surface-spectral-analysis` (base: `main` @ 692012e)
 - `--profile debug` SIGILL inside Accelerate LAPACK with -ffpe-trap (macOS).
 - Not validated against real DFT slab data (only synthetic models).
 - k-paths with discontinuities (A-B|C-D) not supported.
+- Constant-energy maps: no symmetry reduction or interpolation of the k-grid
+  (all n1·n2 points are diagonalised).

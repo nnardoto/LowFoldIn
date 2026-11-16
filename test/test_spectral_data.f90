@@ -120,6 +120,54 @@ program test_spectral_data
     call check(ierr == 0, "write text: " // trim(errmsg))
     call check(count_data_lines(FT) == a%nspin * a%nk * a%nband, "text data line count")
 
+    ! ---- 8. grade k (bloco KGRID, versão 1.1) -----------------------------
+    call make_grid_sd(a)
+    call write_spectral_file(F1, a, ierr, errmsg)
+    call check(ierr == 0, "write k-grid: " // trim(errmsg))
+    call read_spectral_file(F1, b, ierr, errmsg)
+    call check(ierr == 0, "read k-grid: " // trim(errmsg))
+    if (ierr == 0) then
+        call check(b%version_minor == 1, "k-grid file written as version 1.1")
+        call check(b%is_grid, "k-grid flag read back")
+        a%version_minor = 1
+        call check(sd_equal(a, b), "round trip k-grid identical")
+    end if
+    call write_spectral_text(FT, a, ierr, errmsg)
+    call check(ierr == 0, "write text k-grid: " // trim(errmsg))
+
+    ! Arquivo de caminho continua 1.0 (byte a byte compatível).
+    call make_sd(a, nspin=1, spin_mode=SPIN_NONE, nvertex=2)
+    call write_spectral_file(F2, a, ierr, errmsg)
+    call read_spectral_file(F2, b, ierr, errmsg)
+    call check(ierr == 0 .and. b%version_minor == 0 .and. .not. b%is_grid, "path file stays version 1.0")
+
+    ! Bloco KGRID com tamanho errado: carga de 152 -> 8 bytes declarados.
+    call make_grid_sd(a)
+    call write_spectral_file(F1, a, ierr, errmsg)
+    call slurp(F1, buf)
+    n = len(buf)
+    ! layout final: [n_ext][tag 16][nbytes 8][carga 152][trailer 8]
+    call dump(F2, buf)
+    call patch_int64(F2, int(n - 8 - 152 - 8 + 1, int64), 8_int64)
+    call read_spectral_file(F2, b, ierr, errmsg)
+    call check(ierr /= 0, "KGRID block with wrong size rejected")
+
+    ! n1*n2 /= nk no arquivo
+    call dump(F2, buf)
+    call patch_int32(F2, int(n - 8 - 152 + 1, int64), 4_int32)   ! n1: 2 -> 4
+    call read_spectral_file(F2, b, ierr, errmsg)
+    call check(ierr /= 0 .and. index(errmsg, "n1*n2") > 0, "KGRID with n1*n2 /= nk rejected")
+
+    ! O escritor rejeita grades inconsistentes
+    call make_grid_sd(a)
+    a%grid_n2 = 4
+    call write_spectral_file(F2, a, ierr, errmsg)
+    call check(ierr /= 0, "writer rejects grid_n1*grid_n2 /= nk")
+    call make_grid_sd(a)
+    a%grid_n1 = 1; a%grid_n2 = 6
+    call write_spectral_file(F2, a, ierr, errmsg)
+    call check(ierr /= 0, "writer rejects grid_n1 < 2")
+
     ! ---- limpeza ------------------------------------------------------------
     call remove_file(F1)
     call remove_file(F2)
@@ -178,6 +226,28 @@ contains
         end do
     end subroutine make_sd
 
+    !> Grade 2 x 3 (nk = 6), sem vértices.
+    subroutine make_grid_sd(sd)
+        type(spectral_data_t), intent(out) :: sd
+        integer                            :: ik
+        call make_sd(sd, nspin=1, spin_mode=SPIN_NONE, nvertex=0)
+        deallocate(sd%kfrac, sd%kdist, sd%energy, sd%weight)
+        sd%nk = 6
+        allocate(sd%kfrac(3, 6), sd%kdist(6), sd%energy(3, 6, 1), sd%weight(3, 6, 3, 1))
+        do ik = 1, 6
+            sd%kfrac(:, ik) = [0.25_dp * mod(ik - 1, 2), 0.2_dp * ((ik - 1) / 2), 0.0_dp]
+        end do
+        sd%kdist = 0.0_dp
+        sd%energy = reshape([(0.1_dp * ik, ik = 1, 18)], [3, 6, 1])
+        sd%weight = reshape([(cos(0.3_dp * ik), ik = 1, 54)], [3, 6, 3, 1])
+        sd%is_grid = .true.
+        sd%grid_n1 = 2; sd%grid_n2 = 3
+        sd%grid_origin = [0.0_dp, 0.0_dp, 0.0_dp]
+        sd%grid_span1 = [0.25_dp, 0.0_dp, 0.0_dp]
+        sd%grid_span2 = [0.0_dp, 0.4_dp, 0.0_dp]
+        sd%recip = reshape([1.1_dp, 0.0_dp, 0.0_dp, -0.3_dp, 1.2_dp, 0.0_dp, 0.0_dp, 0.0_dp, 0.5_dp], [3, 3])
+    end subroutine make_grid_sd
+
     logical function sd_equal(x, y)
         type(spectral_data_t), intent(in) :: x, y
         sd_equal = .false.
@@ -189,6 +259,9 @@ contains
         if (x%fermi_known .neqv. y%fermi_known) return
         if (x%fermi_energy_ev /= y%fermi_energy_ev) return
         if (x%fingerprint /= y%fingerprint .or. x%source /= y%source) return
+        if ((x%is_grid .neqv. y%is_grid) .or. x%grid_n1 /= y%grid_n1 .or. x%grid_n2 /= y%grid_n2) return
+        if (any(x%grid_origin /= y%grid_origin) .or. any(x%grid_span1 /= y%grid_span1)) return
+        if (any(x%grid_span2 /= y%grid_span2) .or. any(x%recip /= y%recip)) return
         if (any(shape(x%kfrac) /= shape(y%kfrac))) return
         if (any(x%kfrac /= y%kfrac) .or. any(x%kdist /= y%kdist)) return
         if (size(x%vertex_k) /= size(y%vertex_k)) return
@@ -244,6 +317,17 @@ contains
         write(u, pos=pos) v
         close(u)
     end subroutine patch_int32
+
+    subroutine patch_int64(fname, pos, v)
+        character(len=*), intent(in) :: fname
+        integer(int64),   intent(in) :: pos
+        integer(int64),   intent(in) :: v
+        integer                      :: u
+        open(newunit=u, file=fname, access='stream', form='unformatted', status='old', &
+             action='readwrite')
+        write(u, pos=pos) v
+        close(u)
+    end subroutine patch_int64
 
     subroutine append_ext(fname, pos)
         character(len=*), intent(in) :: fname
