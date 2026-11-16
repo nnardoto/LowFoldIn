@@ -176,7 +176,7 @@ contains
     !> Every array is allocated by this routine. Before each read the number
     !> of bytes still available is checked against what is needed, so a
     !> truncated or corrupted file yields an error rather than a crash.
-    !> On any error sd may be partially filled and must not be used.
+    !> On any error sd is reset to its default (empty) state.
     !> ierr: 0 ok; 1 missing/unopenable file; 2 bad magic; 3 unsupported
     !> version, endianness or type sizes; 4 invalid dimensions/flags;
     !> 5 invalid vertex/region content; 6 bad extension block;
@@ -428,6 +428,7 @@ contains
             character(len=*), intent(in) :: msg
             ierr = code
             errmsg = "read_spectral_file: " // msg
+            call reset_sd(sd)
         end subroutine fail
 
     end subroutine read_spectral_file
@@ -438,7 +439,7 @@ contains
     !>   ispin ik kdist k1 k2 k3 iband energy w(1..nregion)
     !> kdist in 1/Angstrom, k1..k3 fractional, energy in eV.
     !> Same validation and ierr convention as write_spectral_file
-    !> (0 ok; 1 invalid sd or cannot open; 2 I/O error).
+    !> (0 ok; 1 invalid sd or cannot open; 2 I/O error; 3 error closing).
     subroutine write_spectral_text(filename, sd, ierr, errmsg)
         character(len=*),      intent(in)  :: filename
         type(spectral_data_t), intent(in)  :: sd
@@ -506,6 +507,11 @@ contains
             return
         end if
         close(u, iostat=ios)
+        if (ios /= 0) then
+            ierr = 3
+            errmsg = "write_spectral_text: error closing '" // trim(filename) // "'"
+            return
+        end if
         ierr = 0
         errmsg = ''
     end subroutine write_spectral_text
@@ -513,6 +519,13 @@ contains
     ! ==================================================================
     ! Internals
     ! ==================================================================
+
+    !> Deallocate every array of sd and restore the default scalars, so a
+    !> failed read leaves nothing allocated.
+    subroutine reset_sd(sd)
+        type(spectral_data_t), intent(inout) :: sd
+        sd = spectral_data_t()
+    end subroutine reset_sd
 
     !> Consistency checks shared by the writers: dimensions, enumerations,
     !> nspin/spin_mode agreement, array allocation and shapes, vertex range

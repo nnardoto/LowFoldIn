@@ -377,6 +377,8 @@ contains
         close(u)
         call read_spectral_file(TRUNC, st, ierr, msg)
         call check(ierr /= 0, "truncated spectral file rejected")
+        call check(.not. allocated(st%energy) .and. .not. allocated(st%kfrac) .and. st%nk == 0, &
+                   "failed read leaves sd reset")
     end subroutine test_truncated_file
 
     subroutine delete_file(fn)

@@ -281,10 +281,10 @@ contains
             return
         end if
 
-        write(iu, '(A)') '&REGION_FILE'
-        write(iu, '(A)') '    format_version = ' // itoa(rs%format_version)
-        write(iu, '(A)') '    natoms         = ' // itoa(rs%natoms)
-        write(iu, '(A)') "    fingerprint    = '" // trim(rs%fingerprint) // "'"
+        if (ios == 0) write(iu, '(A)', iostat=ios) '&REGION_FILE'
+        if (ios == 0) write(iu, '(A)', iostat=ios) '    format_version = ' // itoa(rs%format_version)
+        if (ios == 0) write(iu, '(A)', iostat=ios) '    natoms         = ' // itoa(rs%natoms)
+        if (ios == 0) write(iu, '(A)', iostat=ios) "    fingerprint    = '" // trim(rs%fingerprint) // "'"
         if (rs%has_species .and. allocated(rs%species)) then
             n = size(rs%species)
             line = '    species        = '
@@ -292,29 +292,36 @@ contains
                 line = line // "'" // trim(rs%species(i)) // "'"
                 if (i < n) line = line // ', '
                 if (mod(i, SPECIES_PER_LINE) == 0 .or. i == n) then
-                    write(iu, '(A)') trim(line)
+                    if (ios == 0) write(iu, '(A)', iostat=ios) trim(line)
                     line = '                     '
                 end if
             end do
         end if
-        write(iu, '(A)') '/'
+        if (ios == 0) write(iu, '(A)', iostat=ios) '/'
 
         do ir = 1, rs%nregion
-            write(iu, '(A)') ''
-            write(iu, '(A)') '&REGION'
-            write(iu, '(A)') "    name  = '" // trim(rs%regions(ir)%name) // "'"
+            if (ios == 0) write(iu, '(A)', iostat=ios) ''
+            if (ios == 0) write(iu, '(A)', iostat=ios) '&REGION'
+            if (ios == 0) write(iu, '(A)', iostat=ios) "    name  = '" // trim(rs%regions(ir)%name) // "'"
             n = size(rs%regions(ir)%atoms)
             line = '    atoms = '
             do i = 1, n
                 line = line // itoa(rs%regions(ir)%atoms(i))
                 if (i < n) line = line // ', '
                 if (mod(i, ATOMS_PER_LINE) == 0 .or. i == n) then
-                    write(iu, '(A)') trim(line)
+                    if (ios == 0) write(iu, '(A)', iostat=ios) trim(line)
                     line = '            '
                 end if
             end do
-            write(iu, '(A)') '/'
+            if (ios == 0) write(iu, '(A)', iostat=ios) '/'
         end do
+
+        if (ios /= 0) then
+            ierr = 1
+            errmsg = 'error writing regions file "' // trim(filename) // '"'
+            close(iu, iostat=ios)
+            return
+        end if
 
         close(iu, iostat=ios, iomsg=msg)
         if (ios /= 0) then
