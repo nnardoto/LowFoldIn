@@ -250,7 +250,7 @@ Automatic atom mapping from structure files is recommended.
     MatchTolerance  = 1.0e-3
 
     WriteSpectralFunction = .true.
-    Broadening = 0.02
+    Broadening = 0.02   ! Lorentzian FWHM (eV)
     Emin = -5.0
     Emax =  5.0
     nE   = 1000
@@ -396,7 +396,7 @@ x   energy   weight
 
 It is suitable for a scatter plot in which marker intensity, size or color represents the unfolded spectral weight.
 
-`example.unfold_spectral.dat` contains the Lorentzian-broadened spectral function `A(k,E)` on the energy grid defined by `Emin`, `Emax`, `nE` and `Broadening`.
+`example.unfold_spectral.dat` contains the Lorentzian-broadened spectral function `A(k,E)` on the energy grid defined by `Emin`, `Emax`, `nE` and `Broadening` (the Lorentzian FWHM, in eV).
 
 The code also reports the unfolding sum rule. For `p` primitive-cell orbitals, the expected value is:
 

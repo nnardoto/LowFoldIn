@@ -115,7 +115,7 @@ module unfold
         logical                :: DiagonalM  = .true.
         integer                :: nCells     = 1     ! = |det(M)|, numero de celulas-PC na SC
 
-        real(dp)               :: Broadening  = 0.010_dp      ! eV (largura Lorentziana p/ A(k,E))
+        real(dp)               :: Broadening  = 0.010_dp      ! eV (FWHM Lorentziana p/ A(k,E))
         real(dp)               :: Emin        = -10.0_dp
         real(dp)               :: Emax        =  10.0_dp
         integer                :: nE          = 400
@@ -239,6 +239,24 @@ contains
         cfg%SCStructureFile = SCStructureFile
         cfg%MatchTolerance  = MatchTolerance
 
+        ! Parametros numericos de &UNFOLD (grade de energia, largura, tolerancia)
+        if (cfg%Broadening <= 0.0_dp) then
+            print '(A)', "[Unfold Input Error] Broadening deve ser > 0"
+            stop 1
+        end if
+        if (cfg%nE < 2) then
+            print '(A)', "[Unfold Input Error] nE deve ser >= 2"
+            stop 1
+        end if
+        if (cfg%Emax <= cfg%Emin) then
+            print '(A)', "[Unfold Input Error] Emax deve ser > Emin"
+            stop 1
+        end if
+        if (cfg%MatchTolerance <= 0.0_dp .or. cfg%MatchTolerance >= 0.5_dp) then
+            print '(A)', "[Unfold Input Error] MatchTolerance deve estar em (0, 0.5)"
+            stop 1
+        end if
+
         call ClassifyM(cfg)
 
         if (cfg%DiagonalM .and. any(cfg%MDiag < 1)) then
@@ -306,7 +324,10 @@ contains
         ! 1. Avanca ate a linha "&ATOMMAP"
         do
             read(iu, '(A)', iostat=ierr) line
-            if (ierr /= 0) stop "[Unfold Input Error] Bloco &ATOMMAP nao encontrado"
+            if (ierr /= 0) then
+                print '(A)', "[Unfold Input Error] Bloco &ATOMMAP nao encontrado"
+                stop 1
+            end if
             if (trim(adjustl(line)) == "&ATOMMAP") exit
         end do
 
@@ -323,7 +344,12 @@ contains
         end do
 
         if (any(cfg%CellIndex < 0)) then
-            stop "[Unfold Input Error] Indices de celula em &ATOMMAP devem ser >= 0 (0-based)"
+            print '(A)', "[Unfold Input Error] Indices de celula em &ATOMMAP devem ser >= 0 (0-based)"
+            stop 1
+        end if
+        if (any(cfg%PCOrbit < 1)) then
+            print '(A)', "[Unfold Input Error] Rotulos de atomo-PC em &ATOMMAP devem ser >= 1"
+            stop 1
         end if
         if (cfg%DiagonalM) then
             do i = 1, 3
@@ -698,14 +724,23 @@ contains
 
         do
             read(iu, '(A)', iostat=ierr) line
-            if (ierr /= 0) stop "[Unfold Input Error] Bloco &PCPATH nao encontrado"
+            if (ierr /= 0) then
+                print '(A)', "[Unfold Input Error] Bloco &PCPATH nao encontrado"
+                stop 1
+            end if
             if (trim(adjustl(line)) == "&PCPATH") exit
         end do
 
         call NextDataLine(iu, line, ierr)
         if (ierr == 0) read(line, *, iostat=ierr) path%npaths
-        if (ierr /= 0) stop "[Unfold Input Error] Falha ao ler o numero de caminhos em &PCPATH"
-        if (path%npaths < 2) stop "[Unfold Input Error] &PCPATH precisa de ao menos 2 vertices"
+        if (ierr /= 0) then
+            print '(A)', "[Unfold Input Error] Falha ao ler o numero de caminhos em &PCPATH"
+            stop 1
+        end if
+        if (path%npaths < 2) then
+            print '(A)', "[Unfold Input Error] &PCPATH precisa de ao menos 2 vertices"
+            stop 1
+        end if
 
         allocate(path%nkpts(path%npaths))
         allocate(path%kpoints(3, path%npaths))
@@ -718,6 +753,11 @@ contains
                 stop 1
             end if
         end do
+
+        if (any(path%nkpts(1:path%npaths - 1) < 1)) then
+            print '(A)', "[Unfold Input Error] &PCPATH: o numero de pontos de cada segmento deve ser >= 1"
+            stop 1
+        end if
 
         path%total_kpoints = sum(path%nkpts(1:path%npaths - 1))
         allocate(path%FullPath(3, path%total_kpoints))
@@ -802,10 +842,13 @@ contains
         ! -- SO' usados no caso M NAO-diagonal (ver secao 4b/5.5 abaixo) --
         integer, allocatable :: Reps(:, :)          ! (3, nCells) rotulos-canonicos de celula
         integer, allocatable :: OrbCellCanon(:, :)  ! (nCells, nOrbitsPC) reindexado p/ Reps
+        integer, allocatable :: OrbShift(:, :, :)   ! (3, nCells, nOrbitsPC) s tal que rotulo = Reps + M.s
         integer, allocatable :: DestIndex(:, :)     ! (nCells, nCells) aritmetica do grupo Z^3/M.Z^3
         integer, allocatable :: WrapT(:, :, :)       ! (3, nCells, nCells) wraparound (Eq. 30)
         integer :: rep_idx, ga, gb, gc
-        complex(dp) :: g_inner, g_W, g_wrap_phase
+        complex(dp) :: g_inner, g_W, g_wrap_phase, g_phase_a, g_phase_b
+        integer :: shift_s(3)
+        logical, allocatable :: filled(:, :), seen(:, :, :, :)
 
         integer :: iAtom, iOrb, gOrb, orbit, L, ik, ic, iN
         integer :: total_kpoints, max_threads, thread_id, completed_count, progress_width
@@ -831,10 +874,12 @@ contains
         nCells = cfg%nCells
 
         if (nAtoms /= size(cfg%PCOrbit)) then
-            stop "[Unfold Error] &ATOMMAP incompatível com o numero de atomos do .hsio"
+            print '(A)', "[Unfold Error] &ATOMMAP incompatível com o numero de atomos do .hsio"
+            stop 1
         end if
         if (SData%NOrbs /= nOrbs .or. SData%nAtoms /= nAtoms) then
-            stop "[Unfold Error] Arquivos H e S sao incompatíveis (NOrbs/nAtoms diferentes)"
+            print '(A)', "[Unfold Error] Arquivos H e S sao incompatíveis (NOrbs/nAtoms diferentes)"
+            stop 1
         end if
 
         ! --------------------------------------------------------------
@@ -847,7 +892,8 @@ contains
             AtomOrbOffset(iAtom) = AtomOrbOffset(iAtom - 1) + HData%Orbs(iAtom - 1)
         end do
         if (AtomOrbOffset(nAtoms) + HData%Orbs(nAtoms) /= nOrbs) then
-            stop "[Unfold Error] Soma de Orbs(:) nao bate com NOrbs do .hsio"
+            print '(A)', "[Unfold Error] Soma de Orbs(:) nao bate com NOrbs do .hsio"
+            stop 1
         end if
 
         ! --------------------------------------------------------------
@@ -861,11 +907,13 @@ contains
             if (nOrbsPerPCAtom(cfg%PCOrbit(iAtom)) == 0) then
                 nOrbsPerPCAtom(cfg%PCOrbit(iAtom)) = HData%Orbs(iAtom)
             else if (nOrbsPerPCAtom(cfg%PCOrbit(iAtom)) /= HData%Orbs(iAtom)) then
-                stop "[Unfold Error] Atomos com o mesmo rotulo PCOrbit tem numeros diferentes de orbitais"
+                print '(A)', "[Unfold Error] Atomos com o mesmo rotulo PCOrbit tem numeros diferentes de orbitais"
+                stop 1
             end if
         end do
         if (any(nOrbsPerPCAtom == 0)) then
-            stop "[Unfold Error] Rotulo de atomo-PC sem nenhum atomo associado em &ATOMMAP (1..max devem ser todos usados)"
+            print '(A)', "[Unfold Error] Rotulo de atomo-PC sem nenhum atomo associado em &ATOMMAP (1..max devem ser todos usados)"
+            stop 1
         end if
 
         allocate(PCAtomOrbOffset(nAtomsPC))
@@ -905,6 +953,8 @@ contains
         allocate(OrbitMemberOrb(nCells, nOrbitsPC))
         allocate(OrbitMemberCell(3, nCells, nOrbitsPC))
         allocate(fillcount(nOrbitsPC), source=0)
+        if (cfg%DiagonalM) &
+            allocate(seen(0:cfg%MDiag(1)-1, 0:cfg%MDiag(2)-1, 0:cfg%MDiag(3)-1, nOrbitsPC), source=.false.)
 
         do gOrb = 1, nOrbs
             orbit = OrbitID(gOrb)
@@ -913,11 +963,19 @@ contains
                 print '(A, I0)', "[Unfold Error] Orbital-PC com mais de nCells replicas: orbit ", orbit
                 stop 1
             end if
+            if (cfg%DiagonalM) then
+                if (seen(OrbitCell(1, gOrb), OrbitCell(2, gOrb), OrbitCell(3, gOrb), orbit)) then
+                    print '(A, I0)', "[Unfold Error] Rotulo de celula duplicado dentro do orbital-PC ", orbit
+                    stop 1
+                end if
+                seen(OrbitCell(1, gOrb), OrbitCell(2, gOrb), OrbitCell(3, gOrb), orbit) = .true.
+            end if
             OrbitMemberOrb(fillcount(orbit), orbit)    = gOrb
             OrbitMemberCell(:, fillcount(orbit), orbit) = OrbitCell(:, gOrb)
         end do
         if (any(fillcount /= nCells)) then
-            stop "[Unfold Error] Alguma identidade de orbital-PC nao tem exatamente nCells replicas"
+            print '(A)', "[Unfold Error] Alguma identidade de orbital-PC nao tem exatamente nCells replicas"
+            stop 1
         end if
 
         ! --------------------------------------------------------------
@@ -947,16 +1005,29 @@ contains
             Reps = OrbitMemberCell(:, :, 1)
 
             allocate(OrbCellCanon(nCells, nOrbitsPC))
+            allocate(OrbShift(3, nCells, nOrbitsPC), source=0)
+            allocate(filled(nCells, nOrbitsPC), source=.false.)
             do orbit = 1, nOrbitsPC
                 do ic = 1, nCells
-                    rep_idx = FindCellIndex(Reps, OrbitMemberCell(:, ic, orbit), nCells, cfg%M)
+                    rep_idx = FindCellIndex(Reps, OrbitMemberCell(:, ic, orbit), nCells, cfg%M, shift_s)
                     if (rep_idx < 0) then
-                        stop "[Unfold Error] Rotulo de celula inconsistente entre orbitais-PC " // &
-                             "(M nao-diagonal) -- verifique o &ATOMMAP"
+                        print '(A)', "[Unfold Error] Rotulo de celula inconsistente entre orbitais-PC " // &
+                                       "(M nao-diagonal) -- verifique o &ATOMMAP"
+                        stop 1
                     end if
+                    if (filled(rep_idx, orbit)) then
+                        print '(A, I0)', "[Unfold Error] Rotulo de celula duplicado dentro do orbital-PC ", orbit
+                        stop 1
+                    end if
+                    filled(rep_idx, orbit) = .true.
                     OrbCellCanon(rep_idx, orbit) = OrbitMemberOrb(ic, orbit)
+                    ! o rotulo real e' Reps(rep_idx) + M.s: guarda s para a fase de
+                    ! gauge exp(-i.2pi.ScK.s) aplicada a C' no loop k (secao 5.5)
+                    OrbShift(:, rep_idx, orbit) = shift_s
                 end do
             end do
+
+            deallocate(filled)
 
             call BuildGroupTable(cfg%M, Reps, nCells, DestIndex, WrapT)
         end if
@@ -1086,11 +1157,17 @@ contains
                         do orbit = 1, nOrbitsPC
                             do ga = 1, nCells
                                 gb = DestIndex(ga, gc)
+                                ! Leva C' do orbital no rotulo real Reps+M.s ao representante
+                                ! Reps (fase de gauge, como exp(-i.2pi.fk.n) no caso diagonal)
+                                g_phase_a = exp(-cmplx(0.0_dp, &
+                                    TWO_PI * dot_product(ScK, real(OrbShift(:, ga, orbit), kind=dp)), kind=dp))
+                                g_phase_b = exp(-cmplx(0.0_dp, &
+                                    TWO_PI * dot_product(ScK, real(OrbShift(:, gb, orbit), kind=dp)), kind=dp))
                                 g_wrap_phase = exp(cmplx(0.0_dp, &
                                     TWO_PI * dot_product(ScK, real(WrapT(:, ga, gc), kind=dp)), kind=dp))
                                 g_inner = g_inner &
-                                    + conjg(Cprime_pool(OrbCellCanon(ga, orbit), iN, thread_id)) &
-                                    * g_wrap_phase * Cprime_pool(OrbCellCanon(gb, orbit), iN, thread_id)
+                                    + conjg(g_phase_a * Cprime_pool(OrbCellCanon(ga, orbit), iN, thread_id)) &
+                                    * g_wrap_phase * g_phase_b * Cprime_pool(OrbCellCanon(gb, orbit), iN, thread_id)
                             end do
                         end do
                         g_W = g_W + exp(-cmplx(0.0_dp, &
@@ -1142,6 +1219,7 @@ contains
                    Eval_pool, wS_pool, phase_pool, point_times)
         if (allocated(Reps))          deallocate(Reps)
         if (allocated(OrbCellCanon))  deallocate(OrbCellCanon)
+        if (allocated(OrbShift))      deallocate(OrbShift)
         if (allocated(DestIndex))     deallocate(DestIndex)
         if (allocated(WrapT))         deallocate(WrapT)
     end subroutine RunUnfolding
@@ -1165,20 +1243,24 @@ contains
     !> qualquer gerador de supercelula). Comparar so' por igualdade exata
     !> rejeita rotulos legitimos com o erro espurio "Rotulo de celula
     !> inconsistente entre orbitais-PC".
-    function FindCellIndex(Reps, target, nCells, M) result(idx)
+    function FindCellIndex(Reps, target, nCells, M, shift) result(idx)
         integer, intent(in) :: nCells
         integer, intent(in) :: Reps(3, nCells), target(3), M(3, 3)
+        !> Opcional: s inteiro tal que target = Reps(:,idx) + M.s (0 se igualdade exata)
+        integer, intent(out), optional :: shift(3)
         integer :: idx, k
         real(dp) :: Minv(3, 3), tvec(3)
 
         Minv = Invert3x3(real(M, kind=dp))
         idx = -1
+        if (present(shift)) shift = 0
         do k = 1, nCells
             ! mesma convencao de BuildGroupTable (Minv@diff, NAO diff@Minv --
             ! ver nota la')
             tvec = matmul(Minv, real(target - Reps(:, k), kind=dp))
             if (all(abs(tvec - real(nint(tvec), kind=dp)) < 1.0e-6_dp)) then
                 idx = k
+                if (present(shift)) shift = nint(tvec)
                 return
             end if
         end do
@@ -1363,7 +1445,7 @@ contains
         open(newunit=iunit, file=filename, status='replace', action='write', iostat=ios)
         if (ios /= 0) then
             print *, "Error: nao foi possivel abrir para escrita: ", filename
-            return
+            stop 1
         end if
 
         write(iunit, '(A)') "# Unfolding LowFoldIn -- PHYSICAL REVIEW B 113, 085112 (2026)"
@@ -1405,7 +1487,7 @@ contains
         open(newunit=iunit, file=filename, status='replace', action='write', iostat=ios)
         if (ios /= 0) then
             print *, "Error: nao foi possivel abrir para escrita: ", filename
-            return
+            stop 1
         end if
 
         write(iunit, '(A)') "# Funcao espectral A(k,E) [Eq. (12), PRB 113, 085112 (2026)]"
