@@ -2,9 +2,20 @@
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
 !> spectral: band energies and per-region projection weights along a k-path
-!> (contracts §3, §5). Thin driver around module spectral_engine.
+!> (contracts §3, §5). Thin driver around module spectral_engine: this file only
+!> handles the CLI, progress/summary output and writing the result files.
 !>
-!> Usage: spectral <spectral.nml>
+!> Usage:
+!>   spectral <spectral.nml>
+!>
+!> Input : a namelist file (see docs/spectral.md for every option), which in turn
+!>         points to the HSIO data, structure, k-path and region definitions.
+!> Output: <output_prefix>.spectral.bin (always) and <output_prefix>.spectral.txt
+!>         (only if write_text = .true.). These are the input of specmap.
+!> Exit  : 0 on success; 1 on wrong usage or any error (message prefixed
+!>         "[spectral error]" on stderr).
+!>
+!> User documentation: docs/spectral.md
 program spectral
     use, intrinsic :: iso_fortran_env, only: int64, error_unit
     use types, only: dp
@@ -23,6 +34,7 @@ program spectral
     integer :: ierr, ir, max_thr
     integer(int64) :: c0, c1, crate
 
+    ! 1. Parse arguments
     if (command_argument_count() /= 1) then
         write(error_unit, '(A)') 'Usage: spectral <spectral.nml>'
         write(error_unit, '(A)') '  Computes band energies and Mulliken or Lowdin weights per region along a k-path'
@@ -31,7 +43,7 @@ program spectral
     end if
     call get_command_argument(1, nml_file)
 
-    ! Start-up: thread information (the code never sets environment variables).
+    ! 2. Start-up banner: thread information (the code never sets environment variables).
     max_thr = 1
     !$ max_thr = omp_get_max_threads()
     call print_box('spectral | projected band calculation')
@@ -43,12 +55,15 @@ program spectral
     call print_box_close()
     print '(A)', ''
 
+    ! 3. Read and validate the namelist input
     call read_spectral_input(trim(nml_file), inp, ierr, errmsg)
     if (ierr /= 0) call die(errmsg)
 
+    ! 4. Compute energies and projection weights (k-loop, parallel over k)
     call run_spectral(inp, sd, timing, ierr, errmsg, show_progress=.true.)
     if (ierr /= 0) call die(errmsg)
 
+    ! 5. Write result files (write time is added to the engine's total)
     bin_file = trim(inp%output_prefix) // '.spectral.bin'
     txt_file = trim(inp%output_prefix) // '.spectral.txt'
     print '(A)', '[output] Writing result files'
@@ -63,7 +78,7 @@ program spectral
     timing%write_s = real(c1 - c0, dp) / real(max(crate, 1_int64), dp)
     timing%total_s = timing%total_s + timing%write_s
 
-    ! ---------------- summary ------------------------------------------
+    ! 6. Summary
     print '(A)', ''
     call print_box('spectral | summary')
     print '(A,I0,A,I0,A,I0,A,I0)', '  nk = ', sd%nk, '   nband = ', sd%nband, &
@@ -96,6 +111,9 @@ program spectral
 
 contains
 
+    !> Human-readable description of the energy reference for the summary box.
+    !> 'fermi' means the engine already delivers E - E_F; 'absolute' keeps raw
+    !> energies and E_F (if known) is only stored as metadata.
     function eref_text() result(s)
         character(len=:), allocatable :: s
         character(len=32) :: buf
@@ -114,6 +132,7 @@ contains
         end select
     end function eref_text
 
+    !> Print the message to stderr and exit with code 1.
     subroutine die(msg)
         character(len=*), intent(in) :: msg
         write(error_unit, '(A,A)') '[spectral error] ', trim(msg)

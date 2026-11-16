@@ -10,7 +10,7 @@
 !
 ! Uso:
 !   openmx2hsio <arquivo.scfout> [--out-prefix PREFIXO] [--fermi E_F_HARTREE]
-!               [--no-fermi-shift] [--write-structure]
+!               [--no-fermi-shift] [--write-structure] [--structure-file ARQ]
 !
 ! Gera:
 !   PREFIXO_S.hsio
@@ -41,6 +41,16 @@
 ! proprio .scfout e H e' deslocado para que E_F caia em 0 eV, via
 ! H'(R) = H(R) - E_F*S(R) para todo vizinho R.
 !
+! Opcionalmente (--write-structure, ou --structure-file ARQ que tambem o
+! ativa) escreve tambem PREFIXO.structure.nml (ou ARQ): rede (Angstrom),
+! especies com numero de orbitais e posicoes atomicas, extraidos da geometria
+! e do input OpenMX embutido no .scfout. Esse arquivo e' o structure_file
+! usado por `spectral` e `atomselect` (ver docs/spectral.md e
+! docs/atomselect.md). O caminho nao pode coincidir com o .scfout nem com os
+! .hsio gerados.
+!
+! Codigo de saida: 0 em sucesso (ou --help); 1 em qualquer erro.
+!
 ! Nathanael N. Batista, Agosto de 2026
 ! ----------------------------------------------------------------------------------------------------------
 program openmx2hsio
@@ -52,6 +62,7 @@ program openmx2hsio
     use HS_io,          only: HSDataFormat
     implicit none
 
+    ! O .scfout guarda geometria em Bohr; o structure.nml usa Angstrom.
     real(dp), parameter :: BOHR_TO_ANG = 0.529177210903_dp
 
     character(len=1024) :: scfout_path, out_prefix, structure_path, arg
@@ -130,6 +141,7 @@ program openmx2hsio
         iarg = iarg + 1
     end do
 
+    ! Caminho padrao da estrutura (a menos que --structure-file tenha sido dado)
     if (write_structure .and. .not. custom_structure_path) then
         structure_path = trim(out_prefix) // ".structure.nml"
     end if
@@ -138,6 +150,7 @@ program openmx2hsio
     ! 2. Le o .scfout
     ! -------------------------------------------------------------
     call ReadScfoutFile(scfout, trim(scfout_path))
+    ! Falha cedo (antes de qualquer escrita) se a estrutura sobrescreveria um arquivo em uso
     if (write_structure) call ValidateStructurePath(trim(structure_path), trim(scfout_path), &
                                                     trim(out_prefix))
 
@@ -226,6 +239,7 @@ program openmx2hsio
         stop 1
     end select
 
+    ! Estrutura escrita apos os .hsio, a partir dos mesmos dados do .scfout
     if (write_structure) call WriteStructureFile(trim(structure_path), scfout)
 
     ! -------------------------------------------------------------
@@ -291,6 +305,8 @@ contains
         end if
     end function default_prefix
 
+    !> Aborta (stop 1) se `path` coincidir com o .scfout de entrada ou com algum
+    !> .hsio de saida (_S, _H, _H_up, _H_dn), para nao sobrescreve-los.
     subroutine ValidateStructurePath(path, source_path, prefix)
         character(len=*), intent(in) :: path, source_path, prefix
         character(len=1024) :: reserved(4)
@@ -312,6 +328,11 @@ contains
         end if
     end subroutine ValidateStructurePath
 
+    !> Escreve o structure.nml (&STRUCTURE, &SPECIES, &ATOMS) em Angstrom.
+    !> Requer os rotulos atomicos recuperados do input embutido no .scfout.
+    !> O numero de orbitais por especie e' TotalNumOrbs (x2 em spinor,
+    !> SpinP_switch == 3, para casar com o NOrbs dobrado do .hsio) e deve ser
+    !> o mesmo para todos os atomos da mesma especie.
     subroutine WriteStructureFile(filename, scf)
         character(len=*), intent(in) :: filename
         type(ScfoutData), intent(in) :: scf
@@ -331,6 +352,7 @@ contains
             stop 1
         end if
 
+        ! Fator de spinor e lista de especies unicas (ordem de primeira aparicao)
         norb_factor = merge(2, 1, scf%SpinP_switch == 3)
         allocate(species_label(scf%atomnum), species_norb(scf%atomnum))
         nspecies = 0

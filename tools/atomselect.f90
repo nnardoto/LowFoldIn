@@ -22,7 +22,14 @@
 !   atomselect validate    <structure.nml> <regions.nml> [--allow-no-fingerprint]
 !   atomselect help
 !
-! Exit code 0 on success, 1 on any error (message prefixed "[atomselect error]").
+! Regions files (regions.nml) are created on first use and extended afterwards;
+! an existing file is validated against the structure before a region is added.
+! Atom indices are 1-based; lengths are in Angstrom.
+!
+! Exit code: 0 on success (also for `help` or no arguments); 1 on any error.
+! Errors are printed as "[atomselect error] ..." on standard output (not stderr).
+!
+! User documentation: docs/atomselect.md
 ! ----------------------------------------------------------------------------------------------------------
 program atomselect
     use types,            only: dp
@@ -48,6 +55,7 @@ program atomselect
     integer :: nargs, nopt
     character(len=:), allocatable :: cmd
 
+    ! 1. Collect arguments (options are parsed per subcommand, see parse_options)
     call collect_arguments()
 
     if (nargs < 1) then
@@ -55,6 +63,7 @@ program atomselect
         stop
     end if
 
+    ! 2. Dispatch on the subcommand
     cmd = args(1)%s
     select case (cmd)
     case ('help', '-h', '--help')
@@ -81,6 +90,8 @@ contains
     ! Subcommands
     ! ==================================================================
 
+    !> inspect: print header (cell, fingerprint) and atom table; optionally
+    !> save the table (--table) and an extended-XYZ file (--xyz).
     subroutine cmd_inspect()
         type(structure_t) :: st
         character(len=16) :: fp
@@ -114,6 +125,7 @@ contains
     end subroutine cmd_inspect
 
     ! ------------------------------------------------------------------
+    !> fingerprint: print only the structure fingerprint (links regions/spectral files to a structure).
     subroutine cmd_fingerprint()
         type(structure_t) :: st
 
@@ -124,6 +136,10 @@ contains
     end subroutine cmd_fingerprint
 
     ! ------------------------------------------------------------------
+    !> select: add one named region to a regions file. Exactly one selection mode:
+    !> explicit index list (--atoms), projection range along a normal
+    !> (--normal with --smin/--smax) or Cartesian box (--box). An empty
+    !> geometric selection is an error.
     subroutine cmd_select()
         type(structure_t)  :: st
         type(region_set_t) :: rs
@@ -187,6 +203,9 @@ contains
     end subroutine cmd_select
 
     ! ------------------------------------------------------------------
+    !> layers: detect (or assign to --refs) layers along a normal, print the
+    !> per-atom table and layer summary; with --regions also store each layer
+    !> as a region named layer_001, layer_002, ... (ascending projection).
     subroutine cmd_layers()
         type(structure_t)  :: st
         type(region_set_t) :: rs
@@ -243,6 +262,8 @@ contains
     end subroutine cmd_layers
 
     ! ------------------------------------------------------------------
+    !> surface: build `top` (highest-projection layers) and/or `bottom`
+    !> (lowest-projection layers) regions from the N outermost layers.
     subroutine cmd_surface()
         type(structure_t)  :: st
         type(region_set_t) :: rs
@@ -353,6 +374,9 @@ contains
     end subroutine compute_layers
 
     ! ------------------------------------------------------------------
+    !> validate: check a regions file against a structure (fingerprint, atom
+    !> counts/indices) and report overlaps, uncovered atoms and whether the
+    !> regions form a partition. Reaching the last line means "valid".
     subroutine cmd_validate()
         type(structure_t)  :: st
         type(region_set_t) :: rs
@@ -448,6 +472,7 @@ contains
         end if
     end subroutine open_regions
 
+    !> Writes the region set to disk; dies on I/O error.
     subroutine save_regions(rfile, rs)
         character(len=*),   intent(in) :: rfile
         type(region_set_t), intent(in) :: rs
@@ -457,6 +482,7 @@ contains
         if (ierr /= 0) call die(trim(errmsg))
     end subroutine save_regions
 
+    !> Suffix for the log line: whether the regions file was created or updated.
     function status_word(exists) result(w)
         logical, intent(in) :: exists
         character(len=:), allocatable :: w
@@ -467,6 +493,7 @@ contains
         end if
     end function status_word
 
+    !> Region name for layer l: layer_001, layer_002, ...
     function layer_name(l) result(name)
         integer, intent(in) :: l
         character(len=:), allocatable :: name
@@ -479,6 +506,7 @@ contains
     ! Layer output
     ! ==================================================================
 
+    !> '#'-prefixed comment lines describing how layers were obtained.
     subroutine write_layer_info(iu, normal, tol)
         integer,  intent(in) :: iu
         real(dp), intent(in) :: normal(3), tol
@@ -491,6 +519,7 @@ contains
         end if
     end subroutine write_layer_info
 
+    !> Per-atom table: index, element, Cartesian position, projection s, layer.
     subroutine write_layer_table(iu, st, s, layer_of)
         integer,           intent(in) :: iu
         type(structure_t), intent(in) :: st
@@ -504,6 +533,7 @@ contains
         end do
     end subroutine write_layer_table
 
+    !> Per-layer centre, atom count and compressed atom list ('#'-prefixed).
     subroutine write_layer_summary(iu, layer_of, nlayer, center)
         integer,  intent(in) :: iu
         integer,  intent(in) :: layer_of(:), nlayer
@@ -524,6 +554,7 @@ contains
     ! Output helpers
     ! ==================================================================
 
+    !> '#'-prefixed header: file name, atom count, lattice vectors, fingerprint.
     subroutine write_header(iu, filename, st, fp)
         integer,           intent(in) :: iu
         character(len=*),  intent(in) :: filename
@@ -550,6 +581,7 @@ contains
         end do
     end subroutine write_table
 
+    !> Extended XYZ (lattice + fingerprint on the comment line), for visualisation.
     subroutine write_xyz(iu, st, fp)
         integer,           intent(in) :: iu
         type(structure_t), intent(in) :: st
@@ -573,6 +605,7 @@ contains
         end do
     end subroutine write_xyz
 
+    !> Usage text; keep in sync with the synopsis in the file header.
     subroutine print_usage()
         print '(A)', 'atomselect - inspect structures and manage named atomic regions (regions.nml)'
         print '(A)', ''
@@ -603,6 +636,7 @@ contains
     ! Argument handling
     ! ==================================================================
 
+    !> Stores all command-line arguments in args(:) and resets the option store.
     subroutine collect_arguments()
         integer :: i, n
 
@@ -664,6 +698,7 @@ contains
         end do
     end subroutine parse_options
 
+    !> Appends a parsed option (key/value) to the option store.
     subroutine push_opt(key, val)
         character(len=*), intent(in) :: key, val
         type(str_t), allocatable :: tk(:), tv(:)
@@ -739,12 +774,14 @@ contains
         if (x /= x .or. abs(x) > huge(1.0_dp)) call die(what // ": not a finite number: '" // tok // "'")
     end function to_real
 
+    !> Value of option `key` as a finite real.
     function opt_real(key) result(x)
         character(len=*), intent(in) :: key
         real(dp) :: x
         x = to_real(opt_value(key), key)
     end function opt_real
 
+    !> Value of option `key` as a non-negative integer (max 9 digits).
     function opt_int(key) result(n)
         character(len=*), intent(in) :: key
         integer :: n
@@ -847,6 +884,7 @@ contains
         end do
     end subroutine split_ws
 
+    !> Ascending copy (insertion sort; used for the small --refs list).
     function sorted_real(v) result(r)
         real(dp), intent(in) :: v(:)
         real(dp), allocatable :: r(:)
@@ -865,6 +903,7 @@ contains
         end do
     end function sorted_real
 
+    !> Reads the structure file; dies with the reader's message on failure.
     subroutine load_structure(filename, st)
         character(len=*),  intent(in)  :: filename
         type(structure_t), intent(out) :: st
@@ -926,6 +965,7 @@ contains
         s = trim(buf)
     end function itoa
 
+    !> Print the error and exit with code 1.
     subroutine die(msg)
         character(len=*), intent(in) :: msg
         print '(A)', '[atomselect error] ' // msg

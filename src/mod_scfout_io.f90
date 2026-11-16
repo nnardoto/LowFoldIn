@@ -14,7 +14,12 @@
 !   cabecalho(6 int) -> order_max -> atv -> atv_ijk -> Total_NumOrbs
 !   -> FNAN -> natn -> ncn -> tv -> rtv -> Gxyz -> Hks -> iHks (se SO)
 !   -> OLP -> OLPpo -> OLPmo -> DM -> iDM -> Solver -> ChemP/E_Temp/...
-!   -> (arquivo de input embutido, ignorado)
+!   -> (arquivo de input embutido: so' usado para os rotulos das especies)
+!
+! Geometria: tv (rede direta, linhas = a1,a2,a3) e Gxyz (posicoes
+! cartesianas) sao guardados em Bohr (lattice_bohr, cart_bohr); a conversao
+! para Angstrom fica a cargo de quem chama. Os rotulos de especie vem do
+! bloco <Atoms.SpeciesAndCoordinates do input embutido (atom_label).
 !
 ! OLPpo, OLPmo, DM e iDM (overlap com operador posicao/momento, matriz de
 ! densidade) nao sao usados por este conversor; seus bytes sao pulados
@@ -47,10 +52,14 @@ module scfout_io
         real(dp) :: ChemP        = 0.0_dp
         real(dp) :: E_Temp       = 0.0_dp
 
-        ! OpenMX stores both quantities in Bohr.  Rows of lattice_bohr are
-        ! the direct lattice vectors; columns of cart_bohr are atoms.
+        ! Geometry from the .scfout (NOT converted: OpenMX stores Bohr).
+        ! Rows of lattice_bohr are the direct lattice vectors a1,a2,a3;
+        ! columns of cart_bohr are atoms (same order as the Hamiltonian blocks).
         real(dp) :: lattice_bohr(3, 3) = 0.0_dp
-        real(dp), allocatable :: cart_bohr(:, :)       ! (3, atomnum)
+        real(dp), allocatable :: cart_bohr(:, :)       ! (3, atomnum), Bohr
+        ! Species label per atom, parsed from the embedded OpenMX input.
+        ! atom_label is allocated only if that input could be read, and its
+        ! contents are meaningful only when has_atom_labels is .true.
         character(len=8), allocatable :: atom_label(:)
         logical :: has_atom_labels = .false.
 
@@ -82,6 +91,10 @@ module scfout_io
 
 contains
 
+    ! Le o .scfout inteiro em `this` (stream binario, ordem de Input() de
+    ! read_scfout.c). Nao retorna erro: arquivo ausente, versao /= 3 ou EOF
+    ! inesperado fazem `stop 1` com mensagem. Unica excecao: o input embutido
+    ! no final e' opcional (ver has_atom_labels).
     subroutine ReadScfoutFile(this, filename)
         type(ScfoutData), intent(inout) :: this
         character(len=*),  intent(in) :: filename
@@ -308,10 +321,12 @@ contains
         ! d_vec(9) = Valence_Electrons, d_vec(10) = Total_SpinS -- nao usados aqui.
 
         ! -------------------------------------------------------------
-        ! Embedded OpenMX input: num_lines followed by fixed 256-byte
-        ! records. It supplies species labels, which are not present in the
-        ! binary geometry records themselves. Missing/malformed input does
-        ! not prevent H/S conversion; has_atom_labels remains false.
+        ! Embedded OpenMX input: num_lines (int32) followed by fixed 256-byte
+        ! records, appended after the numeric data. It supplies species
+        ! labels, which are not present in the binary geometry records
+        ! themselves. Missing/malformed input (EOF, num_lines out of
+        ! 1..100000, allocation failure) is not an error: H/S conversion still
+        ! works and has_atom_labels remains false.
         ! -------------------------------------------------------------
         block
             integer :: num_lines, iline, alloc_stat
@@ -340,6 +355,20 @@ contains
         close(iunit)
     end subroutine ReadScfoutFile
 
+    !> Extracts per-atom species labels from the embedded OpenMX input text.
+    !>
+    !> Looks for the block delimited by `<Atoms.SpeciesAndCoordinates` and
+    !> `Atoms.SpeciesAndCoordinates>` (case-insensitive) and reads, from each
+    !> line inside, the 1-based atom index and the species label (the first
+    !> two list-directed fields; coordinates etc. are ignored). Blank lines,
+    !> '#'/'!' comment lines and NUL padding (records are fixed 256 bytes) are
+    !> skipped.
+    !>
+    !> `found` is .true. only if the block is closed and every atom 1..nat got
+    !> exactly one label of 1..8 characters. On any malformed line (bad
+    !> index, duplicate, label too long, unreadable) it returns early with
+    !> found = .false. and `labels` partially filled: never use labels then.
+    !> Never stops.
     subroutine ParseEmbeddedAtomLabels(lines, nat, labels, found)
         character(len=*), intent(in) :: lines(:)
         integer, intent(in) :: nat
@@ -391,6 +420,7 @@ contains
         found = closed .and. all(seen)
     end subroutine ParseEmbeddedAtomLabels
 
+    !> ASCII lower-case copy of text (used for case-insensitive keyword search).
     pure function to_lower(text) result(lower)
         character(len=*), intent(in) :: text
         character(len=len(text)) :: lower

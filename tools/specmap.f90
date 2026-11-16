@@ -13,9 +13,15 @@
 ! Usage:
 !   specmap <specmap.nml>
 !
-! Writes <output_prefix>.<tag>.map.dat for every map expression and
-! <output_prefix>.kticks.gp (gnuplot include). Exit code 1 on any error
-! (message prefixed "[specmap error]").
+! Input : namelist &SPECMAP (options in docs/specmap.md) pointing to the
+!         <prefix>.spectral.bin file written by `spectral`.
+! Output: <output_prefix>.<tag>.map.dat for every map expression and
+!         <output_prefix>.kticks.gp (gnuplot include with the k-path ticks).
+! Exit  : 0 on success; 1 on wrong usage or any error (message prefixed
+!         "[specmap error]" on stderr). All inputs and map expressions are
+!         validated before the first file is written.
+!
+! User documentation: docs/specmap.md
 ! ----------------------------------------------------------------------------------------------------------
 program specmap_main
     use, intrinsic :: iso_fortran_env, only: int64, error_unit
@@ -32,7 +38,7 @@ program specmap_main
 
     integer, parameter :: MAX_MAPS = 32
 
-    ! Namelist variables
+    ! Namelist variables (defaults here are the documented defaults)
     character(len=512) :: spectral_file = ''
     integer            :: spin_channel  = 1
     character(len=32)  :: kernel        = 'lorentzian'
@@ -52,7 +58,7 @@ program specmap_main
     type(spectral_data_t) :: sd
     character(len=1024)   :: input_path, errmsg
     character(len=:), allocatable :: tag, fname, kname, wmeaning, occ_line, eref_line
-    character(len=640)    :: hdr(12)
+    character(len=640)    :: hdr(12)     ! header lines of the .map.dat file (11 used)
     integer  :: u, ios, ierr, im, jm, it, ie, nmaps, kern, map_number
     integer(int64) :: total_start, map_start, map_end, clock_rate
     real(dp) :: mu, map_seconds, total_seconds
@@ -60,7 +66,9 @@ program specmap_main
     integer,  allocatable :: ridx(:)
     real(dp), allocatable :: coef(:)
 
-    ! ---------------------------------------------------------------- input
+    ! ================================================================
+    ! 1. Read and validate inputs
+    ! ================================================================
     if (command_argument_count() /= 1) then
         write(error_unit, '(A)') "Usage: specmap <specmap.nml>"
         stop 1
@@ -80,7 +88,7 @@ program specmap_main
     close(u)
     if (ios /= 0) call die("error reading &SPECMAP namelist from " // trim(input_path))
 
-    ! ---------------------------------------------------------- validation
+    ! Option validation (cheap checks first, before reading the data file)
     if (len_trim(spectral_file) == 0) call die("spectral_file is required")
     select case (lower(trim(adjustl(kernel))))
     case ('lorentzian')
@@ -108,6 +116,8 @@ program specmap_main
     if (spin_channel < 1 .or. spin_channel > sd%nspin) &
         call die("spin_channel must be in 1.." // itoa(sd%nspin))
 
+    ! Chemical potential for the Fermi-Dirac occupation. Only a 'fermi'
+    ! reference has a known zero (E_F = 0); otherwise the user must give mu.
     mu = 0.0_dp
     if (occupation) then
         if (mu_set) then
@@ -121,7 +131,8 @@ program specmap_main
         end if
     end if
 
-    ! Validate every map expression before writing anything.
+    ! Validate every map expression before writing anything, and reject
+    ! expressions that map to the same output file name (would overwrite).
     do im = 1, MAX_MAPS
         if (len_trim(maps(im)) == 0) cycle
         call parse_map_expression(trim(maps(im)), sd, ridx, coef, ierr, errmsg)
@@ -134,7 +145,9 @@ program specmap_main
         end do
     end do
 
-    ! ------------------------------------------------------------- compute
+    ! ================================================================
+    ! 2. Set up energy grid, occupation and header text
+    ! ================================================================
     allocate(grid(ne), A(ne, sd%nk), wcomb(sd%nband, sd%nk), focc(ne))
     call energy_grid(emin, emax, ne, grid)
     if (occupation) then
@@ -166,6 +179,10 @@ program specmap_main
         ' eV, energy points ', ne
     print '(A)', '[2/3] Broadening and writing maps'
 
+    ! ================================================================
+    ! 3. One map per expression: combine, broaden, weight, write
+    !    (expressions are parsed again here; they were validated above)
+    ! ================================================================
     map_number = 0
     do im = 1, MAX_MAPS
         if (len_trim(maps(im)) == 0) cycle
@@ -188,6 +205,7 @@ program specmap_main
             end do
         end if
 
+        ! Metadata header written at the top of the .map.dat file
         hdr = ''
         hdr(1)  = 'specmap spectral map (broadened projection weights; NOT a photoemission simulation)'
         hdr(2)  = 'source file: ' // trim(spectral_file)
@@ -212,6 +230,9 @@ program specmap_main
         print '(A,A,A,F0.3,A)', '          wrote ', fname, ' in ', map_seconds, ' s'
     end do
 
+    ! ================================================================
+    ! 4. k-path ticks for gnuplot, then summary
+    ! ================================================================
     print '(A)', '[3/3] Writing k-path metadata'
     fname = trim(output_prefix) // '.kticks.gp'
     call write_kticks_file(fname, sd, ierr, errmsg)
@@ -229,12 +250,14 @@ program specmap_main
 
 contains
 
+    !> Print the message to stderr and exit with code 1.
     subroutine die(msg)
         character(len=*), intent(in) :: msg
         write(error_unit, '(A, A)') "[specmap error] ", msg
         stop 1
     end subroutine die
 
+    !> ASCII lower-casing (kernel name is case-insensitive).
     pure function lower(s) result(r)
         character(len=*), intent(in) :: s
         character(len=len(s)) :: r
@@ -254,6 +277,9 @@ contains
         r = trim(buf)
     end function itoa
 
+    !> Real to compact string for headers/log: fixed notation with trailing
+    !> zeros trimmed (one decimal kept, e.g. '3.0') for 1e-3 <= |x| < 1e6,
+    !> scientific notation otherwise.
     function rtoa(x) result(r)
         real(dp), intent(in) :: x
         character(len=:), allocatable :: r
@@ -279,6 +305,7 @@ contains
         end if
     end function rtoa
 
+    !> Name of the projection method stored in the spectral file.
     function method_label(m) result(r)
         integer, intent(in) :: m
         character(len=:), allocatable :: r

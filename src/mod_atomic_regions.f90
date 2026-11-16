@@ -3,41 +3,80 @@
 
 !> Named atomic regions (regions.nml): reader, canonical writer, intrinsic
 !> checks, validation against a structure and partition test.
-!> See docs/design/contracts.md §2. Library routines never stop.
+!>
+!> Pipeline role: atomselect writes regions.nml (named groups of atoms, e.g.
+!> 'top', 'bottom'); spectral/specmap read it to project the spectral function
+!> onto each region. The file is a namelist: one &REGION_FILE header followed by
+!> any number of &REGION groups.
+!>
+!> Conventions: atom indices are 1-based and refer to the structure-file order
+!> (= HSIO order). Regions may overlap; stored atom lists keep the user order.
+!> Checks are split in two levels: read_regions_file / add_region verify what
+!> can be checked from the file alone (syntax, ranges, names, duplicates), and
+!> validate_regions compares against a structure (nat, labels, fingerprint).
+!>
+!> Library routines never stop: errors come back as ierr /= 0 plus errmsg.
+!> See docs/design/contracts.md §2.
 module atomic_regions
     use structure_io, only: structure_t, structure_fingerprint, LABEL_LEN
     use, intrinsic :: iso_fortran_env, only: iostat_end
     implicit none
     private
 
+    ! ==================================================================
+    ! TYPES
+    ! ==================================================================
+    !> REGION_NAME_LEN: max region name length. MAX_REGION_ATOMS: size of the
+    !> namelist read buffers, hence the largest atom (or species) list a file
+    !> can carry.
     integer, parameter, public :: REGION_NAME_LEN = 64, MAX_REGION_ATOMS = 100000
 
+    !> One named region: `atoms` are 1-based structure indices, no duplicates.
     type, public :: atom_region_t
         character(len=REGION_NAME_LEN) :: name = ''
         integer, allocatable :: atoms(:)
     end type atom_region_t
 
+    !> Content of a regions file. `natoms`, `fingerprint` and `species`
+    !> describe the structure the regions were built for (checked later by
+    !> validate_regions). fingerprint = '' means "none". regions(1:nregion)
+    !> hold the data; nregion is kept in sync by add_region.
     type, public :: region_set_t
         integer :: format_version = 1
         integer :: natoms = 0
         character(len=16) :: fingerprint = ''
         logical :: has_species = .false.
-        character(len=LABEL_LEN), allocatable :: species(:)
+        character(len=LABEL_LEN), allocatable :: species(:)   ! (natoms) when has_species
         integer :: nregion = 0
         type(atom_region_t), allocatable :: regions(:)
     end type region_set_t
 
+    ! ==================================================================
+    ! PUBLIC API / CONSTANTS
+    ! ==================================================================
     public :: read_regions_file, write_regions_file, validate_regions
     public :: add_region, regions_are_partition, is_valid_region_name
 
+    ! Marks unused slots in the namelist buffers (a real index is always >= 1)
     integer, parameter :: ATOM_SENTINEL = -huge(0)
+    ! Line wrapping of the canonical writer
     integer, parameter :: SPECIES_PER_LINE = 10, ATOMS_PER_LINE = 20
     character(len=*), parameter :: NAME_CHARS = &
         'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.'
 
 contains
 
-    ! ------------------------------------------------------------------
+    ! ==================================================================
+    ! READ / WRITE
+    ! ==================================================================
+
+    !> Reads a regions file into `rs` and runs the checks that need no
+    !> structure: &REGION_FILE first and unique, format_version = 1, natoms >= 1,
+    !> fingerprint <= 16 chars, species count = natoms (if given), and per
+    !> region the add_region checks (name, duplicates, index range).
+    !> Never stops; on error ierr = 1 and errmsg describes the problem
+    !> (block number / region name included). rs is intent(out): contents are
+    !> unreliable after an error.
     subroutine read_regions_file(filename, rs, ierr, errmsg)
         character(len=*),   intent(in)  :: filename
         type(region_set_t), intent(out) :: rs
@@ -60,6 +99,7 @@ contains
         ierr = 0
         errmsg = ''
 
+        ! 1. Pre-scan: namelist reads cannot tell where the header sits
         call check_header_position(filename, ok, ierr, errmsg)
         if (ierr /= 0) return
 
@@ -71,7 +111,8 @@ contains
 
         allocate(species(MAX_REGION_ATOMS), atoms(MAX_REGION_ATOMS))
 
-        ! ---- &REGION_FILE
+        ! 2. &REGION_FILE header. Defaults are sentinels so that a missing
+        !    key is detected (natoms < 1, format_version /= 1).
         format_version = -huge(0)
         natoms = -huge(0)
         fingerprint = ''
@@ -117,7 +158,10 @@ contains
             rs%species = species(1:n)
         end if
 
-        ! ---- &REGION blocks
+        ! 3. &REGION blocks, read sequentially until end of file. The atom
+        !    buffer is reset to the sentinel before each read so the list length
+        !    is the number of leading non-sentinel entries; add_region then
+        !    applies the per-region checks.
         allocate(rs%regions(0))
         rs%nregion = 0
         iblock = 0
@@ -155,6 +199,7 @@ contains
 
     contains
 
+        !> Sets the error state (file is closed by the caller).
         subroutine fail(m)
             character(len=*), intent(in) :: m
             ierr = 1
@@ -163,7 +208,11 @@ contains
 
     end subroutine read_regions_file
 
-    !> &REGION_FILE must be the first group in the file and appear exactly once.
+    !> Text pre-scan of the file: &REGION_FILE must be the first namelist group
+    !> and appear exactly once (a namelist read alone would silently skip
+    !> ahead to the first group of the requested name). `ok` is true on
+    !> success; errors are reported through ierr/errmsg. Groups are recognised
+    !> by lines whose first non-blank character is '&'.
     subroutine check_header_position(filename, ok, ierr, errmsg)
         character(len=*), intent(in)  :: filename
         logical,          intent(out) :: ok
@@ -210,7 +259,10 @@ contains
         ok = .true.
     end subroutine check_header_position
 
-    ! ------------------------------------------------------------------
+    !> Writes `rs` in the canonical layout (header, then one &REGION per
+    !> region, atoms 20 per line, species 10 per line). Overwrites an existing
+    !> file. Does not validate `rs` (use add_region/validate_regions for that).
+    !> Never stops; ierr = 1 and errmsg on open/close failure.
     subroutine write_regions_file(filename, rs, ierr, errmsg)
         character(len=*),   intent(in)  :: filename
         type(region_set_t), intent(in)  :: rs
@@ -271,7 +323,16 @@ contains
         end if
     end subroutine write_regions_file
 
-    ! ------------------------------------------------------------------
+    ! ==================================================================
+    ! VALIDATION AND EDITING
+    ! ==================================================================
+
+    !> Checks a region set against the structure it will be applied to, in
+    !> this order: natoms = st%nat; species list (if present) equals the
+    !> structure labels atom by atom; fingerprint equals
+    !> structure_fingerprint(st). A missing fingerprint is an error unless
+    !> allow_no_fingerprint, in which case a warning is printed to stdout.
+    !> Never stops; ierr = 1 and errmsg on the first failure.
     subroutine validate_regions(rs, st, allow_no_fingerprint, ierr, errmsg)
         type(region_set_t), intent(in)  :: rs
         type(structure_t),  intent(in)  :: st
@@ -328,7 +389,11 @@ contains
         end if
     end subroutine validate_regions
 
-    ! ------------------------------------------------------------------
+    !> Appends region `name` with the 1-based `atoms` to rs (user order kept).
+    !> Requires rs%format_version = 1 and rs%natoms >= 1 to be already set.
+    !> Errors (ierr = 1, rs unchanged): invalid or duplicated name, empty
+    !> list, index outside 1..natoms, duplicated index within the region.
+    !> Overlap with other regions is allowed.
     subroutine add_region(rs, name, atoms, ierr, errmsg)
         type(region_set_t), intent(inout) :: rs
         character(len=*),   intent(in)    :: name
@@ -378,6 +443,7 @@ contains
             seen(atoms(i)) = .true.
         end do
 
+        ! Grow the array by one; move_alloc avoids deep-copying the atom lists
         if (.not. allocated(rs%regions)) allocate(rs%regions(0))
         allocate(tmp(rs%nregion + 1))
         do ir = 1, rs%nregion
@@ -399,7 +465,8 @@ contains
 
     end subroutine add_region
 
-    ! ------------------------------------------------------------------
+    !> True if every atom 1..natoms belongs to exactly one region (no overlap,
+    !> no atom left out). False for an empty set or out-of-range indices.
     logical function regions_are_partition(rs)
         type(region_set_t), intent(in) :: rs
         integer, allocatable :: cnt(:)
@@ -418,7 +485,8 @@ contains
         regions_are_partition = all(cnt == 1)
     end function regions_are_partition
 
-    ! ------------------------------------------------------------------
+    !> True if `name` (trailing blanks ignored) has 1..REGION_NAME_LEN chars from
+    !> [A-Za-z0-9_.] and is not the reserved word 'total' (case-sensitive).
     logical function is_valid_region_name(name)
         character(len=*), intent(in) :: name
         integer :: n
@@ -430,8 +498,9 @@ contains
         is_valid_region_name = .true.
     end function is_valid_region_name
 
-    ! ------------------------------------------------------------------
-    ! helpers
+    ! ==================================================================
+    ! PRIVATE HELPERS
+    ! ==================================================================
 
     !> Number of leading non-sentinel entries; -1 if a non-sentinel follows a sentinel.
     integer function count_leading_atoms(buf) result(n)
@@ -449,6 +518,7 @@ contains
         end if
     end function count_leading_atoms
 
+    !> Same as count_leading_atoms for the species buffer (sentinel = blank).
     integer function count_leading_species(buf) result(n)
         character(len=*), intent(in) :: buf(:)
         integer :: i
@@ -464,6 +534,7 @@ contains
         end if
     end function count_leading_species
 
+    !> Text of `line` up to the first blank, tab, '!' or '/' (e.g. '&REGION').
     function first_token(line) result(tok)
         character(len=*), intent(in) :: line
         character(len=len(line)) :: tok
@@ -476,6 +547,7 @@ contains
         end if
     end function first_token
 
+    !> ASCII upper-case copy of s.
     pure function upper(s) result(u)
         character(len=*), intent(in) :: s
         character(len=len(s)) :: u
@@ -487,6 +559,7 @@ contains
         end do
     end function upper
 
+    !> Integer to trimmed string (for error messages).
     pure function itoa(i) result(s)
         integer, intent(in) :: i
         character(len=:), allocatable :: s

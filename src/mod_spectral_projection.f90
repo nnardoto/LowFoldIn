@@ -2,8 +2,24 @@
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
 !> Pure numerical building blocks for atom/region-resolved spectral weights
-!> (contracts §4): orbital groups from atom lists, S·C product, Mulliken
-!> and Löwdin weights and a non-stopping generalized Hermitian eigensolver.
+!> (docs/design/contracts.md §4): orbital groups from atom lists, S·C product,
+!> Mulliken and Löwdin weights and a non-stopping generalized Hermitian
+!> eigensolver.
+!>
+!> Pipeline position: called per k-point by spectral_engine (`process_kpoint`)
+!> after H(k), S(k) have been built: eigensolve -> (S·C) -> weights W(band, group).
+!> No I/O, no module state; library routines never stop (errors via ierr).
+!>
+!> Conventions:
+!>   - Matrices are full-storage Hermitian complex(dp), column-major; the upper
+!>     triangle is the one referenced by LAPACK/BLAS here.
+!>   - Eigenvectors are the columns of C: C(mu, b) = coefficient of orbital mu
+!>     in band b; bands ascend in energy and satisfy C^† S C = I.
+!>   - Orbital and atom indices are 1-based; atom a owns the contiguous
+!>     orbitals offset(a)+1 .. offset(a+1) (offset itself is 0-based).
+!>   - Weights are signed: nothing is clipped or abs()'d (see each routine).
+!>   - S passed to the weight routines must be the original S(k), never the
+!>     (destroyed) zhegv workspace.
 module spectral_projection
     use types, only: dp
     implicit none
@@ -14,8 +30,14 @@ module spectral_projection
     public :: overlap_times_vectors, mulliken_weights, lowdin_weights
     public :: generalized_eigensolve
 
+    ! ==================================================================
+    ! Types
+    ! ==================================================================
+
     !> Groups of orbital indices in CSR layout:
-    !> group g = orb(start(g):start(g+1)-1).
+    !> group g = orb(start(g):start(g+1)-1). norb = total orbitals of the
+    !> system (not the number stored in orb: overlapping groups may repeat
+    !> orbitals, and groups need not cover all of them).
     type :: orbital_groups_t
         integer :: ngroup = 0, norb = 0
         integer, allocatable :: start(:)   ! (ngroup+1)
@@ -24,6 +46,7 @@ module spectral_projection
 
     ! ==================================================================
     ! EXPLICIT INTERFACES FOR BLAS/LAPACK (double complex)
+    ! (no intent in the external signatures, hence the local copies below)
     ! ==================================================================
     interface
         subroutine zhemm(side, uplo, m, n, alpha, a, lda, b, ldb, beta, c, ldc)
@@ -61,8 +84,13 @@ module spectral_projection
 
 contains
 
+    ! ==================================================================
+    ! Orbital bookkeeping
+    ! ==================================================================
+
     !> Orbital offsets per atom: offset(1) = 0, offset(a+1) = offset(a) + orbs(a).
     !> Orbitals of atom a are offset(a)+1 .. offset(a+1).
+    !> offset must have size nat+1 (nat = size(orbs_per_atom)).
     pure subroutine atom_orbital_offsets(orbs_per_atom, offset)
         integer, intent(in)  :: orbs_per_atom(:)
         integer, intent(out) :: offset(:)          ! (nat+1)
@@ -78,6 +106,10 @@ contains
     !> a in list_atoms(list_start(g):list_start(g+1)-1) (in that order), the
     !> orbitals offset(a)+1 .. offset(a)+orbs(a). Atoms may appear in several
     !> groups (overlapping groups are allowed).
+    !> list_start(1:nlist+1) must be 1-based and monotonic (list_start(nlist+1)-1
+    !> = number of entries used in list_atoms). Atom indices are not range
+    !> checked here: callers must pass 1 <= a <= size(orbs_per_atom).
+    !> groups%norb = total orbitals of the system. Never stops.
     subroutine build_orbital_groups(orbs_per_atom, nlist, list_start, list_atoms, groups)
         integer,                intent(in)  :: orbs_per_atom(:)
         integer,                intent(in)  :: nlist
@@ -96,6 +128,7 @@ contains
         groups%norb   = offset(nat + 1)
         allocate(groups%start(nlist + 1))
 
+        ! 1. First pass: size of every group -> CSR start pointers.
         groups%start(1) = 1
         do g = 1, nlist
             ntot = 0
@@ -105,6 +138,7 @@ contains
             groups%start(g + 1) = groups%start(g) + ntot
         end do
 
+        ! 2. Second pass: expand each atom into its contiguous orbital range.
         allocate(groups%orb(groups%start(nlist + 1) - 1))
         pos = 0
         do g = 1, nlist
@@ -118,8 +152,13 @@ contains
         end do
     end subroutine build_orbital_groups
 
+    ! ==================================================================
+    ! Weights
+    ! ==================================================================
+
     !> SC = S·C with S Hermitian (full storage, upper triangle referenced).
-    !> S and C are not modified.
+    !> S and C are not modified. S(n,n), C(n,nband), SC(n,nband); nband = n
+    !> in the spectral engine. If n <= 0 or nband <= 0, returns with SC untouched.
     subroutine overlap_times_vectors(n, nband, S, C, SC)
         integer,     intent(in)  :: n, nband
         complex(dp), intent(in)  :: S(n, n)
@@ -139,7 +178,10 @@ contains
     end subroutine overlap_times_vectors
 
     !> Mulliken weights W(b,g) = Re Σ_{μ∈g} conj(C(μ,b)) · SC(μ,b).
-    !> Negative values are kept as-is (no clipping, no abs).
+    !> Negative values are kept as-is (no clipping, no abs): Mulliken weights
+    !> are populations, not probabilities. SC must be S·C from the same S as
+    !> used in the eigensolve (see overlap_times_vectors). The group made of
+    !> all orbitals sums to 1 per band for normalised C (C^† S C = I).
     subroutine mulliken_weights(n, nband, C, SC, groups, W)
         integer,                intent(in)  :: n, nband
         complex(dp),            intent(in)  :: C(n, nband), SC(n, nband)
@@ -162,6 +204,7 @@ contains
     end subroutine mulliken_weights
 
     !> Löwdin weights W(b,g) = Σ_{μ∈g} |(S^{1/2} C)(μ,b)|².
+    !> Non-negative by construction (orthogonalised basis).
     !> S^{1/2} = U diag(sqrt(w)) U^† from zheev('V','U') on a COPY of S.
     !> smin = smallest eigenvalue of S. If smin <= tol_s_min: ierr = 1 and W is
     !> left undefined (eigenvalues are never floored or clipped).
@@ -190,7 +233,8 @@ contains
         allocate(U(n, n), ev(n), rwork(max(1, 3 * n - 2)))
         U = S
 
-        ! Workspace query
+        ! 1. Diagonalise S (copy in U): S = U diag(ev) U^†.
+        ! LAPACK workspace query (lwork = -1 returns the optimal size in wquery).
         call zheev('V', 'U', n, U, n, ev, wquery, -1, rwork, info)
         if (info /= 0) then
             ierr = merge(info, 1000 + info, info < 0)
@@ -204,25 +248,28 @@ contains
             return
         end if
 
+        ! 2. Positive-definiteness guard: eigenvalues ascend, but minval is
+        ! used so the check does not depend on the ordering. Caller aborts.
         smin = minval(ev)
         if (smin <= tol_s_min) then
             ierr = 1
             return
         end if
 
-        ! S^{1/2} = (U diag(sqrt(ev))) U^H
+        ! 3. S^{1/2} = (U diag(sqrt(ev))) U^H  (column scaling, then zgemm 'N','C')
         allocate(US(n, n), Shalf(n, n))
         do i = 1, n
             US(:, i) = U(:, i) * sqrt(ev(i))
         end do
         call zgemm('N', 'C', n, n, n, (1.0_dp, 0.0_dp), US, n, U, n, (0.0_dp, 0.0_dp), Shalf, n)
 
-        ! Ct = S^{1/2} C (local copy of C keeps the intent(in) argument untouched)
+        ! 4. Ct = S^{1/2} C (local copy of C keeps the intent(in) argument untouched)
         allocate(Cwork(n, nband), Ct(n, nband))
         Cwork = C
         call zgemm('N', 'N', n, nband, n, (1.0_dp, 0.0_dp), Shalf, n, Cwork, n, &
                    (0.0_dp, 0.0_dp), Ct, n)
 
+        ! 5. Sum |Ct|^2 over the orbitals of each group.
         do g = 1, groups%ngroup
             do b = 1, nband
                 acc = 0.0_dp
@@ -235,9 +282,16 @@ contains
         end do
     end subroutine lowdin_weights
 
+    ! ==================================================================
+    ! Eigensolver
+    ! ==================================================================
+
     !> Generalized Hermitian eigenproblem H C = S C diag(E) via
     !> zhegv(1,'V','U') on internal copies of H and S. Eigenvalues ascending,
-    !> C^† S C = I. Never stops: ierr = info from zhegv (or the workspace query).
+    !> C^† S C = I. Never stops: ierr = info from zhegv (or the workspace query):
+    !> info < 0 illegal argument, 0 < info <= n eigensolver failed to converge,
+    !> info > n S not positive definite (LAPACK convention). On ierr /= 0, E and C
+    !> are undefined. H and S are not modified.
     subroutine generalized_eigensolve(n, H, S, E, C, ierr)
         integer,     intent(in)  :: n
         complex(dp), intent(in)  :: H(n, n), S(n, n)
@@ -253,12 +307,14 @@ contains
         ierr = 0
         if (n <= 0) return
 
+        ! zhegv overwrites A with the eigenvectors and B with its Cholesky
+        ! factor, so both are passed as copies (C doubles as the A copy).
         C = H
         allocate(Bwork(n, n))
         Bwork = S
         allocate(rwork(max(1, 3 * n - 2)))
 
-        ! Workspace query
+        ! LAPACK workspace query (lwork = -1)
         call zhegv(1, 'V', 'U', n, C, n, Bwork, n, E, wquery, -1, rwork, info)
         if (info /= 0) then
             ierr = info

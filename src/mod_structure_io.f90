@@ -1,17 +1,35 @@
 ! SPDX-License-Identifier: GPL-3.0-or-later
 ! Copyright (C) 2026 Nathanael Nardoto Batista
 
-!> Structure file reader (same format as unfold::ReadStructureFile), structure
-!> fingerprint (FNV-1a 64 over a canonical text) and lattice helpers.
-!> See docs/design/contracts.md §1.
+!> Structure geometry: file reader, fingerprint and lattice helpers.
+!>
+!> Pipeline role: the HSIO file stores no geometry, so every spectral tool
+!> (atomselect, spectral, specmap) gets lattice, atom positions and labels from
+!> this module. The file format is the one of unfold::ReadStructureFile
+!> (&STRUCTURE, optional &SPECIES, &ATOMS). The fingerprint ties a regions file
+!> to the structure it was built from (see atomic_regions).
+!>
+!> Conventions: atoms are 1-based and keep the file order (must equal the HSIO
+!> atom order); lengths are Cartesian Å; lattice(i,:) is the i-th lattice
+!> vector (rows, not columns); fractional coordinates f satisfy r = sum_i f_i a_i.
+!> Library routines never stop: errors are returned through ierr/errmsg.
+!>
+!> See docs/design/contracts.md §1 and §1.1.
 module structure_io
     use types, only: dp
     use, intrinsic :: iso_fortran_env, only: int64
     implicit none
     private
 
+    ! ==================================================================
+    ! TYPES
+    ! ==================================================================
+    !> Maximum length of an atom/species label (longer labels are truncated).
     integer, parameter, public :: LABEL_LEN = 8
 
+    !> Crystal structure as read from the structure file. nat = 0 means "empty
+    !> or failed read". species_* are allocated (size 0 if there is no
+    !> &SPECIES block) once a read gets past the &SPECIES/&ATOMS search.
     type, public :: structure_t
         integer :: nat = 0
         real(dp) :: lattice(3,3) = 0.0_dp                  ! lattice(i,:) = a_i, Å
@@ -20,20 +38,37 @@ module structure_io
         logical :: has_species = .false.
         integer :: nspecies = 0
         character(len=LABEL_LEN), allocatable :: species_name(:)
-        integer, allocatable :: species_norb(:)
+        integer, allocatable :: species_norb(:)   ! per species, counted in the HSIO basis (incl. spin doubling)
     end type structure_t
+
+    ! ==================================================================
+    ! PUBLIC API / CONSTANTS
+    ! ==================================================================
 
     public :: read_structure, structure_fingerprint, fnv1a64_hex
     public :: reciprocal_lattice, cart_to_frac, species_norb_of
 
     real(dp), parameter :: TWO_PI = 2.0_dp * acos(-1.0_dp)
-    real(dp), parameter :: DET_TOL = 1.0e-12_dp
+    real(dp), parameter :: DET_TOL = 1.0e-12_dp   ! |det| (Å^3) below which the lattice is considered singular
     integer(int64), parameter :: MASK32 = int(z'FFFFFFFF', int64)
 
 contains
 
-    !> Reads a structure file into `st`. Never stops: on error ierr /= 0 and
-    !> errmsg holds a message naming the file.
+    ! ==================================================================
+    ! READER
+    ! ==================================================================
+
+    !> Reads a structure file into `st`.
+    !>
+    !> Layout: &STRUCTURE namelist (LatticeVectors, rows = a1,a2,a3 in Å), then
+    !> an optional &SPECIES block (count, then `label nOrb` lines), then &ATOMS
+    !> (count, then `label x y z` lines, Cartesian Å). Blank lines and lines
+    !> starting with '!' or '#' are skipped inside the blocks.
+    !>
+    !> Never stops. ierr = 0 on success; otherwise ierr /= 0, errmsg names the
+    !> file and st%nat = 0. Codes: 1 cannot open, 2 bad &STRUCTURE namelist,
+    !> 3 lattice missing/singular, 4 &ATOMS not found, 5 bad &SPECIES,
+    !> 6 bad atom count, 7 bad/missing atom line, 8 atom label not in &SPECIES.
     subroutine read_structure(filename, st, ierr, errmsg)
         character(len=*),  intent(in)  :: filename
         type(structure_t), intent(out) :: st
@@ -75,7 +110,8 @@ contains
         end if
         st%lattice = LatticeVectors
 
-        ! 2. Optional &SPECIES, then &ATOMS
+        ! 2. Skip to the first '&SPECIES' or '&ATOMS' marker line. These blocks
+        !    are parsed by hand (not as namelists) because their rows are free text.
         do
             read(iu, '(A)', iostat=ios) line
             if (ios /= 0) then
@@ -85,6 +121,7 @@ contains
             if (trim(adjustl(line)) == "&SPECIES" .or. trim(adjustl(line)) == "&ATOMS") exit
         end do
 
+        ! 2b. Optional &SPECIES block; afterwards skip ahead to &ATOMS
         if (trim(adjustl(line)) == "&SPECIES") then
             call next_data_line(iu, line, ios)
             nsp = 0
@@ -120,7 +157,8 @@ contains
             allocate(st%species_name(0), st%species_norb(0))
         end if
 
-        ! 3. &ATOMS
+        ! 3. &ATOMS: count, then one `label x y z` line per atom. With a
+        !    &SPECIES table, every label must be listed in it.
         call next_data_line(iu, line, ios)
         nat = 0
         if (ios == 0) read(line, *, iostat=ios) nat
@@ -154,6 +192,7 @@ contains
 
     contains
 
+        !> Records the error, invalidates st and closes the file if open.
         subroutine fail(code, msg)
             integer,          intent(in) :: code
             character(len=*), intent(in) :: msg
@@ -165,14 +204,21 @@ contains
 
     end subroutine read_structure
 
-    !> Reciprocal lattice: b(i,:) = b_i, with b_i . a_j = 2π δ_ij (1/Å).
+    ! ==================================================================
+    ! LATTICE HELPERS
+    ! ==================================================================
+
+    !> Reciprocal lattice (rows): b(i,:) = b_i, with b_i . a_j = 2π δ_ij, in
+    !> 1/Å and including the 2π factor. Needs a non-singular st%lattice.
+    !> b = 2π (A^-1)^T where A has the a_i as rows.
     function reciprocal_lattice(st) result(b)
         type(structure_t), intent(in) :: st
         real(dp) :: b(3,3)
         b = TWO_PI * transpose(inv3(st%lattice))
     end function reciprocal_lattice
 
-    !> Fractional coordinates f such that r = Σ_i f_i a_i.
+    !> Fractional coordinates f such that r = Σ_i f_i a_i, for a Cartesian
+    !> position r in Å. No wrapping into [0,1): periodic images are kept.
     function cart_to_frac(st, r) result(f)
         type(structure_t), intent(in) :: st
         real(dp),          intent(in) :: r(3)
@@ -181,8 +227,9 @@ contains
         f = matmul(r, inv3(st%lattice))
     end function cart_to_frac
 
-    !> Number of orbitals of atom iat from the species table; -1 if no table
-    !> (or label not found / iat out of range).
+    !> Number of orbitals of atom iat (1-based) from the species table, matched
+    !> by label. Returns -1 if there is no table, iat is out of range or the
+    !> label is not found (callers must treat -1 as "unknown", not as an error).
     function species_norb_of(st, iat) result(n)
         type(structure_t), intent(in) :: st
         integer,           intent(in) :: iat
@@ -198,7 +245,14 @@ contains
         end do
     end function species_norb_of
 
-    !> Structure fingerprint (contracts §1.1): FNV-1a 64 of the canonical text.
+    ! ==================================================================
+    ! FINGERPRINT
+    ! ==================================================================
+
+    !> Structure fingerprint (contracts §1.1): FNV-1a 64 of a canonical text
+    !> "LFSTRUCT1\n<nat>\n<label x y z>\n..." with coordinates rounded to
+    !> 1e-4 Å (integers, so no "-0"). Only labels and positions enter; the
+    !> lattice does not. Returns 16 lowercase hex chars.
     function structure_fingerprint(st) result(fp)
         type(structure_t), intent(in) :: st
         character(len=16) :: fp
@@ -221,7 +275,9 @@ contains
     end function structure_fingerprint
 
     !> FNV-1a 64-bit hash of `text`, as 16 lowercase hex chars. The 64-bit state
-    !> is held as two 32-bit limbs (hi, lo) in int64 to avoid signed overflow.
+    !> is held as two 32-bit limbs (hi, lo) in int64 to avoid signed overflow
+    !> (Fortran has no unsigned integers). Multiplication by the FNV prime is
+    !> done limb-wise, keeping only the low 64 bits of the product.
     function fnv1a64_hex(text) result(hex)
         character(len=*), intent(in) :: text
         character(len=16) :: hex
@@ -243,8 +299,11 @@ contains
         hex = hex8(hi) // hex8(lo)
     end function fnv1a64_hex
 
-    ! ---------------------------------------------------------------- private
+    ! ==================================================================
+    ! PRIVATE HELPERS
+    ! ==================================================================
 
+    !> Lowercase hex of the low 32 bits of v (8 chars, most significant first).
     function hex8(v) result(s)
         integer(int64), intent(in) :: v
         character(len=8) :: s
@@ -272,6 +331,7 @@ contains
         end do
     end subroutine next_data_line
 
+    !> Determinant of a 3x3 matrix (cofactor expansion along the first row).
     pure function det3(A) result(det)
         real(dp), intent(in) :: A(3,3)
         real(dp) :: det
@@ -296,6 +356,7 @@ contains
         Ainv(3,3) =  (A(1,1)*A(2,2) - A(1,2)*A(2,1)) / det
     end function inv3
 
+    !> Integer to trimmed string (for error messages).
     pure function itoa(i) result(s)
         integer, intent(in) :: i
         character(len=:), allocatable :: s
