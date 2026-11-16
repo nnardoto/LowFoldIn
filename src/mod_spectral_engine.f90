@@ -643,6 +643,12 @@ contains
             else if (perr /= 0) then
                 write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'Lowdin projection failed (ierr=', &
                     perr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
+            else if (kerr > n) then
+                ! LAPACK zhegv convention: info > n means the leading minor of S(k) of
+                ! order info-n is not positive definite.
+                write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') &
+                    'overlap S(k) not positive definite (zhegv info=', &
+                    kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'
             else
                 write(msg, '(A,I0,A,I0,A,I0,A,3F12.7,A)') 'generalized eigensolver failed (info=', &
                     kerr, ') at ispin=', ispin, ' ik=', ik, ' kfrac=(', path%kfrac(:, ik), ')'

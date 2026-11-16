@@ -400,7 +400,7 @@ contains
         allocate(top_list(0), bottom_list(0))
         if (ntop < 0 .or. nbottom < 0) then
             ierr = 1
-            errmsg = 'surface: number of layers must be >= 1'
+            errmsg = 'surface: number of layers must be >= 0'
             return
         end if
         if (ntop == 0 .and. nbottom == 0) then

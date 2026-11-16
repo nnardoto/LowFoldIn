@@ -277,6 +277,7 @@ contains
         call check(ierr /= 0, 'surface: nothing requested -> error')
         call surface_layers([1, 2, 3], 3, -1, 1, top, bot, ierr, msg)
         call check(ierr /= 0, 'surface: negative -> error')
+        call check(index(msg, '>= 0') > 0, 'surface: negative message says >= 0')
         call surface_layers([1, 2, 3, 3], 3, 2, 1, top, bot, ierr, msg)
         call check(ierr == 0 .and. same(top, [2, 3, 4]) .and. same(bot, [1]), 'surface: 2N == nlayer allowed')
     end subroutine test_surface_errors

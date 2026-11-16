@@ -96,7 +96,9 @@ contains
                     npoints(s)
                 return
             end if
-            if (all(vertex(:, s + 1) == vertex(:, s))) then
+            ! Zero length covers equal vertices and a degenerate recip alike.
+            seglen = norm2(matmul(vertex(:, s + 1) - vertex(:, s), recip))
+            if (seglen <= 0.0_dp) then
                 ierr = 6
                 write(errmsg, '(A,I0,A,I0)') 'build_kpath: zero-length segment between vertices ', &
                     s, ' and ', s + 1
@@ -131,15 +133,6 @@ contains
         do s = 1, nvertex - 1
             dv = vertex(:, s + 1) - vertex(:, s)
             seglen = norm2(matmul(dv, recip))
-            ! Guard for a degenerate recip (e.g. zero matrix) that the exact
-            ! vertex-equality check above cannot detect.
-            if (seglen <= 0.0_dp) then
-                ierr = 6
-                write(errmsg, '(A,I0,A,I0)') 'build_kpath: zero-length segment between vertices ', &
-                    s, ' and ', s + 1
-                call reset_path(path)
-                return
-            end if
             step = seglen / real(npoints(s), dp)
             path%vertex_k(s) = k + 1
             do j = 0, npoints(s) - 1
@@ -155,20 +148,5 @@ contains
         path%kdist(k) = dist0
         path%vertex_k(nvertex) = k
     end subroutine build_kpath
-
-    ! ==================================================================
-    ! Internals
-    ! ==================================================================
-
-    !> Deallocate everything and zero the counts (used on late errors).
-    subroutine reset_path(path)
-        type(kpath_t), intent(inout) :: path
-        if (allocated(path%kfrac))    deallocate(path%kfrac)
-        if (allocated(path%kdist))    deallocate(path%kdist)
-        if (allocated(path%vertex_k)) deallocate(path%vertex_k)
-        if (allocated(path%label))    deallocate(path%label)
-        path%nk = 0
-        path%nvertex = 0
-    end subroutine reset_path
 
 end module kpath
