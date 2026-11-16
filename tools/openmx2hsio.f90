@@ -151,8 +151,10 @@ program openmx2hsio
     ! -------------------------------------------------------------
     call ReadScfoutFile(scfout, trim(scfout_path))
     ! Falha cedo (antes de qualquer escrita) se a estrutura sobrescreveria um arquivo em uso
-    if (write_structure) call ValidateStructurePath(trim(structure_path), trim(scfout_path), &
-                                                    trim(out_prefix))
+    if (write_structure) then
+        call ValidateStructurePath(trim(structure_path), trim(scfout_path), trim(out_prefix))
+        call ValidateStructureInputs(scfout)
+    end if
 
     ! -------------------------------------------------------------
     ! 3. Decide o nivel de Fermi: --fermi (override) > ChemP do
@@ -307,29 +309,73 @@ contains
 
     !> Aborta (stop 1) se `path` coincidir com o .scfout de entrada ou com algum
     !> .hsio de saida (_S, _H, _H_up, _H_dn), para nao sobrescreve-los.
+    !> A comparacao e' textual (apos remover "./" iniciais): nao resolve
+    !> links simbolicos nem caminhos absolutos/relativos equivalentes.
     subroutine ValidateStructurePath(path, source_path, prefix)
         character(len=*), intent(in) :: path, source_path, prefix
-        character(len=1024) :: reserved(4)
+        character(len=1024) :: reserved(5)
         integer :: i
 
         reserved(1) = source_path
         reserved(2) = trim(prefix) // '_S.hsio'
         reserved(3) = trim(prefix) // '_H.hsio'
         reserved(4) = trim(prefix) // '_H_up.hsio'
+        reserved(5) = trim(prefix) // '_H_dn.hsio'
         do i = 1, size(reserved)
-            if (trim(path) == trim(reserved(i))) then
+            if (strip_dot_slash(path) == strip_dot_slash(reserved(i))) then
                 print '(A,A)', 'Erro: --structure-file colide com um arquivo de entrada/saida: ', trim(path)
                 stop 1
             end if
         end do
-        if (trim(path) == trim(prefix) // '_H_dn.hsio') then
-            print '(A,A)', 'Erro: --structure-file colide com um arquivo de saida: ', trim(path)
-            stop 1
-        end if
     end subroutine ValidateStructurePath
 
+    !> Remove todos os "./" iniciais de um caminho (para comparacao textual).
+    function strip_dot_slash(path) result(clean)
+        character(len=*), intent(in) :: path
+        character(len=len(path)) :: clean
+
+        clean = adjustl(path)
+        do while (len_trim(clean) >= 2)
+            if (clean(1:2) /= './') exit
+            clean = clean(3:)
+        end do
+    end function strip_dot_slash
+
+    !> Falha cedo (antes de escrever qualquer .hsio) se faltarem os dados
+    !> necessarios para o structure.nml: rotulos atomicos do input embutido,
+    !> coordenadas e contagem de orbitais igual para atomos da mesma especie
+    !> (ver WriteStructureFile).
+    subroutine ValidateStructureInputs(scf)
+        type(ScfoutData), intent(in) :: scf
+
+        integer :: iatom, jatom
+
+        if (.not. scf%has_atom_labels) then
+            print '(A)', "Erro: nao foi possivel recuperar Atoms.SpeciesAndCoordinates do input embutido."
+            print '(A)', "       Use um .scfout com o input OpenMX completo ou forneca a estrutura manualmente."
+            stop 1
+        end if
+        if (.not. allocated(scf%cart_bohr)) then
+            print '(A)', "Erro: coordenadas atomicas ausentes no .scfout."
+            stop 1
+        end if
+
+        do iatom = 1, scf%atomnum
+            do jatom = 1, iatom - 1
+                if (trim(scf%atom_label(jatom)) /= trim(scf%atom_label(iatom))) cycle
+                if (scf%TotalNumOrbs(jatom) /= scf%TotalNumOrbs(iatom)) then
+                    print '(A,A)', "Erro: contagem de orbitais inconsistente para a especie ", &
+                                  trim(scf%atom_label(iatom))
+                    stop 1
+                end if
+                exit
+            end do
+        end do
+    end subroutine ValidateStructureInputs
+
     !> Escreve o structure.nml (&STRUCTURE, &SPECIES, &ATOMS) em Angstrom.
-    !> Requer os rotulos atomicos recuperados do input embutido no .scfout.
+    !> Pre-condicoes (rotulos, coordenadas, orbitais por especie) ja validadas
+    !> por ValidateStructureInputs.
     !> O numero de orbitais por especie e' TotalNumOrbs (x2 em spinor,
     !> SpinP_switch == 3, para casar com o NOrbs dobrado do .hsio) e deve ser
     !> o mesmo para todos os atomos da mesma especie.
@@ -342,16 +388,6 @@ contains
         integer :: iu, ios_local, iatom, ispecies, nspecies, norb_factor
         logical :: known_species
 
-        if (.not. scf%has_atom_labels) then
-            print '(A)', "Erro: nao foi possivel recuperar Atoms.SpeciesAndCoordinates do input embutido."
-            print '(A)', "       Use um .scfout com o input OpenMX completo ou forneca a estrutura manualmente."
-            stop 1
-        end if
-        if (.not. allocated(scf%cart_bohr)) then
-            print '(A)', "Erro: coordenadas atomicas ausentes no .scfout."
-            stop 1
-        end if
-
         ! Fator de spinor e lista de especies unicas (ordem de primeira aparicao)
         norb_factor = merge(2, 1, scf%SpinP_switch == 3)
         allocate(species_label(scf%atomnum), species_norb(scf%atomnum))
@@ -361,11 +397,6 @@ contains
             do ispecies = 1, nspecies
                 if (trim(species_label(ispecies)) == trim(scf%atom_label(iatom))) then
                     known_species = .true.
-                    if (species_norb(ispecies) /= norb_factor * scf%TotalNumOrbs(iatom)) then
-                        print '(A,A)', "Erro: contagem de orbitais inconsistente para a especie ", &
-                                      trim(scf%atom_label(iatom))
-                        stop 1
-                    end if
                     exit
                 end if
             end do
