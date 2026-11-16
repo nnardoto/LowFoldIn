@@ -234,9 +234,11 @@ their atom counts), a `#` line naming the columns, then one row per
 
 ### Standard output
 
-Number of OpenMP threads, normalisation checks, a summary (dimensions, spin
-mode, method, energy reference, fingerprint, regions, files written) and a
-timing report. `read`, `k-loop`, `write`, `total` are wall-clock times;
+Number of OpenMP threads, calculation stages, periodic progress updates with
+completed `(spin, k)` points, elapsed time and ETA, normalisation checks, a
+summary (dimensions, spin mode, method, energy reference, fingerprint,
+regions, files written) and a timing report. `read`, `k-loop`, `write`,
+`total` are wall-clock times;
 `build`, `diagonalization`, `projection` are accumulated over threads
 (thread-seconds) and may exceed the k-loop wall time with several threads.
 

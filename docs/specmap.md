@@ -11,6 +11,10 @@ ticks.
 LAPACK, no diagonalisation. Changing the kernel, width, energy window, maps
 or occupation only requires re-running `specmap`.
 
+During execution it reports the input-validation, map-generation and metadata
+stages. Each requested map shows its position in the queue and elapsed time;
+the final panel reports the number of maps and total wall time.
+
 ## Usage
 
 ```bash

@@ -14,7 +14,7 @@
 !> (Exception: HSDataFormat%ReadFile stops on a corrupt HSIO file; missing
 !> files are detected here before calling it.)
 module spectral_engine
-    use, intrinsic :: iso_fortran_env, only: int64, iostat_end
+    use, intrinsic :: iso_fortran_env, only: int64, iostat_end, output_unit
     use types, only: dp
     use hs_io, only: HSDataFormat
     use core, only: compute_Hk_at_kpoint
@@ -271,12 +271,13 @@ contains
     ! Driver of the calculation
     ! ==================================================================
 
-    subroutine run_spectral(inp, sd, timing, ierr, errmsg)
+    subroutine run_spectral(inp, sd, timing, ierr, errmsg, show_progress)
         type(spectral_input_t),  intent(in)  :: inp
         type(spectral_data_t),   intent(out) :: sd
         type(spectral_timing_t), intent(out) :: timing
         integer,                 intent(out) :: ierr
         character(len=*),        intent(out) :: errmsg
+        logical, optional,       intent(in)  :: show_progress
 
         type(structure_t)  :: st
         type(region_set_t) :: rs
@@ -298,12 +299,22 @@ contains
         integer, allocatable :: it_kerr(:), it_perr(:)
         real(dp), allocatable :: it_smin(:)
         real(dp) :: t_b, t_d, t_p
-        integer(int64) :: cl0, cl1
+        integer(int64) :: cl0, cl1, cp
+        integer :: completed, next_report, report_step
+        logical :: report_progress
+        real(dp) :: progress_elapsed, progress_eta
 
         ierr = 0
         errmsg = ''
         call system_clock(c_start, crate)
         use_lowdin = trim(inp%method) == 'lowdin'
+        report_progress = .false.
+        if (present(show_progress)) report_progress = show_progress
+
+        if (report_progress) then
+            print '(A)', '[1/3] Loading and validating input data'
+            flush(output_unit)
+        end if
 
         if (trim(inp%method) /= 'mulliken' .and. trim(inp%method) /= 'lowdin') then
             call fail("invalid method '" // trim(inp%method) // "'")
@@ -474,8 +485,9 @@ contains
         ! it = (ispin-1)*nk + ik. Each iteration writes only sd%energy(:,ik,ispin),
         ! sd%weight(:,ik,:,ispin) and its own entry of the status arrays, so the
         ! result is independent of the thread count and schedule. Workspaces
-        ! are private and allocated once per thread. No I/O and no stop inside
-        ! the region: the first failing iteration (lowest it) is reported after.
+        ! are private and allocated once per thread. Progress I/O, when enabled,
+        ! is serialized; there is no stop inside the region. The first failing
+        ! iteration (lowest it) is reported after the parallel region.
         ! Iterations above the lowest failure seen so far are skipped; those
         ! below it always run, so the reported failure is deterministic.
         nk = path%nk
@@ -486,12 +498,19 @@ contains
         it_smin = 0.0_dp
         first_fail = nit + 1
         nthr = 1
+        completed = 0
+        report_step = max(1, (nit + 9) / 10)
+        next_report = report_step
         t_b = 0.0_dp; t_d = 0.0_dp; t_p = 0.0_dp
+        if (report_progress) then
+            print '(A,I0,A)', '[2/3] Solving ', nit, ' (spin, k) points'
+        end if
         call system_clock(cl0)
 
         !$omp parallel default(none) &
         !$omp shared(n, ngroup, nk, nit, hdat, sdat, path, groups, use_lowdin, inp, sd, &
-        !$omp        it_kerr, it_perr, it_smin, first_fail, nthr) &
+        !$omp        it_kerr, it_perr, it_smin, first_fail, nthr, report_progress, completed, &
+        !$omp        next_report, report_step, cl0, crate, cp, progress_elapsed, progress_eta) &
         !$omp private(it, ispin, ik, g, ff, kerr, perr, smin, Hk, Sk, C, SC, E, W) &
         !$omp reduction(+: t_b, t_d, t_p)
         allocate(Hk(n, n), Sk(n, n), C(n, n), SC(n, n), E(n), W(n, ngroup))
@@ -522,6 +541,21 @@ contains
             do g = 1, ngroup
                 sd%weight(:, ik, g, ispin) = W(:, g)
             end do
+            if (report_progress) then
+                !$omp critical (spectral_progress)
+                completed = completed + 1
+                if (completed >= next_report .or. completed == nit) then
+                    call system_clock(cp)
+                    progress_elapsed = elapsed(cl0, cp, crate)
+                    progress_eta = progress_elapsed * real(nit - completed, dp) / real(completed, dp)
+                    write(*, '(A,I0,A,I0,A,F6.1,A,F9.2,A,F9.2,A)') '      ', completed, '/', nit, &
+                        '  ', 100.0_dp * real(completed, dp) / real(nit, dp), &
+                        '%  elapsed ', progress_elapsed, ' s  ETA ', progress_eta, ' s'
+                    flush(output_unit)
+                    next_report = min(nit, next_report + report_step)
+                end if
+                !$omp end critical (spectral_progress)
+            end if
         end do
         !$omp end do
         deallocate(Hk, Sk, C, SC, E, W)
@@ -558,6 +592,7 @@ contains
         end if
 
         ! ---------------- 7. checks -------------------------------------
+        if (report_progress) print '(A)', '[3/3] Checking projection weights'
         call check_weights(sd, partition, inp%tol_norm, inp%tol_negative_warn, use_lowdin)
 
         call system_clock(c1)

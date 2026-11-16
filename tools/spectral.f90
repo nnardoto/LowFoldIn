@@ -11,6 +11,7 @@ program spectral
     use spectral_engine, only: spectral_input_t, spectral_timing_t, read_spectral_input, run_spectral
     use spectral_data, only: spectral_data_t, write_spectral_file, write_spectral_text, &
                              SPIN_COLLINEAR
+    use terminal_ui, only: print_box, print_box_close
     !$ use omp_lib, only: omp_get_max_threads
     implicit none
 
@@ -33,21 +34,24 @@ program spectral
     ! Start-up: thread information (the code never sets environment variables).
     max_thr = 1
     !$ max_thr = omp_get_max_threads()
-    print '(A,I0)', '[spectral] OpenMP threads available for the k-loop: ', max_thr
+    call print_box('spectral | projected band calculation')
+    print '(A,A)',  '  Input file       : ', trim(nml_file)
+    print '(A,I0)', '  OpenMP threads   : ', max_thr
     if (max_thr > 1) then
-        print '(A)', '[spectral] note: with OMP_NUM_THREADS > 1, consider limiting BLAS/LAPACK threads'
-        print '(A)', '[spectral]       to avoid oversubscription, e.g. OPENBLAS_NUM_THREADS=1 or'
-        print '(A)', '[spectral]       VECLIB_MAXIMUM_THREADS=1 (examples; see docs/performance.md)'
+        print '(A)', '  Note: keep BLAS/LAPACK single-threaded to avoid oversubscription.'
     end if
+    call print_box_close()
+    print '(A)', ''
 
     call read_spectral_input(trim(nml_file), inp, ierr, errmsg)
     if (ierr /= 0) call die(errmsg)
 
-    call run_spectral(inp, sd, timing, ierr, errmsg)
+    call run_spectral(inp, sd, timing, ierr, errmsg, show_progress=.true.)
     if (ierr /= 0) call die(errmsg)
 
     bin_file = trim(inp%output_prefix) // '.spectral.bin'
     txt_file = trim(inp%output_prefix) // '.spectral.txt'
+    print '(A)', '[output] Writing result files'
     call system_clock(c0, crate)
     call write_spectral_file(bin_file, sd, ierr, errmsg)
     if (ierr /= 0) call die(errmsg)
@@ -61,7 +65,7 @@ program spectral
 
     ! ---------------- summary ------------------------------------------
     print '(A)', ''
-    print '(A)', '=== spectral summary ==='
+    call print_box('spectral | summary')
     print '(A,I0,A,I0,A,I0,A,I0)', '  nk = ', sd%nk, '   nband = ', sd%nband, &
         '   nspin = ', sd%nspin, '   nregion = ', sd%nregion
     print '(A,A)', '  spin mode        : ', trim(inp%spin_mode)
@@ -88,6 +92,7 @@ program spectral
     print '(A)',   '  [accumulated] = sum over threads of per-thread wall time (thread-seconds);'
     print '(A)',   '  it can exceed the k-loop wall time when more than one thread is used.'
     if (sd%spin_mode == SPIN_COLLINEAR) print '(A)', '  (spin channel 1 = up, 2 = down)'
+    call print_box_close()
 
 contains
 

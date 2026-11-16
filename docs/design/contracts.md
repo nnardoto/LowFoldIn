@@ -256,7 +256,7 @@ type, public :: spectral_input_t      ! &SPECTRAL fields (§3) + &KPATH (vertex,
 type, public :: spectral_timing_t     ! read_s, loop_wall_s, write_s, total_s (wall); build_s, diag_s,
                                       ! proj_s (accumulated thread-seconds); nthreads
 subroutine read_spectral_input(filename, inp, ierr, errmsg)   ! &SPECTRAL and &KPATH, any order
-subroutine run_spectral(inp, sd, timing, ierr, errmsg)
+subroutine run_spectral(inp, sd, timing, ierr, errmsg, show_progress) ! optional logical; default false
 subroutine process_kpoint(n, ngroup, Hr, Sr, Rpt, kfrac, groups, Hk, Sk, C, SC, E, W, &
                           t_build, t_diag, t_proj, ierr [, lowdin, tol_s_min, smin, proj_ierr])
 ! per-k body, caller-owned workspaces; optional args select the Löwdin path

@@ -18,6 +18,7 @@
 ! (message prefixed "[specmap error]").
 ! ----------------------------------------------------------------------------------------------------------
 program specmap_main
+    use, intrinsic :: iso_fortran_env, only: int64, error_unit
     use types,               only: dp
     use spectral_data,       only: spectral_data_t, read_spectral_file, &
                                    METHOD_MULLIKEN, METHOD_LOWDIN, &
@@ -25,7 +26,8 @@ program specmap_main
     use spectral_broadening, only: KERNEL_LORENTZIAN, KERNEL_GAUSSIAN, &
                                    energy_grid, broaden, fermi_dirac
     use spectral_map,        only: parse_map_expression, write_map_file, &
-                                   write_kticks_file, map_file_tag
+                                    write_kticks_file, map_file_tag
+    use terminal_ui,         only: print_box, print_box_close
     implicit none
 
     integer, parameter :: MAX_MAPS = 32
@@ -51,18 +53,26 @@ program specmap_main
     character(len=1024)   :: input_path, errmsg
     character(len=:), allocatable :: tag, fname, kname, wmeaning, occ_line, eref_line
     character(len=640)    :: hdr(12)
-    integer  :: u, ios, ierr, im, jm, it, ie, nmaps, kern
-    real(dp) :: mu
+    integer  :: u, ios, ierr, im, jm, it, ie, nmaps, kern, map_number
+    integer(int64) :: total_start, map_start, map_end, clock_rate
+    real(dp) :: mu, map_seconds, total_seconds
     real(dp), allocatable :: grid(:), wcomb(:,:), A(:,:), focc(:)
     integer,  allocatable :: ridx(:)
     real(dp), allocatable :: coef(:)
 
     ! ---------------------------------------------------------------- input
     if (command_argument_count() /= 1) then
-        print '(A)', "Usage: specmap <specmap.nml>"
+        write(error_unit, '(A)') "Usage: specmap <specmap.nml>"
         stop 1
     end if
     call get_command_argument(1, input_path)
+    call system_clock(total_start, clock_rate)
+
+    call print_box('specmap | broadened spectral maps')
+    print '(A,A)', '  Input file       : ', trim(input_path)
+    call print_box_close()
+    print '(A)', ''
+    print '(A)', '[1/3] Reading and validating inputs'
 
     open(newunit=u, file=trim(input_path), status='old', action='read', iostat=ios)
     if (ios /= 0) call die("cannot open input file: " // trim(input_path))
@@ -150,8 +160,18 @@ program specmap_main
         eref_line = eref_line // ', E_F not known'
     end if
 
+    print '(A,I0,A,I0,A,I0,A)', '      source: ', sd%nk, ' k-points, ', sd%nband, &
+        ' bands, ', sd%nregion, ' regions'
+    print '(A,A,A,A,A,I0)', '      grid: ', trim(kname), ', width ', rtoa(width_ev), &
+        ' eV, energy points ', ne
+    print '(A)', '[2/3] Broadening and writing maps'
+
+    map_number = 0
     do im = 1, MAX_MAPS
         if (len_trim(maps(im)) == 0) cycle
+        map_number = map_number + 1
+        call system_clock(map_start)
+        print '(A,I0,A,I0,A,A,A)', '      [', map_number, '/', nmaps, '] ', trim(maps(im)), ' ...'
         call parse_map_expression(trim(maps(im)), sd, ridx, coef, ierr, errmsg)
         if (ierr /= 0) call die(trim(errmsg))
 
@@ -187,19 +207,31 @@ program specmap_main
         fname = trim(output_prefix) // '.' // tag // '.map.dat'
         call write_map_file(fname, sd, A, grid, hdr(1:11), ierr, errmsg)
         if (ierr /= 0) call die(trim(errmsg))
-        print '(A, A, A, A)', "  map '", trim(maps(im)), "' -> ", fname
+        call system_clock(map_end)
+        map_seconds = real(map_end - map_start, dp) / real(max(clock_rate, 1_int64), dp)
+        print '(A,A,A,F0.3,A)', '          wrote ', fname, ' in ', map_seconds, ' s'
     end do
 
+    print '(A)', '[3/3] Writing k-path metadata'
     fname = trim(output_prefix) // '.kticks.gp'
     call write_kticks_file(fname, sd, ierr, errmsg)
     if (ierr /= 0) call die(trim(errmsg))
-    print '(A, A)', "  k ticks -> ", fname
+    print '(A,A)', '      wrote ', fname
+
+    call system_clock(map_end)
+    total_seconds = real(map_end - total_start, dp) / real(max(clock_rate, 1_int64), dp)
+    print '(A)', ''
+    call print_box('specmap | summary')
+    print '(A,I0)',   '  Maps written     : ', nmaps
+    print '(A,A)',    '  Output prefix    : ', trim(output_prefix)
+    print '(A,F10.3,A)', '  Total time       : ', total_seconds, ' s'
+    call print_box_close()
 
 contains
 
     subroutine die(msg)
         character(len=*), intent(in) :: msg
-        write(*, '(A, A)') "[specmap error] ", msg
+        write(error_unit, '(A, A)') "[specmap error] ", msg
         stop 1
     end subroutine die
 
