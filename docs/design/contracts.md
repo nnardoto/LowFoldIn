@@ -17,6 +17,9 @@ reported and decided by the orchestrator, who then updates this file.
 - Errors in library routines: return `ierr /= 0` plus `errmsg` (character(len=*)
   or allocatable) whenever stated; executables print the message and `stop 1`.
   Library routines must not `stop` unless stated.
+- Error stream of the executables: the new tools (`spectral`, `specmap`,
+  `atomselect`) print errors on stderr; the legacy `unfold`, `openmx2hsio` and
+  bands programs keep printing errors on stdout.
 - New source files carry the SPDX/copyright header used by the project.
 - Fourier convention (existing, `core::compute_Hk_at_kpoint`):
   `H(k) = Σ_R H(R) exp(+i 2π k·n_R)`, lattice gauge (no τ phases). Projections
@@ -260,6 +263,8 @@ subroutine run_spectral(inp, sd, timing, ierr, errmsg, show_progress) ! optional
 subroutine process_kpoint(n, ngroup, Hr, Sr, Rpt, kfrac, groups, Hk, Sk, C, SC, E, W, &
                           t_build, t_diag, t_proj, ierr [, lowdin, tol_s_min, smin, proj_ierr])
 ! per-k body, caller-owned workspaces; optional args select the Löwdin path
+! lowdin=.true. without tol_s_min and proj_ierr is a programming error (error stop).
+! When ierr /= 0, proj_ierr is 0 and smin is 0: callers must test ierr first.
 ```
 Energy-reference labels: `fermi` → "E - E_F (eV), E_F = 0 by definition";
 `absolute` → "E (eV)" (+ E_F if known); `unknown` → "E (eV, reference unknown)".
@@ -325,7 +330,7 @@ type, public :: spectral_data_t
     real(dp), allocatable :: weight(:,:,:,:)   ! (nband, nk, nregion, nspin)
 end type
 subroutine write_spectral_file(filename, sd, ierr, errmsg)
-subroutine read_spectral_file(filename, sd, ierr, errmsg)
+subroutine read_spectral_file(filename, sd, ierr, errmsg)   ! on error sd is reset (empty, nothing allocated)
 subroutine write_spectral_text(filename, sd, ierr, errmsg)
 integer function find_region(sd, name)     ! 0 if absent
 ```
@@ -388,8 +393,8 @@ atomselect surface  <structure.nml> --regions <file> --normal nx ny nz [--tol T]
   the structure); if it exists it is read, validated against the structure,
   the region is added (name must be unique), and the file is rewritten
   (canonical layout, previous regions preserved in order).
-- Exit code 0 on success, 1 on any error (message on stdout prefixed
-  `[atomselect error]`).
+- Exit code 0 on success, 1 on any error (message on stderr prefixed
+  `[atomselect error]`; warnings stay on stdout).
 
 ### §6.1 Geometric selection rules (F8)
 - `atomic_selection` adds: `project_positions`, `select_by_range`, `select_by_box`,
@@ -453,6 +458,8 @@ elemental function fermi_dirac(e, mu, temperature_k) result(f)
 subroutine energy_grid(emin, emax, ne, grid)
 subroutine broaden(energy, weight, grid, kernel, width, A)
 ! energy(nband,nk), weight(nband,nk), grid(ne) → A(ne,nk)
+! preconditions: width > 0 and kernel in {KERNEL_LORENTZIAN, KERNEL_GAUSSIAN};
+! an unknown kernel gives A = 0. The callers (specmap) validate this.
 
 ! spectral_map (src/mod_spectral_map.f90)
 subroutine parse_map_expression(expr, sd, region_idx, coeff, ierr, errmsg)
