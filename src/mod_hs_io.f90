@@ -147,12 +147,11 @@ subroutine ReadFile(this, filename)
                         "reconverta com openmx2hsio para o formato atual."
         stop 1
     end if
-    read(File, iostat=ierr) header_bytes
-    read(File, iostat=ierr) ver_major
-    read(File, iostat=ierr) ver_minor
-    read(File, iostat=ierr) canary
-    read(File, iostat=ierr) toc_offset
-    read(File, iostat=ierr) toc_count
+    read(File, iostat=ierr) header_bytes, ver_major, ver_minor, canary, toc_offset, toc_count
+    if (ierr /= 0) then
+        print '(A,A)', "[HS_io] Erro: cabecalho truncado ou ilegivel em ", trim(Filename)
+        stop 1
+    end if
 
     if (canary /= HSIO_ENDIAN_CANARY) then
         print '(A)', "[HS_io] Erro: marca de endianness inesperada -- arquivo pode ter sido " // &
@@ -169,6 +168,10 @@ subroutine ReadFile(this, filename)
     ! (leitura estruturada campo-a-campo: character/int32/int32/int64/
     ! int64 nao formam um bloco homogeneo, entao le'-se entrada por
     ! entrada em vez de um unico READ do array de derived type)
+    if (toc_count < 1) then
+        print '(A,A)', "[HS_io] Erro: TOC vazio ou invalido em ", trim(Filename)
+        stop 1
+    end if
     allocate(toc(toc_count))
     call read_toc_entries(File, toc_offset, toc_count, toc)
 
@@ -377,7 +380,7 @@ subroutine read_toc_entries(File, toc_offset, toc_count, toc)
     integer(int64), intent(in)                :: toc_offset
     integer, intent(in)                       :: toc_count
     type(TOCEntry), intent(out)               :: toc(toc_count)
-    integer :: i
+    integer :: i, ierr
     integer(int64) :: pos_i
 
     do i = 1, toc_count
@@ -385,11 +388,15 @@ subroutine read_toc_entries(File, toc_offset, toc_count, toc)
         ! proprio Fortran), entao NAO se soma +1 aqui -- ver nota em
         ! ReadFile/WriteFile sobre offsets em disco vs. POS 1-based.
         pos_i = toc_offset + int(i - 1, int64) * int(HSIO_TOC_ENTRY_BYTES, int64)
-        read(File, pos=pos_i) toc(i)%name
-        read(File) toc(i)%kind
-        read(File) toc(i)%schema_ver
-        read(File) toc(i)%offset
-        read(File) toc(i)%nbytes
+        read(File, pos=pos_i, iostat=ierr) toc(i)%name
+        if (ierr == 0) read(File, iostat=ierr) toc(i)%kind
+        if (ierr == 0) read(File, iostat=ierr) toc(i)%schema_ver
+        if (ierr == 0) read(File, iostat=ierr) toc(i)%offset
+        if (ierr == 0) read(File, iostat=ierr) toc(i)%nbytes
+        if (ierr /= 0) then
+            print '(A)', "[HS_io] Erro: TOC truncado ou ilegivel."
+            stop 1
+        end if
     end do
 end subroutine read_toc_entries
 
@@ -460,7 +467,7 @@ subroutine write_blocksparse_hs_payload(File, this)
         bpos = BlockOffset(k)
         do j = 1, n2
             do i = 1, n1
-                ! ordem row-major (i varia mais rapido) para casar com o
+                ! ordem column-major dentro do bloco (i varia mais rapido) para casar com o
                 ! layout usado no scfout/openmx2hsio (ver mod_openmx_convert.f90)
                 BlockData(bpos + int(j - 1, int64) * int(n1, int64) + i) = this%Data(off1 + i, off2 + j, Rn)
             end do
@@ -515,7 +522,7 @@ subroutine read_blocksparse_hs_payload(File, offset, schema_ver, this)
     integer(int64), allocatable  :: BlockOffset(:)
     complex(dp), allocatable     :: BlockData(:)
     integer(int64)               :: nBlocks, bpos, k
-    integer :: a1, a2, Rn, off1, off2, n1, n2, i, j
+    integer :: a1, a2, Rn, off1, off2, n1, n2, i, j, ierr
 
     if (schema_ver /= SCHEMA_BLOCKSPARSE_HS_V1) then
         print '(A,I0)', "[HS_io] Erro: schema do dataset H/S bloco-esparso desconhecido: ", schema_ver
@@ -523,26 +530,47 @@ subroutine read_blocksparse_hs_payload(File, offset, schema_ver, this)
     end if
 
     ! offset ja' vem de INQUIRE(POS=) (1-based) -- mesma convencao acima
-    read(File, pos=offset) this%Title
-    read(File) this%Neighbors
-    read(File) this%nAtoms
-    read(File) this%NOrbs
+    read(File, pos=offset, iostat=ierr) this%Title, this%Neighbors, this%nAtoms, this%NOrbs
+    if (ierr /= 0) call payload_error("cabecalho do dataset truncado")
+    if (this%Neighbors < 1 .or. this%nAtoms < 1 .or. this%NOrbs < 1) &
+        call payload_error("Neighbors, nAtoms e NOrbs devem ser >= 1")
 
     allocate(this%Degenerecency(this%Neighbors))
     allocate(this%Orbs(this%nAtoms))
     allocate(this%IndexList(3, this%Neighbors))
 
-    read(File) this%Degenerecency
-    read(File) this%Orbs
-    read(File) this%IndexList
-    read(File) nBlocks
+    read(File, iostat=ierr) this%Degenerecency
+    if (ierr == 0) read(File, iostat=ierr) this%Orbs
+    if (ierr == 0) read(File, iostat=ierr) this%IndexList
+    if (ierr == 0) read(File, iostat=ierr) nBlocks
+    if (ierr /= 0) call payload_error("dataset truncado (Degenerecency/Orbs/IndexList/nBlocks)")
+    if (any(this%Orbs < 1)) call payload_error("Orbs deve ser >= 1 para todo atomo")
+    if (sum(this%Orbs) /= this%NOrbs) call payload_error("sum(Orbs) /= NOrbs")
+    if (nBlocks < 0) call payload_error("nBlocks negativo")
 
     allocate(BlockIndex(3, max(nBlocks, 1_int64)))
-    if (nBlocks > 0) read(File) BlockIndex(:, 1:nBlocks)
+    if (nBlocks > 0) then
+        read(File, iostat=ierr) BlockIndex(:, 1:nBlocks)
+        if (ierr /= 0) call payload_error("BlockIndex truncado")
+    end if
     allocate(BlockOffset(nBlocks + 1))
-    read(File) BlockOffset
+    read(File, iostat=ierr) BlockOffset
+    if (ierr /= 0) call payload_error("BlockOffset truncado")
+
+    ! Valida cada bloco antes de alocar/ler o payload e de escrever em Data
+    if (BlockOffset(1) /= 0_int64) call payload_error("BlockOffset(1) /= 0")
+    do k = 1, nBlocks
+        a1 = BlockIndex(1, k); a2 = BlockIndex(2, k); Rn = BlockIndex(3, k)
+        if (a1 < 1 .or. a1 > this%nAtoms .or. a2 < 1 .or. a2 > this%nAtoms &
+            .or. Rn < 1 .or. Rn > this%Neighbors) &
+            call payload_error("indice de bloco fora do intervalo")
+        if (BlockOffset(k + 1) - BlockOffset(k) /= int(this%Orbs(a1), int64) * int(this%Orbs(a2), int64)) &
+            call payload_error("tamanho de bloco inconsistente com Orbs")
+    end do
+
     allocate(BlockData(BlockOffset(nBlocks + 1)))
-    read(File) BlockData
+    read(File, iostat=ierr) BlockData
+    if (ierr /= 0) call payload_error("BlockData truncado")
 
     allocate(AtomOffset(this%nAtoms + 1))
     AtomOffset(1) = 0
@@ -564,6 +592,15 @@ subroutine read_blocksparse_hs_payload(File, offset, schema_ver, this)
             end do
         end do
     end do
+
+contains
+
+    subroutine payload_error(msg)
+        character(len=*), intent(in) :: msg
+        print '(A,A)', "[HS_io] Erro: arquivo .hsio invalido: ", msg
+        stop 1
+    end subroutine payload_error
+
 end subroutine read_blocksparse_hs_payload
 
 ! Heuristica so' para dar um nome amigavel ao dataset no TOC (nao afeta

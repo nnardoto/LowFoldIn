@@ -78,6 +78,10 @@ contains
         real(dp),    allocatable :: rwork_pool(:, :)
         integer,     allocatable :: info_pool(:)
         integer                  :: lwork
+        integer                  :: nFail, firstFail   ! falhas LAPACK (sem stop dentro da região paralela)
+
+        nFail = 0
+        firstFail = 0
 
         ! 3. Determina o número máximo de threads disponíveis para paralelização
         !    Se o OpenMP não estiver habilitado, max_threads será definido como 1
@@ -133,7 +137,10 @@ contains
 
                 ! 5. Verifica se a diagonalização foi bem-sucedida
                 if (info_pool(thread_id) /= 0) then
-                    print *, "Erro: LAPACK falhou no ponto k:", ik, " Thread:", thread_id
+                    !$omp critical (lapack_fail)
+                    nFail = nFail + 1
+                    if (firstFail == 0 .or. ik < firstFail) firstFail = ik
+                    !$omp end critical (lapack_fail)
                 endif
 
                 ! 6. Armazena os autovalores (energias) no array de saída
@@ -141,6 +148,11 @@ contains
 
             end do
             !$omp end parallel do
+
+            if (nFail > 0) then
+                print '(A,I0,A,I0)', "Erro: zheev falhou em ", nFail, " ponto(s) k; primeiro: ik = ", firstFail
+                stop 1
+            endif
 
             ! 7. Desaloca as matrizes de trabalho após o uso
             deallocate(Hk_pool, w_pool, work_pool, rwork_pool, info_pool)
@@ -167,10 +179,25 @@ contains
         real(dp),    allocatable :: rwork_pool(:, :)
         integer,     allocatable :: info_pool(:)
         integer                  :: lwork, lrwork
+        integer                  :: nFail, firstFail
+
+        nFail = 0
+        firstFail = 0
 
         ! 1. Carrega os dados (o arquivo agora deve conter Hr e Sr)
         call HData%ReadFile(cfg%HDataFile)
         call SData%ReadFile(cfg%SDataFile)
+
+        ! O somatório de Fourier de S(k) reutiliza a lista de R de H: exige estruturas idênticas
+        if (HData%NOrbs /= SData%NOrbs .or. HData%nAtoms /= SData%nAtoms &
+            .or. HData%Neighbors /= SData%Neighbors) then
+            print '(A)', "[Bands Error] Arquivos H e S incompativeis (NOrbs, nAtoms ou Neighbors diferentes)."
+            stop 1
+        end if
+        if (any(HData%IndexList /= SData%IndexList)) then
+            print '(A)', "[Bands Error] Arquivos H e S incompativeis (IndexList diferente)."
+            stop 1
+        end if
 
         max_threads = 1
         !$ max_threads = omp_get_max_threads()
@@ -218,14 +245,23 @@ contains
                             info_pool(thread_id))
 
                 if (info_pool(thread_id) /= 0) then
-                    print *, "Erro: zhegv falhou no ponto k:", ik, " Erro:", info_pool(thread_id)
+                    !$omp critical (lapack_fail)
+                    nFail = nFail + 1
+                    if (firstFail == 0 .or. ik < firstFail) firstFail = ik
+                    !$omp end critical (lapack_fail)
                 endif
 
                 ! Armazena os autovalores generalizados (energias)
                 Energies(:, ik) = w_pool(:, thread_id)
             end do
             !$omp end parallel do
-            
+
+            if (nFail > 0) then
+                print '(A,I0,A,I0,A)', "Erro: zhegv falhou em ", nFail, " ponto(s) k; primeiro: ik = ", firstFail, &
+                                       " (S(k) pode nao ser definida positiva)"
+                stop 1
+            endif
+
             deallocate(Hk_pool, Sk_pool, w_pool, work_pool, rwork_pool, info_pool)
         end associate
     end function calc_band_structure_non_orth

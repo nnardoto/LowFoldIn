@@ -41,7 +41,8 @@ program LowFoldIn
         call print_box_close()
 
     case default
-        stop "[Calculation Error] Calculation Inexistente"
+        print '(A)', "[Calculation Error] Calculation Inexistente"
+        stop 1
     end select
 
 contains

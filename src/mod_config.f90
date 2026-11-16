@@ -70,7 +70,7 @@ module config
                 print*, "Erro ao ler o bloco SYSTEM"
                 print*, "Mensagem de Erro: ", trim(ErrorMessage)
                 call print_line("!")
-                stop
+                stop 1
             endif
 
             ! 3. Atualiza Valores a partir do Input
@@ -90,10 +90,12 @@ module config
                 call ReadBandsConfig(config%Bands)
                 call DisplayBandsConfig(config%Bands)
             case("unfold")
-                stop "[Calculation Error] Unfolding nao e' feito por este binario. " // &
+                print '(A)', "[Calculation Error] Unfolding nao e' feito por este binario. " // &
                      "Use o executavel dedicado 'unfold' (tools/unfold.f90, veja o README)."
+                stop 1
             case default
-                stop "[Calculation Error] Calculation Inexistente"
+                print '(A)', "[Calculation Error] Calculation Inexistente"
+                stop 1
             end select
         end subroutine ReadConfigFromStdin
 
@@ -126,7 +128,8 @@ module config
             do 
                 read(*, '(A)', iostat=ierr) line
                 if (ierr /= 0) then
-                    stop "[BandsConfig Error] Erro ao ler o bloco &BANDS"
+                    print '(A)', "[BandsConfig Error] Erro ao ler o bloco &BANDS"
+                    stop 1
                 endif
                 if (trim(adjustl(line)) == "&BANDS") exit
             end do
@@ -134,7 +137,12 @@ module config
             ! 2. Lê o número de caminhos
             read(*, *, iostat=ierr) bands_cfg%npaths
             if (ierr /= 0) then
-                stop "[BandsConfig Error] Erro ao ler Número de Caminhos (npaths)"
+                print '(A)', "[BandsConfig Error] Erro ao ler Número de Caminhos (npaths)"
+                stop 1
+            endif
+            if (bands_cfg%npaths < 2) then
+                print '(A)', "[BandsConfig Error] npaths deve ser >= 2 (pelo menos dois vertices)"
+                stop 1
             endif   
 
             ! 3. Aloca os arrays de k-points
@@ -146,9 +154,15 @@ module config
                 read(*, *, iostat=ierr) bands_cfg%kpoints(:, i), bands_cfg%nkpts(i)
                 
                 if (ierr /= 0) then
-                    stop "[BandsConfig Error] Erro ao ler o caminho de k-points"
+                    print '(A)', "[BandsConfig Error] Erro ao ler o caminho de k-points"
+                    stop 1
                 endif
             end do
+
+            if (any(bands_cfg%nkpts(1:bands_cfg%npaths - 1) < 1)) then
+                print '(A)', "[BandsConfig Error] nkpts deve ser >= 1 em todos os segmentos (exceto o ultimo vertice)"
+                stop 1
+            endif
 
         ! 5. Gera a lista completa de k-points ao longo de todos os caminhos
             bands_cfg%total_kpoints = sum(bands_cfg%nkpts(1:bands_cfg%npaths - 1))  ! Exclui o último ponto do último caminho

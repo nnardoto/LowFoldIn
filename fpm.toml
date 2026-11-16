@@ -31,6 +31,11 @@ source-form       = "free"
 # ==============================================================================
 
 [[executable]]
+name       = "LowFoldIn"
+source-dir = "app"
+main       = "main.f90"
+
+[[executable]]
 name       = "openmx2hsio"
 source-dir = "tools"
 main       = "openmx2hsio.f90"
@@ -54,6 +59,15 @@ main       = "specmap.f90"
 name       = "spectral"
 source-dir = "tools"
 main       = "spectral.f90"
+
+# ==============================================================================
+# TESTES
+# ==============================================================================
+
+[[test]]
+name       = "test_hs_io"
+source-dir = "test"
+main       = "test_hs_io.f90"
 
 # ==============================================================================
 # FEATURES DE COMPILAÇÃO — fpm 0.13+

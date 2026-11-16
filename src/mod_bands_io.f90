@@ -33,7 +33,7 @@ module bands_io
 
         if (.not. allocated(this%EigenValues)) then
             print *, "Error: Tentativa de salvar dados sem que os Eigenvalues estejam calculados."
-            return
+            stop 1
         end if
 
         nOrbs    = size(this%EigenValues, 1)
@@ -42,7 +42,7 @@ module bands_io
         open(newunit=iunit, file=filename, status='replace', action='write', iostat=ios)
         if (ios /= 0) then
             print *, "Error: Não foi possível abrir o arquivo para escrita: ", filename
-            return
+            stop 1
         endif
 
         ! Cabeçalho legível por softwares de plot (linhas com # são ignoradas por padrão)
@@ -83,7 +83,7 @@ module bands_io
 
         if (.not. allocated(this%EigenValues)) then
             print *, "Error: Tentativa de salvar dados sem que os Eigenvalues estejam calculados."
-            return
+            stop 1
         end if
 
         nOrbs    = size(this%EigenValues, 1)
@@ -91,13 +91,13 @@ module bands_io
 
         if (size(b_cfg%xpoints) /= nkPoints) then
             print *, "Error: xpoints e EigenValues possuem dimensões incompatíveis."
-            return
+            stop 1
         end if
 
         open(newunit=iunit, file=filename, status='replace', action='write', iostat=ios)
         if (ios /= 0) then
             print *, "Error: Não foi possível abrir o arquivo para escrita: ", filename
-            return
+            stop 1
         endif
 
         ! Cabeçalho legível por softwares de plot (linhas com # são ignoradas por padrão)
@@ -135,7 +135,7 @@ module bands_io
              form='unformatted', access='stream', iostat=ios)
         if (ios /= 0) then
             print *, "Erro ao criar arquivo binário:", filename
-            return
+            stop 1
         end if
 
         nOrbs = size(this%EigenValues, 1)
