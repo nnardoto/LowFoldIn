@@ -216,6 +216,11 @@ ryzen7950x-fast = [
 # ==============================================================================
 
 [[test]]
+name       = "test_unfold_core"
+source-dir = "test"
+main       = "test_unfold_core.f90"
+
+[[test]]
 name       = "test_structure_io"
 source-dir = "test"
 main       = "test_structure_io.f90"
