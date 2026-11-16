@@ -7,13 +7,13 @@
 
 **Pós-processamento de estrutura eletrônica em bases localizadas (LCAO), em Fortran moderno.**
 
-Você rodou um cálculo DFT numa supercélula com defeito, liga ou interface, ou num slab, e ficou com dezenas de bandas emaranhadas que não lembram em nada o material de partida. O LowFoldIn pega o Hamiltoniano `H(R)` e a sobreposição `S(R)` do seu cálculo e devolve a física que estava escondida ali:
+Em cálculos de supercélula (defeitos, ligas, interfaces), a estrutura de bandas aparece dobrada numa zona de Brillouin reduzida, o que dificulta a comparação com o material de referência e com medidas de ARPES. Em slabs, é preciso ainda distinguir estados de superfície e de volume. O LowFoldIn trabalha a partir do Hamiltoniano `H(R)` e da matriz de sobreposição `S(R)` de um cálculo já convergido e oferece:
 
-- 🔁 **Unfolding de bandas:** traz as bandas da supercélula de volta para a zona de Brillouin da célula primitiva, para comparar com o material puro ou com ARPES.
-- 🧭 **Análise espectral por região:** mostra em que parte do material (superfície de cima, de baixo, interior, uma camada, uma sub-rede…) cada estado vive, em mapas `A(k,E)` e em mapas `kx × ky` de energia constante.
-- 📈 **Estrutura de bandas convencional**, com o problema de autovalores generalizado `H(k)c = εS(k)c` para bases não ortogonais.
+- **Unfolding de bandas:** projeção dos estados da supercélula na zona de Brillouin da célula primitiva, com a função espectral desdobrada `A(k,E)`.
+- **Análise espectral por região:** pesos de projeção dos estados em regiões atômicas definidas pelo usuário (superfícies, interior, camadas, sub-redes), em mapas `A(k,E)` e em mapas `kx × ky` de energia constante.
+- **Estrutura de bandas convencional**, pela solução do problema de autovalores generalizado `H(k)c = εS(k)c` em bases não ortogonais.
 
-Os dados entram direto do **OpenMX** (`.scfout`), por um conversor nativo. Não é preciso refazer o cálculo autoconsistente: tudo parte das matrizes que você já tem.
+A leitura de dados do **OpenMX** (`.scfout`) é feita por um conversor nativo. Nenhuma etapa exige refazer o cálculo autoconsistente.
 
 <p align="center">
   <img src="docs/images/unfold_conceito_2x2.png" width="820" alt="Supercélula 2x2 de grafeno: bandas dobradas e resultado do unfolding">
@@ -21,17 +21,17 @@ Os dados entram direto do **OpenMX** (`.scfout`), por um conversor nativo. Não 
 </p>
 
 <p align="center">
-  <a href="#-começando">Começando</a> ·
-  <a href="#-como-funciona">Como funciona</a> ·
-  <a href="#-as-ferramentas">Ferramentas</a> ·
-  <a href="#-exemplos-incluídos">Exemplos</a> ·
-  <a href="#-documentação">Documentação</a> ·
-  <a href="#-contribuindo">Contribuindo</a>
+  <a href="#começando">Começando</a> ·
+  <a href="#como-funciona">Como funciona</a> ·
+  <a href="#as-ferramentas">Ferramentas</a> ·
+  <a href="#exemplos-incluídos">Exemplos</a> ·
+  <a href="#documentação">Documentação</a> ·
+  <a href="#contribuindo">Contribuindo</a>
 </p>
 
 ---
 
-## ✨ Destaques
+## Destaques
 
 - **Unfolding com qualquer supercélula:** a matriz `M` pode ser diagonal (rotina fechada, custo O(m)) ou geral, girada ou cisalhada (projetor de grupo, custo O(m²)). Por exemplo, √3×√3 R30°.
 - **Mapeamento automático de átomos** entre a célula primitiva e a supercélula, a partir das posições.
@@ -57,7 +57,7 @@ Os dados entram direto do **OpenMX** (`.scfout`), por um conversor nativo. Não 
 
 ---
 
-## 🚀 Começando
+## Começando
 
 ### Requisitos
 
@@ -97,17 +97,17 @@ Além do `release`, o [`fpm.toml`](fpm.toml) traz outros perfis prontos:
 | `debug` | Caça a bugs: `-fcheck=all`, armadilhas de ponto flutuante, inicialização com NaN |
 | `debug-sanitize` | Como `debug`, mais AddressSanitizer e UBSan |
 
-### Ver tudo funcionando em um minuto
+### Exemplo completo
 
 ```bash
 bash examples/surface_spectral/run_example.sh
 ```
 
-Esse script gera um slab sintético com estados de superfície, roda o fluxo completo de análise por região e produz os mapas em PNG/PDF. É o jeito mais rápido de ver as ferramentas conversando entre si.
+Esse script gera um slab sintético com estados de superfície, roda o fluxo completo de análise por região e produz os mapas em PNG/PDF. É a forma mais direta de verificar a instalação e o encadeamento das ferramentas.
 
 ---
 
-## 🧠 Como funciona
+## Como funciona
 
 **Unfolding.** Cada autoestado $|KN\rangle$ da supercélula é levado à base ortogonal de Löwdin, $C'_{KN} = S(K)^{1/2}\,C_{KN}$, e projetado nos autoestados $F_{k,n}$ do operador de translação da célula primitiva. O peso espectral no ponto $k$ da célula primitiva é
 
@@ -123,13 +123,13 @@ $$
 A_P(k,E) \;=\; \sum_n w_n^P(k)\; K\big(E-\varepsilon_n(k)\big),
 $$
 
-com $K$ um núcleo de alargamento escolhido por você. Combinações como `top-bottom` destacam em vermelho e azul onde cada estado de superfície mora.
+com $K$ um núcleo de alargamento escolhido pelo usuário. Combinações como `top-bottom` evidenciam em qual face do slab cada estado de superfície está localizado.
 
 Os detalhes, inclusive o mapeamento de pontos k para `M` não diagonal, estão em [Metodologia do unfolding](https://github.com/nnardoto/LowFoldIn/wiki/Metodologia-do-Unfolding) e [Metodologia da análise espectral](https://github.com/nnardoto/LowFoldIn/wiki/Metodologia-da-Analise-Espectral).
 
 ---
 
-## 🧰 As ferramentas
+## As ferramentas
 
 | Programa | Para que serve |
 |---|---|
@@ -140,7 +140,7 @@ Os detalhes, inclusive o mapeamento de pontos k para `M` não diagonal, estão e
 | `spectral` | Energias e pesos de projeção por região, num caminho k ou numa grade 2D |
 | `specmap` | Mapas espectrais alargados, combinações como `top-bottom` e mapas de energia constante |
 
-Todas leem a entrada em **namelists Fortran**: arquivos de texto curtos, comentáveis e fáceis de versionar junto com o seu projeto.
+Todas leem a entrada em **namelists Fortran**, arquivos de texto que podem ser comentados e versionados junto com os dados do cálculo.
 
 ### Fluxos de trabalho
 
@@ -153,7 +153,7 @@ OpenMX .scfout ──► openmx2hsio ──► H.hsio, S.hsio (+ estrutura)
      (bandas comuns)       (bandas desdobradas, A(k,E))      (mapas por região, contornos de Fermi)
 ```
 
-### Um gostinho: unfolding
+### Exemplo de entrada: unfolding
 
 ```fortran
 &UNFOLD
@@ -186,9 +186,9 @@ OMP_NUM_THREADS=8 fpm run unfold --profile release -- unfold.nml
 
 Ao final, o programa informa o desvio da **regra de soma** (Σ W = número de orbitais da célula primitiva). Esse valor deve ficar na precisão de máquina.
 
-### Outro gostinho: quem mora na superfície?
+### Exemplo de entrada: análise por região
 
-Primeiro, nomeie as regiões a partir da geometria (os comandos abaixo supõem os binários no `PATH`; sem isso, use `fpm run atomselect --profile release -- <argumentos>`):
+As regiões são definidas a partir da geometria (os comandos abaixo supõem os binários no `PATH`; sem isso, use `fpm run atomselect --profile release -- <argumentos>`):
 
 ```bash
 atomselect surface slab.nml --regions regions.nml --normal 0 0 1 --top 1 --bottom 1
@@ -196,7 +196,7 @@ atomselect select  slab.nml --regions regions.nml --name interior --atoms "2-7"
 atomselect validate slab.nml regions.nml       # confere se as regiões formam uma partição
 ```
 
-Depois, diagonalize uma vez e gere quantos mapas quiser:
+Em seguida, o `spectral` diagonaliza `H(k)` uma única vez e o `specmap` gera os mapas a partir do arquivo resultante:
 
 ```fortran
 &SPECTRAL                                 ! spectral.nml
@@ -216,8 +216,7 @@ Depois, diagonalize uma vez e gere quantos mapas quiser:
 ```
 
 ```fortran
-&SPECMAP                                  ! specmap.nml — rode de novo à vontade
-    spectral_file = 'slab.spectral.bin'
+&SPECMAP                                  ! specmap.nml    spectral_file = 'slab.spectral.bin'
     kernel = 'lorentzian',  width_ev = 0.05
     emin = -3.5, emax = 3.5, ne = 701
     maps = 'total', 'top', 'bottom', 'top-bottom'
@@ -225,11 +224,11 @@ Depois, diagonalize uma vez e gere quantos mapas quiser:
 /
 ```
 
-Trocar o alargamento, a janela de energia ou as combinações de regiões é só editar o `specmap.nml`: nada é rediagonalizado. Trocando `&KPATH` por `&KGRID`, o mesmo fluxo produz mapas de energia constante e contornos de Fermi.
+Alterar o alargamento, a janela de energia ou as combinações de regiões requer apenas uma nova execução do `specmap`, sem rediagonalização. Com `&KGRID` no lugar de `&KPATH`, o mesmo fluxo produz mapas de energia constante e contornos de Fermi.
 
 ---
 
-## 🗂️ Exemplos incluídos
+## Exemplos incluídos
 
 | Pasta | O que mostra |
 |---|---|
@@ -243,7 +242,7 @@ Trocar o alargamento, a janela de energia ou as combinações de regiões é só
 
 ---
 
-## 📚 Documentação
+## Documentação
 
 A documentação completa, **em português**, está na **[wiki do projeto](https://github.com/nnardoto/LowFoldIn/wiki)**:
 
@@ -257,7 +256,7 @@ A referência detalhada de cada ferramenta de superfície, em inglês, fica em [
 
 ---
 
-## 🔬 Base científica
+## Base científica
 
 O unfolding segue o formalismo para orbitais centrados em átomos de:
 
@@ -272,13 +271,13 @@ Se você usar o unfolding, cite esse trabalho. Uma citação própria do LowFold
 
 ---
 
-## 🚧 Estado do projeto
+## Estado do projeto
 
 Software de pesquisa em desenvolvimento ativo. As ferramentas foram validadas em modelos sintéticos, em pequenos casos de teste e no exemplo DFT do artigo de referência. Antes de publicar, confira sempre a regra de soma e as normalizações. As limitações atuais (por exemplo: só OpenMX 3.9/4.0 e coordenadas cartesianas em Å) estão listadas na [wiki](https://github.com/nnardoto/LowFoldIn/wiki/Limitacoes).
 
-## 🤝 Contribuindo
+## Contribuindo
 
-Issues e pull requests são muito bem-vindos, inclusive dúvidas de uso e relatos do tipo "rodei no meu sistema e deu isto". Uma ótima porta de entrada é um conversor para outro código de base local (SIESTA, FHI-aims, CP2K…): basta produzir `H(R)` e `S(R)` no formato `.hsio`, e todo o resto funciona.
+Issues e pull requests são bem-vindos, incluindo dúvidas de uso e relatos de comportamento inesperado. Uma contribuição de particular interesse é um conversor para outro código de base local (SIESTA, FHI-aims, CP2K…): basta produzir `H(R)` e `S(R)` no formato `.hsio` para que as demais ferramentas funcionem sem alterações.
 
 Em mudanças numéricas, informe:
 
@@ -288,7 +287,7 @@ Em mudanças numéricas, informe:
 
 Antes de abrir o PR, rode `fpm test --profile debug`: o perfil de depuração liga as checagens de limites e as armadilhas de ponto flutuante.
 
-## 📄 Licença
+## Licença
 
 Software livre sob a **GNU General Public License, versão 3 ou posterior** (`GPL-3.0-or-later`). Veja [`LICENSE`](LICENSE).
 
