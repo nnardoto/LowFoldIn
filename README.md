@@ -29,11 +29,13 @@ O LowFoldIn é composto por seis programas de linha de comando e por uma bibliot
 | Programa | Fonte | Função |
 |---|---|---|
 | `openmx2hsio` | [`tools/openmx2hsio.f90`](tools/openmx2hsio.f90) | Converte o `.scfout` do OpenMX nas matrizes `H(R)` e `S(R)` (formato `.hsio`); com `--write-structure`, extrai também a estrutura |
+| `wannier902hsio` | [`tools/wannier902hsio.f90`](tools/wannier902hsio.f90) | Converte `*_hr.dat` do Wannier90 em `H(R)` e `S(R)=I` no formato `.hsio` |
 | `LowFoldIn` | [`app/main.f90`](app/main.f90) | Estrutura de bandas ao longo de um caminho k |
 | `unfold` | [`tools/unfold.f90`](tools/unfold.f90) | Unfolding das bandas da supercélula para a célula primitiva |
 | `atomselect` | [`tools/atomselect.f90`](tools/atomselect.f90) | Definição de regiões atômicas nomeadas por índices, camadas, superfícies ou caixas |
 | `spectral` | [`tools/spectral.f90`](tools/spectral.f90) | Energias e pesos de projeção por região, num caminho k ou numa grade 2D |
 | `specmap` | [`tools/specmap.f90`](tools/specmap.f90) | Mapas espectrais alargados, combinações de regiões (`top-bottom`) e mapas de energia constante |
+| `surface_dos` | [`tools/surface_dos.f90`](tools/surface_dos.f90) | Green retartada e DOS de uma superfície semi-infinita em base ortonormal |
 
 ```text
 OpenMX .scfout ──► openmx2hsio ──► H.hsio, S.hsio (+ estrutura)
@@ -58,6 +60,7 @@ Os módulos ficam em [`src/`](src). As rotinas de biblioteca não interrompem a 
 | `HS_io` | [`mod_hs_io.f90`](src/mod_hs_io.f90) | Leitura e escrita do formato `.hsio` (v2): container versionado com blocos átomo-átomo esparsos de `H(R)` e `S(R)` |
 | `scfout_io` | [`mod_scfout_io.f90`](src/mod_scfout_io.f90) | Leitor do binário `.scfout` do OpenMX 3.9/4.0 |
 | `openmx_convert` | [`mod_openmx_convert.f90`](src/mod_openmx_convert.f90) | Montagem de `H(R)` e `S(R)` a partir do `.scfout`, conversão Hartree → eV e deslocamento `H − E_F·S` |
+| `wannier90_io` | [`mod_wannier90_io.f90`](src/mod_wannier90_io.f90) | Leitura de `*_hr.dat`, aplicação dos pesos de degenerescência e construção de `S(R)=I` |
 | `structure_io` | [`mod_structure_io.f90`](src/mod_structure_io.f90) | Leitura da estrutura (`&STRUCTURE`, `&SPECIES`, `&ATOMS`), auxiliares de rede e fingerprint da geometria |
 | `config` | [`mod_config.f90`](src/mod_config.f90) | Leitura da configuração do programa `LowFoldIn` |
 | `bands_io` | [`mod_bands_io.f90`](src/mod_bands_io.f90) | Escrita das bandas em texto, blocos para gnuplot e binário |
@@ -66,6 +69,7 @@ Os módulos ficam em [`src/`](src). As rotinas de biblioteca não interrompem a 
 | `unfold` | [`mod_unfold.f90`](src/mod_unfold.f90) | Unfolding: ortogonalização de Löwdin, pesos para `M` diagonal (forma fechada) e geral (projetor de grupo), mapeamento de átomos |
 | `spectral_projection` | [`mod_spectral_projection.f90`](src/mod_spectral_projection.f90) | Pesos de Mulliken e Löwdin por grupo de orbitais e autoresolvedor hermitiano generalizado |
 | `spectral_engine` | [`mod_spectral_engine.f90`](src/mod_spectral_engine.f90) | Laço sobre pontos k do programa `spectral`: leitura das entradas, diagonalização e projeção por região |
+| `surface_green` | [`mod_surface_green.f90`](src/mod_surface_green.f90) | Camadas principais e Green de superfície semi-infinita por decimação iterativa |
 | **Regiões e mapas** | | |
 | `atomic_regions` | [`mod_atomic_regions.f90`](src/mod_atomic_regions.f90) | Leitura, escrita e validação de `regions.nml`, incluindo o teste de partição |
 | `atomic_selection` | [`mod_atomic_selection.f90`](src/mod_atomic_selection.f90) | Seleção de átomos por listas de índices, camadas, fatias ao longo de uma normal e caixas |
@@ -78,11 +82,13 @@ Dependências dos programas:
 | Programa | Módulos utilizados |
 |---|---|
 | `openmx2hsio` | `scfout_io`, `openmx_convert`, `HS_io` |
+| `wannier902hsio` | `wannier90_io`, `HS_io` |
 | `LowFoldIn` | `config`, `core`, `bands_io` |
 | `unfold` | `HS_io`, `unfold` |
 | `atomselect` | `structure_io`, `atomic_regions`, `atomic_selection` |
 | `spectral` | `spectral_engine`, `spectral_data` |
 | `specmap` | `spectral_data`, `spectral_broadening`, `spectral_map` |
+| `surface_dos` | `HS_io`, `surface_green` |
 
 Os testes unitários de cada módulo estão em [`test/`](test), e os contratos de interface entre as etapas estão descritos em [`docs/design/contracts.md`](docs/design/contracts.md).
 

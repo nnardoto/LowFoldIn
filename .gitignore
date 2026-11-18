@@ -16,6 +16,8 @@ build/
 # examples/surface_spectral: generated outputs (only inputs, scripts, README
 # and the reference regions.nml are committed)
 examples/surface_spectral/*.hsio
+examples/pdsb2_surface_dos/*.hsio
+examples/pdsb2_surface_dos/*.dat
 examples/surface_spectral/model.nml
 examples/surface_spectral/*.spectral.bin
 examples/surface_spectral/*.spectral.txt

@@ -41,6 +41,11 @@ source-dir = "tools"
 main       = "openmx2hsio.f90"
 
 [[executable]]
+name       = "wannier902hsio"
+source-dir = "tools"
+main       = "wannier902hsio.f90"
+
+[[executable]]
 name       = "unfold"
 source-dir = "tools"
 main       = "unfold.f90"
@@ -59,6 +64,11 @@ main       = "specmap.f90"
 name       = "spectral"
 source-dir = "tools"
 main       = "spectral.f90"
+
+[[executable]]
+name       = "surface_dos"
+source-dir = "tools"
+main       = "surface_dos.f90"
 
 # ==============================================================================
 # FEATURES DE COMPILAÇÃO — fpm 0.13+
