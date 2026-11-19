@@ -70,6 +70,11 @@ name       = "surface_dos"
 source-dir = "tools"
 main       = "surface_dos.f90"
 
+[[executable]]
+name       = "surfgreen"
+source-dir = "tools"
+main       = "surfgreen.f90"
+
 # ==============================================================================
 # FEATURES DE COMPILAÇÃO — fpm 0.13+
 #
@@ -290,6 +295,26 @@ name       = "test_specmap"
 source-dir = "test"
 main       = "test_specmap.f90"
 
+[[test]]
+name       = "test_layer_blocks"
+source-dir = "test"
+main       = "test_layer_blocks.f90"
+
+[[test]]
+name       = "test_surface_gf"
+source-dir = "test"
+main       = "test_surface_gf.f90"
+
+[[test]]
+name       = "test_central_green"
+source-dir = "test"
+main       = "test_central_green.f90"
+
+[[test]]
+name       = "test_green_engine"
+source-dir = "test"
+main       = "test_green_engine.f90"
+
 # ==============================================================================
 # EXEMPLOS (fpm run --example)
 # ==============================================================================
@@ -297,4 +322,9 @@ main       = "test_specmap.f90"
 [[example]]
 name       = "surface_model"
 source-dir = "examples/surface_spectral"
+main       = "gen_model.f90"
+
+[[example]]
+name       = "surfgreen_model"
+source-dir = "examples/surfgreen_model"
 main       = "gen_model.f90"

@@ -47,6 +47,12 @@ jobs:
       - name: atomselect CLI tests
         run: bash test/test_atomselect_cli.sh
 
+      - name: surfgreen CLI tests (OpenMP determinism 1/2/4 threads)
+        run: bash test/test_surfgreen_cli.sh
+
+      - name: surfgreen example (no plotting)
+        run: NO_PLOT=1 bash examples/surfgreen_model/run_example.sh
+
       - name: Regression - existing unfold example
         run: |
           fpm run unfold -- examples/UnfoldDiatomic/unfold.nml

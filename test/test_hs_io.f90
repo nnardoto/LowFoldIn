@@ -57,6 +57,30 @@ program test_hs_io
         print '(A)', "FALHA: Data"; nfail = nfail + 1
     end if
 
+    ! Arquivo sem metadados: has_meta deve ficar falso (compatibilidade)
+    if (B%has_meta) then
+        print '(A)', "FALHA: has_meta em arquivo sem dataset meta"; nfail = nfail + 1
+    end if
+
+    ! Ida e volta com o dataset opcional 'meta' (E_F e referência)
+    A%has_meta = .true.
+    A%fermi_ev = -3.456789012345_dp
+    A%fermi_shift_applied = .false.
+    A%energy_reference = "absolute"
+    call A%WriteFile(fname)
+    call B%ReadFile(fname)
+    if (.not. B%has_meta) then
+        print '(A)', "FALHA: meta nao lido"; nfail = nfail + 1
+    else
+        if (B%fermi_ev /= A%fermi_ev .or. B%fermi_shift_applied .or. &
+            trim(B%energy_reference) /= "absolute") then
+            print '(A)', "FALHA: conteudo do meta"; nfail = nfail + 1
+        end if
+    end if
+    if (any(B%Data /= A%Data) .or. any(B%IndexList /= A%IndexList)) then
+        print '(A)', "FALHA: Data apos gravar com meta"; nfail = nfail + 1
+    end if
+
     open(newunit=unit_del, file=fname, status='old')
     close(unit_del, status='delete')
 

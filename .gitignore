@@ -27,3 +27,15 @@ examples/surface_spectral/*.cemap.dat
 examples/surface_spectral/*.cegrid.gp
 examples/surface_spectral/*.png
 examples/surface_spectral/*.pdf
+
+# examples/surfgreen_model: generated outputs (only inputs, generator and script are committed)
+examples/surfgreen_model/*.hsio
+examples/surfgreen_model/*_struct.nml
+examples/surfgreen_model/*_central.nml
+examples/surfgreen_model/regions.nml
+examples/surfgreen_model/*.map.dat
+examples/surfgreen_model/*.kticks.gp
+examples/surfgreen_model/*.cemap.dat
+examples/surfgreen_model/*.cegrid.gp
+examples/surfgreen_model/*.png
+examples/surfgreen_model/*.pdf

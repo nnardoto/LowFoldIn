@@ -74,6 +74,11 @@ module HS_io
 
     integer, parameter, public :: DATASET_BLOCKSPARSE_HS = 1
     integer, parameter         :: SCHEMA_BLOCKSPARSE_HS_V1 = 1
+    !> Dataset opcional de metadados de energia (E_F e referência). Leitores
+    !> antigos procuram apenas DATASET_BLOCKSPARSE_HS e ignoram este.
+    integer, parameter, public :: DATASET_META = 2
+    integer, parameter         :: SCHEMA_META_V1 = 1
+    integer, parameter, public :: HSIO_EREF_LEN = 32
 
     ! ------------------------------------------------------------------
     ! Entrada da tabela de conteúdo (TOC). Tamanho fixo em disco =
@@ -104,6 +109,12 @@ module HS_io
         integer,            allocatable :: Orbs(:)
         integer,            allocatable :: IndexList(:, :)
         complex(dp),        allocatable :: Data(:, :, :)
+        ! -- metadados opcionais (dataset "meta"); has_meta = .false. em
+        !    arquivos antigos ou gravados sem essa informação
+        logical                         :: has_meta              = .false.
+        real(dp)                        :: fermi_ev              = 0.0_dp   ! E_F do cálculo de origem, eV, na escala absoluta
+        logical                         :: fermi_shift_applied   = .false.  ! .true. se H já contém -E_F*S
+        character(len=HSIO_EREF_LEN)    :: energy_reference      = ""       ! 'E-E_F' ou 'absolute'
 
         contains
             procedure :: ReadFile
@@ -189,6 +200,14 @@ contains
 
         call read_blocksparse_hs_payload(File, toc(ds_idx)%offset, toc(ds_idx)%schema_ver, this)
 
+        ! Dataset opcional de metadados (schemas desconhecidos são ignorados)
+        do i = 1, toc_count
+            if (toc(i)%kind == DATASET_META .and. toc(i)%schema_ver == SCHEMA_META_V1) then
+                call read_meta_payload(File, toc(i)%offset, this)
+                exit
+            end if
+        end do
+
         close(File)
     end subroutine ReadFile
 
@@ -197,6 +216,7 @@ contains
         character(len=*),    intent(in) :: Filename
         integer                         :: File, ierr
         integer(int64)                  :: payload_offset, toc_offset, cur_pos
+        integer(int64)                  :: meta_offset, meta_nbytes
         type(TOCEntry)                  :: entry
 
         if (.not. allocated(this%Data) .or. .not. allocated(this%Orbs) &
@@ -238,11 +258,28 @@ contains
         entry%nbytes     = cur_pos - payload_offset   ! (nbytes ainda não usado por este leitor, mas
                                                        !  fica disponível para leitores futuros pularem
                                                        !  datasets desconhecidos sem parsear o payload)
+        ! -- Dataset opcional de metadados (antes do TOC) ----------------
+        if (this%has_meta) then
+            meta_offset = toc_offset
+            call write_meta_payload(File, this)
+            inquire(File, pos=cur_pos)
+            meta_nbytes = cur_pos - meta_offset
+            toc_offset = cur_pos
+        end if
+
         call write_toc_entry(File, entry)
+        if (this%has_meta) then
+            entry%name       = "meta"
+            entry%kind       = DATASET_META
+            entry%schema_ver = SCHEMA_META_V1
+            entry%offset     = meta_offset
+            entry%nbytes     = meta_nbytes
+            call write_toc_entry(File, entry)
+        end if
 
         ! -- Corrige o header com o offset/contagem reais do TOC ------------
         write(File, pos=1 + 8 + 4 + 4 + 4 + 4) toc_offset
-        write(File) 1   ! toc_count = 1 (um único dataset por arquivo, por enquanto)
+        write(File) merge(2, 1, this%has_meta)   ! toc_count
 
         close(File)
     end subroutine WriteFile
@@ -255,6 +292,10 @@ contains
         if (allocated(this%Degenerecency))  deallocate(this%Degenerecency)
 
         this%Title     = ""
+        this%has_meta  = .false.
+        this%fermi_ev  = 0.0_dp
+        this%fermi_shift_applied = .false.
+        this%energy_reference = ""
         this%Neighbors = 0
         this%nAtoms    = 0
         this%NOrbs     = 0
@@ -277,6 +318,11 @@ contains
         print '(A, A)',       "  Título:         ", trim(adjustl(this%Title))
         print '(A, I8)',      "  Nº de Vizinhos: ", this%Neighbors
         print '(A, I8)',      "  Átomos / Célula:", this%nAtoms
+        if (this%has_meta) then
+            print '(A, F14.6, A)', "  E_F (absoluto): ", this%fermi_ev, " eV"
+            print '(A, A, A, L1, A)', "  Referência:     ", trim(this%energy_reference), &
+                                      " (shift aplicado: ", this%fermi_shift_applied, ")"
+        end if
         print '(A, I8)',      "  Total Orbitais: ", this%NOrbs
         print '(A)', "-----------------------------------------------------------------"
 
@@ -359,6 +405,42 @@ contains
 
         print '(A)', "================================================================="
     end subroutine DisplayInfo
+
+    ! ==================================================================
+    ! Internals do container: dataset "meta" (schema 1)
+    !
+    !   fermi_ev             real64   E_F do cálculo de origem (eV, absoluto)
+    !   fermi_shift_applied  int32    1 se H já contém -E_F*S, 0 caso contrário
+    !   energy_reference     char(32) 'E-E_F' ou 'absolute'
+    ! ==================================================================
+
+    subroutine write_meta_payload(File, this)
+        integer,             intent(in) :: File
+        class(HSDataFormat), intent(in) :: this
+        write(File) this%fermi_ev
+        write(File) merge(1, 0, this%fermi_shift_applied)
+        write(File) this%energy_reference
+    end subroutine write_meta_payload
+
+    subroutine read_meta_payload(File, offset, this)
+        integer,             intent(in)    :: File
+        integer(int64),      intent(in)    :: offset
+        class(HSDataFormat), intent(inout) :: this
+        integer :: ierr, flag
+        real(dp) :: ef
+        character(len=HSIO_EREF_LEN) :: eref
+        read(File, pos=offset, iostat=ierr) ef
+        if (ierr == 0) read(File, iostat=ierr) flag
+        if (ierr == 0) read(File, iostat=ierr) eref
+        if (ierr /= 0) then
+            print '(A)', "[HS_io] Aviso: dataset 'meta' ilegivel; ignorado."
+            return
+        end if
+        this%has_meta = .true.
+        this%fermi_ev = ef
+        this%fermi_shift_applied = (flag /= 0)
+        this%energy_reference = eref
+    end subroutine read_meta_payload
 
     ! ==================================================================
     ! Internals do container: TOC

@@ -1,0 +1,29 @@
+! Film of 4 principal layers of B on the semi-infinite substrate A,
+! contact parameterised as lambda * (substrate inter-layer block).
+&GREEN
+    mode = 'film'
+    eta_ev = 0.01
+    emin = -3.0, emax = 3.0, ne = 241
+    output_prefix = 'film_on_sub'
+    regions_file = 'regions.nml'
+/
+&SUBSTRATE
+    h_file = 'sub_H.hsio', s_file = 'sub_S.hsio', structure_file = 'sub_struct.nml'
+    stacking_axis = 3, side = 'top', central_layers = 1
+/
+&FILM
+    h_file = 'film_H.hsio', s_file = 'film_S.hsio', structure_file = 'film_struct.nml'
+    nlayers = 4
+    shift_ev = -0.15
+/
+&INTERFACE
+    model = 'scaled', reference = 'substrate', lambda_h = 0.6, lambda_s = 0.6
+/
+&KPATH
+    nvertex = 3
+    vertex(:,1) = 0.5, 0.0, 0.0
+    vertex(:,2) = 0.0, 0.0, 0.0
+    vertex(:,3) = 0.5, 0.5, 0.0
+    label = 'X', 'G', 'M'
+    npoints = 40, 40
+/

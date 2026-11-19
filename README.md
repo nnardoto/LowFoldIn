@@ -7,7 +7,7 @@
 
 Pós-processamento de estrutura eletrônica em bases localizadas (LCAO), escrito em Fortran 2023.
 
-O LowFoldIn é composto por seis programas de linha de comando e por uma biblioteca de módulos Fortran compartilhada entre eles. Os programas recebem o Hamiltoniano `H(R)` e a matriz de sobreposição `S(R)` no formato `.hsio`, constroem `H(k)` e `S(k)`, resolvem o problema de autovalores generalizado e produzem estruturas de bandas, bandas desdobradas (unfolding) e mapas espectrais projetados em regiões atômicas. Arquivos `.scfout` do OpenMX são convertidos para `.hsio` pelo programa `openmx2hsio`. A configuração de todos os programas é feita por namelists Fortran.
+O LowFoldIn é composto por nove programas de linha de comando e por uma biblioteca de módulos Fortran compartilhada entre eles. Os programas recebem o Hamiltoniano `H(R)` e a matriz de sobreposição `S(R)` no formato `.hsio`, constroem `H(k)` e `S(k)`, resolvem o problema de autovalores generalizado e produzem estruturas de bandas, bandas desdobradas (unfolding) e mapas espectrais projetados em regiões atômicas. Arquivos `.scfout` do OpenMX são convertidos para `.hsio` pelo programa `openmx2hsio`. A configuração de todos os programas é feita por namelists Fortran.
 
 <p align="center">
   <img src="docs/images/unfold_conceito_2x2.png" width="820" alt="Supercélula 2x2 de grafeno: bandas dobradas e resultado do unfolding">
@@ -36,6 +36,7 @@ O LowFoldIn é composto por seis programas de linha de comando e por uma bibliot
 | `spectral` | [`tools/spectral.f90`](tools/spectral.f90) | Energias e pesos de projeção por região, num caminho k ou numa grade 2D |
 | `specmap` | [`tools/specmap.f90`](tools/specmap.f90) | Mapas espectrais alargados, combinações de regiões (`top-bottom`) e mapas de energia constante |
 | `surface_dos` | [`tools/surface_dos.f90`](tools/surface_dos.f90) | Green retartada e DOS de uma superfície semi-infinita em base ortonormal |
+| `surfgreen` | [`tools/surfgreen.f90`](tools/surfgreen.f90) | Funções de Green de superfícies, filmes e junções em base não ortogonal: DOS por camada e região, mapas coerentes em `q_z` |
 
 ```text
 OpenMX .scfout ──► openmx2hsio ──► H.hsio, S.hsio (+ estrutura)
@@ -69,7 +70,15 @@ Os módulos ficam em [`src/`](src). As rotinas de biblioteca não interrompem a 
 | `unfold` | [`mod_unfold.f90`](src/mod_unfold.f90) | Unfolding: ortogonalização de Löwdin, pesos para `M` diagonal (forma fechada) e geral (projetor de grupo), mapeamento de átomos |
 | `spectral_projection` | [`mod_spectral_projection.f90`](src/mod_spectral_projection.f90) | Pesos de Mulliken e Löwdin por grupo de orbitais e autoresolvedor hermitiano generalizado |
 | `spectral_engine` | [`mod_spectral_engine.f90`](src/mod_spectral_engine.f90) | Laço sobre pontos k do programa `spectral`: leitura das entradas, diagonalização e projeção por região |
-| `surface_green` | [`mod_surface_green.f90`](src/mod_surface_green.f90) | Camadas principais e Green de superfície semi-infinita por decimação iterativa |
+| `surface_green` | [`mod_surface_green.f90`](src/mod_surface_green.f90) | Camadas principais e Green de superfície semi-infinita por decimação iterativa (ortonormal e na forma `K = zS − H`) |
+| **Funções de Green** | | |
+| `zlinalg` | [`mod_zlinalg.f90`](src/mod_zlinalg.f90) | LU e soluções com vários lados direitos, `zgemm`, raiz quadrada hermitiana, com status |
+| `layer_blocks` | [`mod_layer_blocks.f90`](src/mod_layer_blocks.f90) | Blocos de camada principal `H_{m,m+p}(k∥)`, `S_{m,m+p}(k∥)`, verificação de `|n_s|` e fases do gauge atômico |
+| `central_green` | [`mod_central_green.f90`](src/mod_central_green.f90) | Região central bloco-tridiagonal, autoenergias, RGF e solução `K x = w` |
+| `interface_model` | [`mod_interface_model.f90`](src/mod_interface_model.f90) | Blocos de contato (`none`, `scaled`) e potencial `(V_m+V_n)/2 S_mn` |
+| `green_projection` | [`mod_green_projection.f90`](src/mod_green_projection.f90) | DOS de Mulliken com termos cruzados, Löwdin, mapas coerente e incoerente |
+| `green_data` | [`mod_green_data.f90`](src/mod_green_data.f90) | Formato versionado `.green.bin` |
+| `green_engine` | [`mod_green_engine.f90`](src/mod_green_engine.f90) | Entrada, empilhamento e laço sobre `(k∥, E)` do programa `surfgreen` |
 | **Regiões e mapas** | | |
 | `atomic_regions` | [`mod_atomic_regions.f90`](src/mod_atomic_regions.f90) | Leitura, escrita e validação de `regions.nml`, incluindo o teste de partição |
 | `atomic_selection` | [`mod_atomic_selection.f90`](src/mod_atomic_selection.f90) | Seleção de átomos por listas de índices, camadas, fatias ao longo de uma normal e caixas |
@@ -89,6 +98,7 @@ Dependências dos programas:
 | `spectral` | `spectral_engine`, `spectral_data` |
 | `specmap` | `spectral_data`, `spectral_broadening`, `spectral_map` |
 | `surface_dos` | `HS_io`, `surface_green` |
+| `surfgreen` | `green_engine` → `layer_blocks`, `surface_green`, `central_green`, `interface_model`, `green_projection`, `green_data`, `atomic_regions`, `kpath` |
 
 Os testes unitários de cada módulo estão em [`test/`](test), e os contratos de interface entre as etapas estão descritos em [`docs/design/contracts.md`](docs/design/contracts.md).
 
@@ -291,7 +301,7 @@ A documentação completa, em português, está na [wiki do projeto](https://git
 | [Guia rápido](https://github.com/nnardoto/LowFoldIn/wiki/Guia-Rapido) | [Unfolding](https://github.com/nnardoto/LowFoldIn/wiki/Metodologia-do-Unfolding) | [Solução de problemas](https://github.com/nnardoto/LowFoldIn/wiki/Solucao-de-Problemas) |
 | [Modelos sintéticos](https://github.com/nnardoto/LowFoldIn/wiki/Modelos-Sinteticos) | [Análise espectral](https://github.com/nnardoto/LowFoldIn/wiki/Metodologia-da-Analise-Espectral) | [Desempenho e paralelismo](https://github.com/nnardoto/LowFoldIn/wiki/Desempenho-e-Paralelismo) |
 
-A referência das ferramentas de superfície, em inglês, está em [`docs/`](docs): [`atomselect`](docs/atomselect.md), [`spectral`](docs/spectral.md), [`specmap`](docs/specmap.md) e [`performance`](docs/performance.md).
+A referência das ferramentas de superfície, em inglês, está em [`docs/`](docs): [`atomselect`](docs/atomselect.md), [`spectral`](docs/spectral.md), [`specmap`](docs/specmap.md), [`surfgreen`](docs/surfgreen.md) e [`performance`](docs/performance.md).
 
 ## Referência
 

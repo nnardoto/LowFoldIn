@@ -1,0 +1,19 @@
+! Semi-infinite substrate: layer-resolved spectral function along X-G-M.
+&GREEN
+    mode = 'surface'
+    eta_ev = 0.01
+    emin = -3.0, emax = 3.0, ne = 241
+    output_prefix = 'sub_surface'
+/
+&SUBSTRATE
+    h_file = 'sub_H.hsio', s_file = 'sub_S.hsio', structure_file = 'sub_struct.nml'
+    stacking_axis = 3, pl_cells = 1, side = 'top', central_layers = 3
+/
+&KPATH
+    nvertex = 3
+    vertex(:,1) = 0.5, 0.0, 0.0
+    vertex(:,2) = 0.0, 0.0, 0.0
+    vertex(:,3) = 0.5, 0.5, 0.0
+    label = 'X', 'G', 'M'
+    npoints = 40, 40
+/
