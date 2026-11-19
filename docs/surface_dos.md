@@ -8,6 +8,7 @@ The calculation is periodic in the two surface directions and semi-infinite
 along `normal_axis`. Unit cells are grouped automatically into a principal
 layer thick enough that only neighbouring principal layers couple. The
 surface Green function is obtained by iterative Lopez-Sancho decimation.
+Independent surface k-points are distributed across OpenMP threads.
 
 ```fortran
 &SURFACE_INPUT

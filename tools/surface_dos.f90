@@ -21,8 +21,12 @@ program surface_dos
     type(HSDataFormat) :: hr
     complex(dp), allocatable :: h00(:, :), h01(:, :), gs(:, :)
     character(len=:), allocatable :: errmsg
+    character(len=512) :: parallel_errmsg
+    real(dp), allocatable :: dos_grid(:, :, :)
+    integer, allocatable :: iter_grid(:, :, :)
     real(dp) :: u1, u2, energy, kfrac(3), dos
-    integer :: iu, ios, ik1, ik2, ie, ierr, thickness, niter, out
+    integer :: iu, ios, ik, ik1, ik2, ie, ierr, thickness, thickness_k, niter, out
+    integer :: parallel_error
 
     if (command_argument_count() /= 1) then
         write(*, '(A)') 'Usage: surface_dos INPUT.nml'
@@ -58,6 +62,59 @@ program surface_dos
     if (normal_axis < 1 .or. normal_axis > 3) call fatal('normal_axis must be 1, 2 or 3')
 
     call hr%ReadFile(trim(h_file))
+
+    ! Validate the geometry once and determine the principal-layer thickness.
+    kfrac = k_origin
+    call build_principal_layer(hr%Data, hr%IndexList, kfrac, normal_axis, &
+                               h00, h01, thickness, ierr, errmsg)
+    if (ierr /= 0) call fatal(errmsg)
+    deallocate(h00, h01)
+
+    allocate(dos_grid(energy_num, nk1, nk2), iter_grid(energy_num, nk1, nk2))
+    dos_grid = 0.0_dp
+    iter_grid = 0
+    parallel_error = 0
+    parallel_errmsg = ''
+
+    !$omp parallel do default(shared) schedule(dynamic) &
+    !$omp& private(ik, ik1, ik2, u1, u2, kfrac, h00, h01, gs, thickness_k, &
+    !$omp&         ierr, errmsg, ie, energy, niter, dos)
+    do ik = 1, nk1 * nk2
+        ik1 = modulo(ik - 1, nk1) + 1
+        ik2 = (ik - 1) / nk1 + 1
+        u1 = grid_fraction(ik1, nk1)
+        u2 = grid_fraction(ik2, nk2)
+        kfrac = k_origin + u1 * k_span1 + u2 * k_span2
+        call build_principal_layer(hr%Data, hr%IndexList, kfrac, normal_axis, &
+                                   h00, h01, thickness_k, ierr, errmsg)
+        if (ierr == 0) then
+            allocate(gs(size(h00, 1), size(h00, 2)))
+            do ie = 1, energy_num
+                energy = energy_min + grid_fraction(ie, energy_num) * (energy_max - energy_min)
+                call surface_greens_function(h00, h01, energy, eta, trim(side), tolerance, &
+                                             max_iter, gs, niter, ierr, errmsg)
+                if (ierr /= 0) exit
+                dos = trace_surface_dos(gs)
+                dos_grid(ie, ik1, ik2) = dos
+                iter_grid(ie, ik1, ik2) = niter
+            end do
+            deallocate(gs)
+        end if
+        if (allocated(h00)) deallocate(h00)
+        if (allocated(h01)) deallocate(h01)
+        if (ierr /= 0) then
+            !$omp critical (surface_dos_error)
+            if (parallel_error == 0) then
+                parallel_error = ierr
+                parallel_errmsg = errmsg
+            end if
+            !$omp end critical (surface_dos_error)
+        end if
+    end do
+    !$omp end parallel do
+
+    if (parallel_error /= 0) call fatal(trim(parallel_errmsg))
+
     open(newunit=out, file=trim(output_file), status='replace', action='write', iostat=ios)
     if (ios /= 0) call fatal("cannot open output file '" // trim(output_file) // "'")
     write(out, '(A)') '# LowFoldIn semi-infinite surface DOS'
@@ -71,21 +128,12 @@ program surface_dos
         u2 = grid_fraction(ik2, nk2)
         do ik1 = 1, nk1
             u1 = grid_fraction(ik1, nk1)
-            kfrac = k_origin + u1 * k_span1 + u2 * k_span2
-            call build_principal_layer(hr%Data, hr%IndexList, kfrac, normal_axis, &
-                                       h00, h01, thickness, ierr, errmsg)
-            if (ierr /= 0) call fatal(errmsg)
-            allocate(gs(size(h00, 1), size(h00, 2)))
             do ie = 1, energy_num
                 energy = energy_min + grid_fraction(ie, energy_num) * (energy_max - energy_min)
-                call surface_greens_function(h00, h01, energy, eta, trim(side), tolerance, &
-                                             max_iter, gs, niter, ierr, errmsg)
-                if (ierr /= 0) call fatal(errmsg)
-                dos = trace_surface_dos(gs)
-                write(out, '(4(ES22.13,1X),I0)') u1, u2, energy, dos, niter
+                write(out, '(4(ES22.13,1X),I0)') u1, u2, energy, &
+                    dos_grid(ie, ik1, ik2), iter_grid(ie, ik1, ik2)
             end do
             write(out, '()')
-            deallocate(h00, h01, gs)
         end do
     end do
     close(out)
