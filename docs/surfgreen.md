@@ -45,6 +45,15 @@ Run with OpenMP threads over `(k_par, E)` points and a single-threaded BLAS
 (`OPENBLAS_NUM_THREADS=1`). The output file is bitwise identical for any
 number of threads.
 
+The BLAS/LAPACK library must be safe to call from several OpenMP threads at
+once. Some OpenBLAS builds (pthreads, without locking) return wrong results
+in that case — the test suite catches it (`fpm test --profile release` with
+`OMP_NUM_THREADS > 1`). Linking the OpenMP variant (`libopenblaso`) or
+reference LAPACK fixes it. The decimation is memory-bandwidth bound: on a
+16-core/32-thread CPU, one thread per physical core
+(`OMP_NUM_THREADS=16 OMP_PLACES=cores OMP_PROC_BIND=spread`) was about 35 %
+faster than 32 threads with SMT.
+
 ## Formulation
 
 All algebra uses the resolvent `K(z) = zS − H`, `z = E + iη`, with LU

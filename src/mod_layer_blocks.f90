@@ -87,6 +87,7 @@ contains
 
         integer :: nb, nrh, ir, js, ns, p, a, b, bb, irp, P_, row0, col0, k
         integer, allocatable :: rp_tmp(:, :), map_h(:), map_s(:)
+        logical, allocatable :: nzh(:), nzs(:)
         integer :: ax(2)
 
         ierr = 0
@@ -126,8 +127,22 @@ contains
         blocks%stack_axis = stack_axis
         blocks%inplane = ax
         blocks%nbasis = nb
-        blocks%max_ns = maxval(abs(hh%IndexList(stack_axis, :)))
-        if (present(hs)) blocks%max_ns = max(blocks%max_ns, maxval(abs(hs%IndexList(stack_axis, :))))
+        ! Alcance ao longo de a_s medido só sobre os R com blocos não nulos: o
+        ! .scfout lista todas as cópias de célula do OpenMX (inclusive as que
+        ! ficam além do raio de corte dos PAOs, com dados nulos).
+        allocate(nzh(nrh))
+        blocks%max_ns = 0
+        do ir = 1, nrh
+            nzh(ir) = any(hh%Data(:, :, ir) /= (0.0_dp, 0.0_dp))
+            if (nzh(ir)) blocks%max_ns = max(blocks%max_ns, abs(hh%IndexList(stack_axis, ir)))
+        end do
+        if (present(hs)) then
+            allocate(nzs(size(hs%IndexList, 2)))
+            do ir = 1, size(hs%IndexList, 2)
+                nzs(ir) = any(hs%Data(:, :, ir) /= (0.0_dp, 0.0_dp))
+                if (nzs(ir)) blocks%max_ns = max(blocks%max_ns, abs(hs%IndexList(stack_axis, ir)))
+            end do
+        end if
 
         if (pl_cells == 0) then
             P_ = max(1, blocks%max_ns)
@@ -158,20 +173,24 @@ contains
         allocate(rp_tmp(2, k))
         blocks%nr = 0
         allocate(map_h(nrh))
+        map_h = 0
         do ir = 1, nrh
-            call find_or_add(hh%IndexList(ax, ir), map_h(ir))
+            if (nzh(ir)) call find_or_add(hh%IndexList(ax, ir), map_h(ir))
         end do
         if (present(hs)) then
             allocate(map_s(size(hs%IndexList, 2)))
+            map_s = 0
             do ir = 1, size(hs%IndexList, 2)
-                call find_or_add(hs%IndexList(ax, ir), map_s(ir))
+                if (nzs(ir)) call find_or_add(hs%IndexList(ax, ir), map_s(ir))
             end do
         end if
+        if (blocks%nr == 0) call find_or_add([0, 0], k)   ! H(R) inteiramente nulo
         blocks%rpar = rp_tmp(:, 1:blocks%nr)
 
         allocate(blocks%h(blocks%norb, blocks%norb, blocks%nr, -1:1))
         blocks%h = (0.0_dp, 0.0_dp)
         do ir = 1, nrh
+            if (.not. nzh(ir)) cycle
             ns = hh%IndexList(stack_axis, ir)
             irp = map_h(ir)
             do a = 0, P_ - 1
@@ -190,6 +209,7 @@ contains
             allocate(blocks%s(blocks%norb, blocks%norb, blocks%nr, -1:1))
             blocks%s = (0.0_dp, 0.0_dp)
             do js = 1, size(hs%IndexList, 2)
+                if (.not. nzs(js)) cycle
                 ns = hs%IndexList(stack_axis, js)
                 irp = map_s(js)
                 do a = 0, P_ - 1

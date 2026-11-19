@@ -54,6 +54,22 @@ program test_layer_blocks
     call check(ierr == 0 .and. pl%ncell == 3, 'explicit pl_cells = 3')
     call regroup_bands(hh, hs, pl)
 
+    ! --- R com blocos nulos (cópias de célula do OpenMX além do raio de corte) ---
+    call make_model([2, 1], [1, 1, 3], 0.3_dp, 0.03_dp, .true., 13, hh, hs)
+    block
+        integer :: ir
+        do ir = 1, hh%Neighbors
+            if (abs(hh%IndexList(3, ir)) > 1) then
+                hh%Data(:, :, ir) = (0.0_dp, 0.0_dp)
+                hs%Data(:, :, ir) = (0.0_dp, 0.0_dp)
+            end if
+        end do
+    end block
+    call build_pl_blocks(hh, 3, 0, pl, ierr, errmsg, hs=hs)
+    call check(ierr == 0 .and. pl%ncell == 1 .and. pl%max_ns == 1, 'zero blocks at |n_s| = 3 ignored')
+    call check(pl%nr == 9, 'zero blocks do not enter the R_par list')
+    call gate1(hh, hs, pl, 'zero-padded')
+
     ! --- base ortonormal (sem S) ---
     call make_model([2], [1, 0, 1], 0.3_dp, 0.0_dp, .true., 5, hh, hs)
     call build_pl_blocks(hh, 3, 1, pl, ierr, errmsg)
