@@ -1,0 +1,8 @@
+! skfit: SK fit of the coupling between principal layers of material B
+&SKFIT
+    h_file = 'B_H.hsio', s_file = 'B_S.hsio', structure_file = 'B.nml'
+    stacking_axis = 3, pl_cells = 0
+    basis = 'Bz s1p1d1'
+    cutoff_ang = 5.5
+    output = 'B.sk'
+/

@@ -1,0 +1,35 @@
+! surfgreen: 3 layers of B on semi-infinite A, SK contact, scan of lambda_h
+&GREEN
+    mode = 'film', eta_ev = 0.01, emin = -2.0, emax = 2.0, ne = 161
+    output_prefix = 'b_on_a'
+/
+&SUBSTRATE
+    h_file = 'A_H.hsio', s_file = 'A_S.hsio', structure_file = 'A.nml'
+    stacking_axis = 3, pl_cells = 0, side = 'top'
+    shift_ev = 0.0
+/
+&FILM
+    h_file = 'B_H.hsio', s_file = 'B_S.hsio', structure_file = 'B.nml'
+    nlayers = 3, pl_cells = 0
+    shift_ev = 0.0                       ! band alignment (here: arbitrary)
+    interface_offset = 0.0, 0.0, 0.0     ! registry and extra gap (A)
+/
+&INTERFACE
+    model = 'sk'
+    sk_file = 'contact.sk', sk_cutoff_ang = 5.5
+    sk_basis = 'Ax s1p1', 'Ay s1p1', 'Bz s1p1d1'
+    lambda_h = 1.0                       ! global factor (scanned below)
+    sk_scale_sigma = 1.0, sk_scale_pi = 1.0, sk_scale_delta = 1.0
+/
+&SCAN
+    parameter = 'lambda_h'
+    values = 0.0, 0.5, 1.0, 2.0
+/
+&KPATH
+    nvertex = 3
+    vertex(:,1) = 0.5, 0.0, 0.0
+    vertex(:,2) = 0.0, 0.0, 0.0
+    vertex(:,3) = 0.333333333, 0.333333333, 0.0
+    label = 'M', 'G', 'K'
+    npoints = 40, 46
+/

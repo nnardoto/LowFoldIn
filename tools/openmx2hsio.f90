@@ -74,7 +74,7 @@ program openmx2hsio
     integer,           allocatable :: IndexList(:, :)
     complex(dp),       allocatable :: Sdata(:, :, :), Hdata(:, :, :)
     integer                        :: NOrbs, NOrbs2, neighbors
-    real(dp)                       :: fermi_hartree_final, fermi_ev
+    real(dp)                       :: fermi_hartree_final, fermi_ev, meta_fermi_ev
     logical                        :: apply_shift
     character(len=64)              :: fermi_source
 
@@ -172,6 +172,13 @@ program openmx2hsio
         fermi_source = "lido do proprio .scfout (ChemP)"
     end if
     fermi_ev = fermi_hartree_final * HARTREE_TO_EV
+    ! E_F gravado no dataset 'meta' do .hsio: sempre o valor absoluto do
+    ! cálculo (override > ChemP), mesmo com --no-fermi-shift.
+    if (has_fermi_override) then
+        meta_fermi_ev = fermi_hartree * HARTREE_TO_EV
+    else
+        meta_fermi_ev = scfout%ChemP * HARTREE_TO_EV
+    end if
 
     call BuildIndexList(scfout, IndexList)
     neighbors = size(IndexList, 2)
@@ -471,6 +478,11 @@ contains
 
         allocate(out_data%Data(nOrbsLocal, nOrbsLocal, nNeighLocal))
         out_data%Data = Data
+
+        out_data%has_meta            = .true.
+        out_data%fermi_ev            = meta_fermi_ev
+        out_data%fermi_shift_applied = apply_shift
+        out_data%energy_reference    = merge("E-E_F   ", "absolute", apply_shift)
 
         call out_data%WriteFile(filename)
         print '(A,A)', "  Escrito: ", trim(filename)

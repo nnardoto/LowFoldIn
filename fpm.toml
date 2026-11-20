@@ -41,6 +41,11 @@ source-dir = "tools"
 main       = "openmx2hsio.f90"
 
 [[executable]]
+name       = "wannier902hsio"
+source-dir = "tools"
+main       = "wannier902hsio.f90"
+
+[[executable]]
 name       = "unfold"
 source-dir = "tools"
 main       = "unfold.f90"
@@ -59,6 +64,21 @@ main       = "specmap.f90"
 name       = "spectral"
 source-dir = "tools"
 main       = "spectral.f90"
+
+[[executable]]
+name       = "surface_dos"
+source-dir = "tools"
+main       = "surface_dos.f90"
+
+[[executable]]
+name       = "surfgreen"
+source-dir = "tools"
+main       = "surfgreen.f90"
+
+[[executable]]
+name       = "skfit"
+source-dir = "tools"
+main       = "skfit.f90"
 
 # ==============================================================================
 # FEATURES DE COMPILAÇÃO — fpm 0.13+
@@ -280,6 +300,26 @@ name       = "test_specmap"
 source-dir = "test"
 main       = "test_specmap.f90"
 
+[[test]]
+name       = "test_layer_blocks"
+source-dir = "test"
+main       = "test_layer_blocks.f90"
+
+[[test]]
+name       = "test_surface_gf"
+source-dir = "test"
+main       = "test_surface_gf.f90"
+
+[[test]]
+name       = "test_central_green"
+source-dir = "test"
+main       = "test_central_green.f90"
+
+[[test]]
+name       = "test_green_engine"
+source-dir = "test"
+main       = "test_green_engine.f90"
+
 # ==============================================================================
 # EXEMPLOS (fpm run --example)
 # ==============================================================================
@@ -288,3 +328,23 @@ main       = "test_specmap.f90"
 name       = "surface_model"
 source-dir = "examples/surface_spectral"
 main       = "gen_model.f90"
+
+[[example]]
+name       = "surfgreen_model"
+source-dir = "examples/surfgreen_model"
+main       = "gen_model.f90"
+
+[[test]]
+name       = "test_sk_table"
+source-dir = "test"
+main       = "test_sk_table.f90"
+
+[[test]]
+name       = "test_sk_contact"
+source-dir = "test"
+main       = "test_sk_contact.f90"
+
+[[example]]
+name       = "sk_materials"
+source-dir = "examples/sk_contact"
+main       = "gen_materials.f90"

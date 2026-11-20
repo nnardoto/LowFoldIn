@@ -1,0 +1,11 @@
+! skfit: SK fit of the coupling between principal layers of material A
+&SKFIT
+    h_file = 'A_H.hsio', s_file = 'A_S.hsio', structure_file = 'A.nml'
+    stacking_axis = 3, pl_cells = 0
+    basis = 'Ax s1p1', 'Ay s1p1'
+    fit_shells = 'Ax s1 p1', 'Ay s1 p1'   ! default: first zeta of s, p, d
+    cutoff_ang = 5.5
+    ! anchor_ev: default = E_F from the .hsio metadata (absolute scale)
+    output = 'A.sk'
+    check_kpar = 0.0, 0.0, check_nk = 41, check_window_ev = 1.0
+/
