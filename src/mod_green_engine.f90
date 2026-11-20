@@ -29,7 +29,9 @@ module green_engine
     use spectral_projection, only: orbital_groups_t, build_orbital_groups
     use layer_blocks, only: pl_blocks_t, build_pl_blocks, pl_blocks_at_k, attach_pl_geometry, kpar_cartesian
     use surface_green, only: surface_gf, side_code, SIDE_TOP, SIDE_BOTTOM
-    use interface_model, only: contact_t, contact_validate, build_contact, REF_SUBSTRATE, REF_FILM
+    use interface_model, only: contact_t, contact_validate, build_contact, REF_SUBSTRATE, REF_FILM, CONTACT_SK
+    use sk_contact, only: sk_model_t, sk_geom_t, sk_pairs_t, read_sk_file, sk_set_bases, make_sk_geom, &
+                          build_sk_pairs, sk_contact_at_k
     use central_green, only: central_t, rgf_t, central_init, assemble_central, attach_lead, rgf_solve
     use green_projection, only: orbital_dos_mulliken, orbital_dos_lowdin, region_dos, coherent_map, &
                                 min_neg_im_gdiag, central_overlap_min
@@ -39,6 +41,12 @@ module green_engine
     private
 
     integer, parameter, public :: GPATH_LEN = 512, MAX_GKVERTEX = 64, MAX_GLAYERS = 512
+    integer, parameter, public :: MAX_SK_BASIS = 32, MAX_SCAN = 256
+
+    !> Parâmetros que &SCAN pode varrer.
+    character(len=*), parameter :: SCAN_NAMES = &
+        'lambda_h lambda_s sk_scale_sigma sk_scale_pi sk_scale_delta sk_beta film_shift_ev ' // &
+        'offset_x offset_y offset_z offset_normal'
 
     !> Espelho dos namelists &GREEN, &SUBSTRATE, &FILM, &INTERFACE, &COHERENT,
     !> &KPATH ou &KGRID.
@@ -67,6 +75,7 @@ module green_engine
         logical                  :: have_film = .false.
         character(len=GPATH_LEN) :: film_h = '', film_s = '', film_structure = ''
         integer                  :: nlayers = 0
+        integer                  :: film_ncells = 0       !< > 0: espessura do filme em células (BL); sobrepõe nlayers
         integer                  :: film_pl_cells = 0
         real(dp)                 :: film_shift_ev = 0.0_dp
         real(dp)                 :: layer_potential_ev(MAX_GLAYERS) = 0.0_dp
@@ -75,6 +84,15 @@ module green_engine
         character(len=16)        :: contact_model = 'none'
         character(len=16)        :: contact_reference = 'substrate'
         real(dp)                 :: lambda_h = 1.0_dp, lambda_s = 1.0_dp
+        character(len=GPATH_LEN) :: sk_file = ''
+        real(dp)                 :: sk_cutoff_ang = 6.0_dp
+        character(len=64)        :: sk_basis(MAX_SK_BASIS) = ''
+        real(dp)                 :: sk_scale(3) = 1.0_dp      !< sigma, pi, delta
+        real(dp)                 :: sk_beta = -1.0_dp         !< >= 0 substitui o beta do arquivo
+        ! &SCAN
+        character(len=32)        :: scan_parameter = ''
+        integer                  :: nscan = 0
+        real(dp)                 :: scan_values(MAX_SCAN) = 0.0_dp
         ! &COHERENT
         integer                  :: nqz = 0
         real(dp)                 :: qz_min = 0.0_dp, qz_max = 0.0_dp
@@ -103,6 +121,7 @@ module green_engine
     type, public :: green_stack_t
         integer :: nlayer = 0
         integer, allocatable :: mat(:)          !< (nlayer) 1 = A, 2 = B
+        integer, allocatable :: ncell(:)        !< (nlayer) células no bloco (= P, ou menos no bloco parcial do topo)
         integer, allocatable :: film_index(:)   !< (nlayer) índice da camada no filme (0 se A)
         real(dp), allocatable :: v(:)           !< (nlayer) potencial
         integer :: bot_lead = 0, top_lead = 0   !< 0 = vácuo
@@ -159,6 +178,8 @@ contains
         call read_film_nml(inp%have_film)
         if (ierr /= 0) goto 900
         call read_interface_nml(found)
+        if (ierr /= 0) goto 900
+        call read_scan_nml(found)
         if (ierr /= 0) goto 900
         call read_coherent_nml(found)
         if (ierr /= 0) goto 900
@@ -241,12 +262,12 @@ contains
         subroutine read_film_nml(found)
             logical, intent(out) :: found
             character(len=GPATH_LEN) :: h_file, s_file, structure_file
-            integer :: nlayers, pl_cells
+            integer :: nlayers, pl_cells, ncells
             real(dp) :: shift_ev, layer_potential_ev(MAX_GLAYERS), interface_offset(3)
             namelist /FILM/ h_file, s_file, structure_file, nlayers, pl_cells, shift_ev, &
-                            layer_potential_ev, interface_offset
+                            layer_potential_ev, interface_offset, ncells
             h_file = ''; s_file = ''; structure_file = ''
-            nlayers = 0; pl_cells = 0; shift_ev = 0.0_dp; layer_potential_ev = 0.0_dp
+            nlayers = 0; pl_cells = 0; ncells = 0; shift_ev = 0.0_dp; layer_potential_ev = 0.0_dp
             interface_offset = 0.0_dp
             call rew()
             read(iu, nml=FILM, iostat=ios, iomsg=iomsg)
@@ -256,6 +277,7 @@ contains
             end if
             inp%film_h = h_file; inp%film_s = s_file; inp%film_structure = structure_file
             inp%nlayers = nlayers; inp%film_pl_cells = pl_cells; inp%film_shift_ev = shift_ev
+            inp%film_ncells = ncells
             inp%layer_potential_ev = layer_potential_ev; inp%interface_offset = interface_offset
         end subroutine read_film_nml
 
@@ -263,12 +285,18 @@ contains
             logical, intent(out) :: found
             character(len=16) :: model, reference
             real(dp) :: lambda_h, lambda_s
-            character(len=GPATH_LEN) :: junction_h, junction_s, junction_structure
+            character(len=GPATH_LEN) :: junction_h, junction_s, junction_structure, sk_file
+            real(dp) :: sk_cutoff_ang, sk_scale_sigma, sk_scale_pi, sk_scale_delta, sk_beta
+            character(len=64) :: sk_basis(MAX_SK_BASIS)
             namelist /INTERFACE/ model, reference, lambda_h, lambda_s, junction_h, junction_s, &
-                                 junction_structure
+                                 junction_structure, sk_file, sk_cutoff_ang, sk_basis, sk_scale_sigma, &
+                                 sk_scale_pi, sk_scale_delta, sk_beta
             model = inp%contact_model; reference = inp%contact_reference
             lambda_h = inp%lambda_h; lambda_s = inp%lambda_s
             junction_h = ''; junction_s = ''; junction_structure = ''
+            sk_file = inp%sk_file; sk_cutoff_ang = inp%sk_cutoff_ang; sk_basis = inp%sk_basis
+            sk_scale_sigma = inp%sk_scale(1); sk_scale_pi = inp%sk_scale(2); sk_scale_delta = inp%sk_scale(3)
+            sk_beta = inp%sk_beta
             call rew()
             read(iu, nml=INTERFACE, iostat=ios, iomsg=iomsg)
             found = (ios /= iostat_end)
@@ -277,7 +305,50 @@ contains
             end if
             inp%contact_model = model; inp%contact_reference = reference
             inp%lambda_h = lambda_h; inp%lambda_s = lambda_s
+            inp%sk_file = sk_file; inp%sk_cutoff_ang = sk_cutoff_ang; inp%sk_basis = sk_basis
+            inp%sk_scale = [sk_scale_sigma, sk_scale_pi, sk_scale_delta]; inp%sk_beta = sk_beta
         end subroutine read_interface_nml
+
+        !> &SCAN: parameter + values(:) explícitos, ou n valores igualmente
+        !> espaçados de vmin a vmax.
+        subroutine read_scan_nml(found)
+            logical, intent(out) :: found
+            character(len=32) :: parameter
+            real(dp) :: values(MAX_SCAN), vmin, vmax
+            integer :: n, k
+            namelist /SCAN/ parameter, values, n, vmin, vmax
+            parameter = ''; values = huge(1.0_dp); n = 0; vmin = 0.0_dp; vmax = 0.0_dp
+            call rew()
+            read(iu, nml=SCAN, iostat=ios, iomsg=iomsg)
+            found = (ios /= iostat_end)
+            if (found .and. ios /= 0) then
+                call nml_error('SCAN'); return
+            end if
+            if (.not. found) return
+            inp%scan_parameter = adjustl(parameter)
+            if (n > 0) then
+                if (n > MAX_SCAN) then
+                    ierr = 2; errmsg = '&SCAN n must be <= 256'; return
+                end if
+                inp%nscan = n
+                do k = 1, n
+                    if (n == 1) then
+                        inp%scan_values(k) = vmin
+                    else
+                        inp%scan_values(k) = vmin + real(k - 1, dp) * (vmax - vmin) / real(n - 1, dp)
+                    end if
+                end do
+            else
+                inp%nscan = count(values < huge(1.0_dp))
+                if (any(values(1:inp%nscan) == huge(1.0_dp))) then
+                    ierr = 2; errmsg = '&SCAN values must be contiguous (values(1), values(2), ...)'; return
+                end if
+                inp%scan_values(1:inp%nscan) = values(1:inp%nscan)
+            end if
+            if (inp%nscan < 1) then
+                ierr = 2; errmsg = '&SCAN needs values(:) or n >= 1 with vmin, vmax'; return
+            end if
+        end subroutine read_scan_nml
 
         subroutine read_coherent_nml(found)
             logical, intent(out) :: found
@@ -380,9 +451,55 @@ contains
             if (len_trim(inp%film_h) == 0 .or. len_trim(inp%film_structure) == 0) then
                 errmsg = '&FILM h_file and structure_file are required'; return
             end if
-            if (inp%nlayers < 1 .or. inp%nlayers > MAX_GLAYERS) then
-                errmsg = '&FILM nlayers must be in 1..512'; return
+            if (inp%film_ncells < 0 .or. inp%film_ncells > MAX_GLAYERS) then
+                errmsg = '&FILM ncells must be in 0..512'; return
             end if
+            if (inp%film_ncells > 0) then
+                ! espessura em células: o bloco parcial fica no topo do filme, do lado do vácuo
+                if (trim(inp%mode) /= 'film' .or. side_code(inp%side) /= SIDE_TOP) then
+                    errmsg = "&FILM ncells is supported in mode 'film' with side = 'top' " // &
+                             '(the partial principal layer sits at the vacuum side)'; return
+                end if
+                if (inp%nlayers /= 0) then
+                    errmsg = '&FILM: give either nlayers (principal layers) or ncells (cells), not both'; return
+                end if
+            else if (inp%nlayers < 1 .or. inp%nlayers > MAX_GLAYERS) then
+                errmsg = '&FILM nlayers must be in 1..512 (or use ncells)'; return
+            end if
+        end if
+        if (trim(inp%contact_model) == 'sk') then
+            if (len_trim(inp%sk_file) == 0) then
+                errmsg = "&INTERFACE model = 'sk' needs sk_file"; return
+            end if
+            if (count(len_trim(inp%sk_basis) > 0) == 0) then
+                errmsg = "&INTERFACE model = 'sk' needs sk_basis (e.g. 'Te s3p2d2', 'Sb s3p2d2')"; return
+            end if
+            if (inp%sk_cutoff_ang <= 0.0_dp) then
+                errmsg = '&INTERFACE sk_cutoff_ang must be > 0'; return
+            end if
+        end if
+        if (inp%nscan > 0) then
+            if (index(' ' // SCAN_NAMES // ' ', ' ' // trim(inp%scan_parameter) // ' ') == 0 .or. &
+                len_trim(inp%scan_parameter) == 0) then
+                errmsg = '&SCAN parameter must be one of: ' // SCAN_NAMES; return
+            end if
+            if (trim(inp%mode) == 'surface') then
+                errmsg = "&SCAN needs a film (not available in mode 'surface')"; return
+            end if
+            select case (trim(inp%scan_parameter))
+            case ('lambda_s')
+                if (trim(inp%contact_model) /= 'scaled') then
+                    errmsg = "&SCAN lambda_s needs &INTERFACE model = 'scaled'"; return
+                end if
+            case ('sk_scale_sigma', 'sk_scale_pi', 'sk_scale_delta', 'sk_beta')
+                if (trim(inp%contact_model) /= 'sk') then
+                    errmsg = '&SCAN ' // trim(inp%scan_parameter) // " needs &INTERFACE model = 'sk'"; return
+                end if
+            case ('lambda_h')
+                if (trim(inp%contact_model) /= 'scaled' .and. trim(inp%contact_model) /= 'sk') then
+                    errmsg = "&SCAN lambda_h needs &INTERFACE model = 'scaled' or 'sk'"; return
+                end if
+            end select
         end if
         if (inp%nqz < 0) then
             errmsg = '&COHERENT nqz must be >= 0'; return
@@ -477,6 +594,7 @@ contains
         errmsg = ''
         nA = inp%sub_layers
         nB = inp%nlayers
+        if (inp%film_ncells > 0) nB = (inp%film_ncells + mats(2)%pl%ncell - 1) / mats(2)%pl%ncell
         top_side = side_code(inp%side) == SIDE_TOP
         select case (trim(inp%mode))
         case ('surface')
@@ -508,6 +626,14 @@ contains
         end select
         stk%nlayer = size(seq)
         stk%mat = seq
+        allocate(stk%ncell(stk%nlayer))
+        do l = 1, stk%nlayer
+            stk%ncell(l) = mats(stk%mat(l))%pl%ncell
+        end do
+        if (inp%film_ncells > 0) then
+            ! último bloco do filme (topo, lado do vácuo): só as primeiras r células da PL
+            stk%ncell(stk%nlayer) = inp%film_ncells - (nB - 1) * mats(2)%pl%ncell
+        end if
         allocate(stk%film_index(stk%nlayer), stk%v(stk%nlayer), stk%origin(3, stk%nlayer))
         k = 0
         do l = 1, stk%nlayer
@@ -525,7 +651,7 @@ contains
         o = 0.0_dp
         do l = 1, stk%nlayer
             stk%origin(:, l) = o
-            o = o + mats(stk%mat(l))%pl%pl_shift
+            o = o + real(stk%ncell(l), dp) * mats(stk%mat(l))%st%lattice(inp%stacking_axis, :)
             if (l < stk%nlayer) then
                 if (stk%mat(l + 1) /= stk%mat(l)) then
                     if (stk%mat(l) == 1) then
@@ -540,14 +666,14 @@ contains
         ! Estrutura da região central (átomos na ordem dos orbitais)
         nat = 0
         do l = 1, stk%nlayer
-            nat = nat + mats(stk%mat(l))%pl%ncell * mats(stk%mat(l))%pl%nat_cell
+            nat = nat + stk%ncell(l) * mats(stk%mat(l))%pl%nat_cell
         end do
         stk%st%nat = nat
         allocate(stk%st%cart(3, nat), stk%st%label(nat), stk%atom_orbs(nat), stk%atom_layer(nat))
         ia = 0
         do l = 1, stk%nlayer
             m = stk%mat(l)
-            P = mats(m)%pl%ncell
+            P = stk%ncell(l)
             do a = 0, P - 1
                 do at = 1, mats(m)%pl%nat_cell
                     ia = ia + 1
@@ -652,7 +778,8 @@ contains
 
     !> Executa o cálculo. Se structure_only, só grava a estrutura central.
     !> nonconverged: número de pontos (k,E) em que a decimação não convergiu.
-    subroutine run_green(inp, gd, ierr, errmsg, structure_only, nonconverged, nthreads)
+    !> Com &SCAN, gd é o primeiro valor e gscan (se presente) recebe todos.
+    subroutine run_green(inp, gd, ierr, errmsg, structure_only, nonconverged, nthreads, gscan)
         type(green_input_t), intent(in)  :: inp
         type(green_data_t),  intent(out) :: gd
         integer,             intent(out) :: ierr
@@ -660,6 +787,7 @@ contains
         logical, optional,   intent(in)  :: structure_only
         integer, optional,   intent(out) :: nonconverged
         integer, optional,   intent(out) :: nthreads
+        type(green_data_t), allocatable, optional, intent(out) :: gscan(:)
 
         type(material_t), allocatable :: mats(:)
         type(green_stack_t) :: stk
@@ -677,6 +805,17 @@ contains
         real(dp), allocatable :: depth(:), rpos(:, :), coh_mask(:)
         character(len=:), allocatable :: perr_msg
         real(dp) :: recip(3, 3), ntop
+        ! varredura e contato SK
+        integer :: nscan, is
+        type(green_input_t) :: inp_s
+        type(green_stack_t), allocatable :: stks(:)
+        type(contact_t), allocatable :: contacts(:)
+        type(sk_model_t) :: skm, skm_s
+        type(sk_geom_t) :: skg(2)
+        type(sk_pairs_t), allocatable :: pab(:), pba(:)
+        real(dp), allocatable :: shiftv(:, :), depth_s(:, :), rpos_s(:, :, :)
+        type(green_data_t), allocatable :: gall(:)
+        real(dp) :: base_film_shift
 
         ierr = 0
         errmsg = ''
@@ -711,11 +850,57 @@ contains
             call contact_validate(inp%contact_model, inp%contact_reference, inp%lambda_h, inp%lambda_s, &
                                   contact, ierr, errmsg)
             if (ierr /= 0) return
+            if (contact%model == CONTACT_SK) then
+                skm%cutoff = inp%sk_cutoff_ang
+                call read_sk_file(trim(inp%sk_file), skm, ierr, errmsg)
+                if (ierr /= 0) return
+                call sk_set_bases(skm, inp%sk_basis, ierr, errmsg)
+                if (ierr /= 0) return
+                do l = 1, 2
+                    call make_sk_geom(skm, mats(l)%pl%norb, mats(l)%pl%tau, mats(l)%pl%orb_atom, &
+                                      mats(l)%pl%orb_cell, mats(l)%st%label, mats(l)%pl%orbs_per_atom, &
+                                      skg(l), ierr, errmsg)
+                    if (ierr /= 0) then
+                        errmsg = merge('substrate: ', 'film:      ', l == 1) // errmsg; return
+                    end if
+                end do
+            end if
         end if
 
-        ! --- empilhamento e estrutura central ---
-        call build_stack(inp, mats, stk, ierr, errmsg)
-        if (ierr /= 0) return
+        ! --- empilhamento (um por valor de varredura) e estrutura central ---
+        nscan = max(1, inp%nscan)
+        allocate(stks(nscan), contacts(nscan), pab(nscan), pba(nscan), shiftv(nmat, nscan))
+        base_film_shift = 0.0_dp
+        if (nmat == 2) base_film_shift = mats(2)%shift
+        do is = 1, nscan
+            inp_s = scan_input(inp, is, mats(1)%pl%normal)
+            if (nmat == 2) mats(2)%shift = inp_s%film_shift_ev
+            call build_stack(inp_s, mats, stks(is), ierr, errmsg)
+            if (nmat == 2) mats(2)%shift = base_film_shift
+            if (ierr /= 0) return
+            shiftv(1, is) = mats(1)%shift
+            if (nmat == 2) then
+                shiftv(2, is) = inp_s%film_shift_ev
+                contacts(is) = contact
+                contacts(is)%lambda_h = inp_s%lambda_h
+                contacts(is)%lambda_s = inp_s%lambda_s
+                if (contact%model == CONTACT_SK) then
+                    skm_s = skm
+                    skm_s%lambda = inp_s%lambda_h
+                    skm_s%scale = inp_s%sk_scale
+                    skm_s%beta_override = inp_s%sk_beta
+                    call build_sk_pairs(skm_s, skg(1), skg(2), mats(1)%pl%pl_shift + inp_s%interface_offset, &
+                                        mats(1)%pl%lattice(mats(1)%pl%inplane(1), :), &
+                                        mats(1)%pl%lattice(mats(1)%pl%inplane(2), :), pab(is), ierr, errmsg)
+                    if (ierr /= 0) return
+                    call build_sk_pairs(skm_s, skg(2), skg(1), mats(2)%pl%pl_shift - inp_s%interface_offset, &
+                                        mats(1)%pl%lattice(mats(1)%pl%inplane(1), :), &
+                                        mats(1)%pl%lattice(mats(1)%pl%inplane(2), :), pba(is), ierr, errmsg)
+                    if (ierr /= 0) return
+                end if
+            end if
+        end do
+        stk = stks(1)
         central_file = trim(inp%output_prefix) // '_central.nml'
         call write_central_structure(central_file, stk, ierr, errmsg)
         if (ierr /= 0) return
@@ -727,21 +912,25 @@ contains
             errmsg = 'central structure: ' // trim(msg); return
         end if
 
-        ! --- orbitais da região central ---
+        ! --- orbitais da região central (posições por valor de varredura) ---
         ntot = sum(stk%atom_orbs)
-        allocate(orb_layer(ntot), depth(ntot), rpos(3, ntot))
+        allocate(orb_layer(ntot), depth(ntot), rpos(3, ntot), depth_s(ntot, nscan), rpos_s(3, ntot, nscan))
         block
             integer :: ia, o0, j
-            ntop = maxval(matmul(mats(1)%pl%normal, stc%cart))
-            o0 = 0
-            do ia = 1, stc%nat
-                do j = 1, stk%atom_orbs(ia)
-                    orb_layer(o0 + j) = stk%atom_layer(ia)
-                    rpos(:, o0 + j) = stc%cart(:, ia)
-                    depth(o0 + j) = ntop - dot_product(mats(1)%pl%normal, stc%cart(:, ia))
+            do is = 1, nscan
+                ntop = maxval(matmul(mats(1)%pl%normal, stks(is)%st%cart))
+                o0 = 0
+                do ia = 1, stks(is)%st%nat
+                    do j = 1, stk%atom_orbs(ia)
+                        orb_layer(o0 + j) = stk%atom_layer(ia)
+                        rpos_s(:, o0 + j, is) = stks(is)%st%cart(:, ia)
+                        depth_s(o0 + j, is) = ntop - dot_product(mats(1)%pl%normal, stks(is)%st%cart(:, ia))
+                    end do
+                    o0 = o0 + stk%atom_orbs(ia)
                 end do
-                o0 = o0 + stk%atom_orbs(ia)
             end do
+            depth = depth_s(:, 1)
+            rpos = rpos_s(:, :, 1)
         end block
 
         ! --- regiões ---
@@ -858,7 +1047,7 @@ contains
                 coh_mask = 0.0_dp
                 coh_mask(groups%orb(groups%start(cohreg):groups%start(cohreg + 1) - 1)) = 1.0_dp
             end if
-            if (inp%escape_length_ang > 0.0_dp) coh_mask = coh_mask * exp(-depth / (2.0_dp * inp%escape_length_ang))
+            ! a atenuação exp(-d/2L) entra em one_point (depende da geometria de cada valor de varredura)
         end if
 
         ! --- saídas ---
@@ -882,6 +1071,12 @@ contains
             allocate(gd%icoh(0, 0, 0), gd%iinc(0, 0, 0))
         end if
 
+        ! --- uma saída por valor de varredura ---
+        allocate(gall(nscan))
+        do is = 1, nscan
+            gall(is) = gd
+        end do
+
         ! --- laço principal sobre (k, E) ---
         perr_ip = huge(0)
         perr_msg = ''
@@ -900,7 +1095,11 @@ contains
         end if
         if (present(nonconverged)) nonconverged = nbad
 
-        call fill_meta()
+        do is = 1, nscan
+            call fill_meta(gall(is), is)
+        end do
+        gd = gall(1)
+        if (present(gscan)) call move_alloc(gall, gscan)
 
     contains
 
@@ -922,8 +1121,9 @@ contains
         end subroutine record_error
 
         !> Bloco de acoplamento H_{l,l+1}, S_{l,l+1} entre materiais ml (abaixo) e mu (acima).
-        subroutine coupling(ml, mu, h, s, hc, sc, lerr, lmsg)
-            integer, intent(in) :: ml, mu
+        subroutine coupling(ml, mu, is, kp, h, s, hc, sc, lerr, lmsg)
+            integer, intent(in) :: ml, mu, is
+            real(dp), intent(in) :: kp(2)
             complex(dp), intent(in) :: h(:, :, -1:, :), s(:, :, -1:, :)
             complex(dp), allocatable, intent(out) :: hc(:, :), sc(:, :)
             integer, intent(out) :: lerr
@@ -934,9 +1134,17 @@ contains
             if (ml == mu) then
                 hc = h(1:mats(ml)%pl%norb, 1:mats(ml)%pl%norb, 1, ml)
                 sc = s(1:mats(ml)%pl%norb, 1:mats(ml)%pl%norb, 1, ml)
+            else if (contact%model == CONTACT_SK) then
+                allocate(hc(mats(ml)%pl%norb, mats(mu)%pl%norb), sc(mats(ml)%pl%norb, mats(mu)%pl%norb))
+                sc = (0.0_dp, 0.0_dp)
+                if (ml == 1) then
+                    call sk_contact_at_k(pab(is), kp, hc)
+                else
+                    call sk_contact_at_k(pba(is), kp, hc)
+                end if
             else
                 rm = merge(1, 2, contact%reference == REF_SUBSTRATE)
-                call build_contact(contact, mats(ml)%pl%norb, mats(mu)%pl%norb, &
+                call build_contact(contacts(is), mats(ml)%pl%norb, mats(mu)%pl%norb, &
                                    h(1:mats(rm)%pl%norb, 1:mats(rm)%pl%norb, 1, rm), &
                                    s(1:mats(rm)%pl%norb, 1:mats(rm)%pl%norb, 1, rm), hc, sc, lerr, lmsg)
             end if
@@ -951,11 +1159,12 @@ contains
             type(rgf_t) :: res
             real(dp), allocatable :: d(:), rd(:), ic(:), ii(:)
             integer, allocatable :: bsize(:)
-            integer :: lerr, nmax, m, it_b, it_t, iq, i, l
+            integer :: lerr, nmax, m, it_b, it_t, iq, i, l, isc
             character(len=:), allocatable :: lmsg
-            real(dp) :: res_b, res_t, smin, kc(3)
+            real(dp) :: res_b, res_t, smin, kc(3), sh_b, sh_t
             complex(dp) :: z
             real(dp) :: kp(2)
+            logical :: have_b, have_t
 
             kp = kpar_of(gd%kfrac(:, ik))
             z = cmplx(gd%energy(ie), inp%eta_ev, dp)
@@ -967,108 +1176,126 @@ contains
                 call pl_blocks_at_k(mats(m)%pl, kp, h(1:mats(m)%pl%norb, 1:mats(m)%pl%norb, :, m), &
                                     s(1:mats(m)%pl%norb, 1:mats(m)%pl%norb, :, m))
             end do
-
-            ! meios semi-infinitos
-            it_b = 0; it_t = 0; res_b = 0.0_dp; res_t = 0.0_dp
-            if (stk%bot_lead > 0) then
-                call lead_gf_impl(stk%bot_lead, SIDE_TOP, h(:, :, :, stk%bot_lead), s(:, :, :, stk%bot_lead), &
-                                  z, gbot, it_b, res_b, lerr, lmsg)
-                if (lerr == 3) then
-                    nbad = nbad + 1
-                    it_b = -it_b
-                else if (lerr /= 0) then
-                    call record_error(ip_of(ik, ie), lmsg); return
-                end if
-            end if
-            if (stk%top_lead > 0) then
-                call lead_gf_impl(stk%top_lead, SIDE_BOTTOM, h(:, :, :, stk%top_lead), s(:, :, :, stk%top_lead), &
-                                  z, gtop, it_t, res_t, lerr, lmsg)
-                if (lerr == 3) then
-                    nbad = nbad + 1
-                    it_t = -it_t
-                else if (lerr /= 0) then
-                    call record_error(ip_of(ik, ie), lmsg); return
-                end if
-            end if
-
-            ! região central
             allocate(bsize(stk%nlayer))
             do l = 1, stk%nlayer
-                bsize(l) = mats(stk%mat(l))%pl%norb
+                bsize(l) = stk%ncell(l) * mats(stk%mat(l))%pl%nbasis
             end do
-            call central_init(sys, bsize)
-            do l = 1, stk%nlayer
-                m = stk%mat(l)
-                if (l < stk%nlayer) then
-                    call coupling(m, stk%mat(l + 1), h, s, hc, sc, lerr, lmsg)
+
+            it_b = 0; it_t = 0; res_b = 0.0_dp; res_t = 0.0_dp
+            have_b = .false.; have_t = .false.
+            sh_b = 0.0_dp; sh_t = 0.0_dp
+            do isc = 1, nscan
+                ! meios semi-infinitos: decimação só quando o deslocamento do meio muda
+                if (stk%bot_lead > 0) then
+                    if (.not. have_b .or. shiftv(stk%bot_lead, isc) /= sh_b) then
+                        sh_b = shiftv(stk%bot_lead, isc)
+                        call lead_gf_impl(stk%bot_lead, sh_b, SIDE_TOP, h(:, :, :, stk%bot_lead), &
+                                          s(:, :, :, stk%bot_lead), z, gbot, it_b, res_b, lerr, lmsg)
+                        if (lerr == 3) then
+                            nbad = nbad + 1
+                            it_b = -it_b
+                        else if (lerr /= 0) then
+                            call record_error(ip_of(ik, ie), lmsg); return
+                        end if
+                        have_b = .true.
+                    end if
+                end if
+                if (stk%top_lead > 0) then
+                    if (.not. have_t .or. shiftv(stk%top_lead, isc) /= sh_t) then
+                        sh_t = shiftv(stk%top_lead, isc)
+                        call lead_gf_impl(stk%top_lead, sh_t, SIDE_BOTTOM, h(:, :, :, stk%top_lead), &
+                                          s(:, :, :, stk%top_lead), z, gtop, it_t, res_t, lerr, lmsg)
+                        if (lerr == 3) then
+                            nbad = nbad + 1
+                            it_t = -it_t
+                        else if (lerr /= 0) then
+                            call record_error(ip_of(ik, ie), lmsg); return
+                        end if
+                        have_t = .true.
+                    end if
+                end if
+
+                ! região central
+                call central_init(sys, bsize)
+                do l = 1, stk%nlayer
+                    m = stk%mat(l)
+                    if (l < stk%nlayer) then
+                        call coupling(m, stk%mat(l + 1), isc, kp, h, s, hc, sc, lerr, lmsg)
+                        if (lerr /= 0) then
+                            call record_error(ip_of(ik, ie), lmsg); return
+                        end if
+                        ! bloco parcial: primeiras células da PL seguinte (ordem ao longo de a_s)
+                        call assemble_central(sys, l, z, h(1:bsize(l), 1:bsize(l), 0, m), &
+                                              s(1:bsize(l), 1:bsize(l), 0, m), stks(isc)%v(l), &
+                                              hu=hc(1:bsize(l), 1:bsize(l + 1)), su=sc(1:bsize(l), 1:bsize(l + 1)), &
+                                              vnext=stks(isc)%v(l + 1))
+                    else
+                        call assemble_central(sys, l, z, h(1:bsize(l), 1:bsize(l), 0, m), &
+                                              s(1:bsize(l), 1:bsize(l), 0, m), stks(isc)%v(l))
+                    end if
+                end do
+                if (stk%bot_lead > 0) then
+                    call coupling(stk%bot_lead, stk%mat(1), isc, kp, h, s, hc, sc, lerr, lmsg)
                     if (lerr /= 0) then
                         call record_error(ip_of(ik, ie), lmsg); return
                     end if
-                    call assemble_central(sys, l, z, h(1:bsize(l), 1:bsize(l), 0, m), &
-                                          s(1:bsize(l), 1:bsize(l), 0, m), stk%v(l), &
-                                          hu=hc, su=sc, vnext=stk%v(l + 1))
+                    call attach_lead(sys, 'bot', z, hc(:, 1:bsize(1)), sc(:, 1:bsize(1)), stks(isc)%v(1), sh_b, gbot)
+                end if
+                if (stk%top_lead > 0) then
+                    call coupling(stk%mat(stk%nlayer), stk%top_lead, isc, kp, h, s, hc, sc, lerr, lmsg)
+                    if (lerr /= 0) then
+                        call record_error(ip_of(ik, ie), lmsg); return
+                    end if
+                    call attach_lead(sys, 'top', z, hc, sc, stks(isc)%v(stk%nlayer), sh_t, gtop)
+                end if
+
+                call rgf_solve(sys, res, lerr, lmsg)
+                if (lerr /= 0) then
+                    call record_error(ip_of(ik, ie), lmsg); return
+                end if
+
+                if (allocated(d)) deallocate(d, rd)
+                allocate(d(ntot), rd(nreg))
+                if (trim(inp%projection) == 'lowdin') then
+                    call orbital_dos_lowdin(sys, d, smin, lerr, lmsg)
+                    if (lerr /= 0) then
+                        call record_error(ip_of(ik, ie), 'Lowdin projection: ' // lmsg); return
+                    end if
                 else
-                    call assemble_central(sys, l, z, h(1:bsize(l), 1:bsize(l), 0, m), &
-                                          s(1:bsize(l), 1:bsize(l), 0, m), stk%v(l))
+                    call orbital_dos_mulliken(sys, res, d)
+                end if
+                call region_dos(d, groups, rd)
+                gall(isc)%total(ie, ik) = sum(d)
+                gall(isc)%amap(ie, ik, :) = rd
+                gall(isc)%niter(ie, ik) = merge(min(it_b, it_t), max(it_b, it_t), it_b < 0 .or. it_t < 0)
+                gall(isc)%residual(ie, ik) = max(res_b, res_t)
+                gall(isc)%min_neg_im_gii(ie, ik) = min_neg_im_gdiag(res)
+                if (ie == 1) then
+                    call central_overlap_min(sys, smin, lerr, lmsg)
+                    gall(isc)%smin(ik) = smin
+                end if
+
+                if (nq > 0) then
+                    if (allocated(w)) deallocate(w, ic, ii)
+                    allocate(w(ntot, nq), ic(nq), ii(nq))
+                    kc = gd%kcart(:, ik)
+                    do iq = 1, nq
+                        do i = 1, ntot
+                            ! gauge atômico: w' = U w, U_ii = exp(i k_par . r_i)
+                            w(i, iq) = coh_mask(i) * exp(cmplx(0.0_dp, gd%qz(iq) * depth_s(i, isc) + &
+                                                               dot_product(kc, rpos_s(:, i, isc)), dp))
+                            if (inp%escape_length_ang > 0.0_dp) &
+                                w(i, iq) = w(i, iq) * exp(-depth_s(i, isc) / (2.0_dp * inp%escape_length_ang))
+                        end do
+                    end do
+                    call coherent_map(sys, res, w, ic, ii, lerr, lmsg)
+                    if (lerr /= 0) then
+                        call record_error(ip_of(ik, ie), lmsg); return
+                    end if
+                    gall(isc)%icoh(ie, ik, :) = ic
+                    gall(isc)%iinc(ie, ik, :) = ii
                 end if
             end do
-            if (stk%bot_lead > 0) then
-                call coupling(stk%bot_lead, stk%mat(1), h, s, hc, sc, lerr, lmsg)
-                if (lerr /= 0) then
-                    call record_error(ip_of(ik, ie), lmsg); return
-                end if
-                call attach_lead(sys, 'bot', z, hc, sc, stk%v(1), mats(stk%bot_lead)%shift, gbot)
-            end if
-            if (stk%top_lead > 0) then
-                call coupling(stk%mat(stk%nlayer), stk%top_lead, h, s, hc, sc, lerr, lmsg)
-                if (lerr /= 0) then
-                    call record_error(ip_of(ik, ie), lmsg); return
-                end if
-                call attach_lead(sys, 'top', z, hc, sc, stk%v(stk%nlayer), mats(stk%top_lead)%shift, gtop)
-            end if
-
-            call rgf_solve(sys, res, lerr, lmsg)
-            if (lerr /= 0) then
-                call record_error(ip_of(ik, ie), lmsg); return
-            end if
-
-            allocate(d(ntot), rd(nreg))
-            if (trim(inp%projection) == 'lowdin') then
-                call orbital_dos_lowdin(sys, d, smin, lerr, lmsg)
-                if (lerr /= 0) then
-                    call record_error(ip_of(ik, ie), 'Lowdin projection: ' // lmsg); return
-                end if
-            else
-                call orbital_dos_mulliken(sys, res, d)
-            end if
-            call region_dos(d, groups, rd)
-            gd%total(ie, ik) = sum(d)
-            gd%amap(ie, ik, :) = rd
-            gd%niter(ie, ik) = merge(min(it_b, it_t), max(it_b, it_t), it_b < 0 .or. it_t < 0)
-            gd%residual(ie, ik) = max(res_b, res_t)
-            gd%min_neg_im_gii(ie, ik) = min_neg_im_gdiag(res)
-            if (ie == 1) then
-                call central_overlap_min(sys, smin, lerr, lmsg)
-                gd%smin(ik) = smin
-            end if
-
-            if (nq > 0) then
-                allocate(w(ntot, nq), ic(nq), ii(nq))
-                kc = gd%kcart(:, ik)
-                do iq = 1, nq
-                    do i = 1, ntot
-                        ! gauge atômico: w' = U w, U_ii = exp(i k_par . r_i)
-                        w(i, iq) = coh_mask(i) * exp(cmplx(0.0_dp, gd%qz(iq) * depth(i) + &
-                                                           dot_product(kc, rpos(:, i)), dp))
-                    end do
-                end do
-                call coherent_map(sys, res, w, ic, ii, lerr, lmsg)
-                if (lerr /= 0) then
-                    call record_error(ip_of(ik, ie), lmsg); return
-                end if
-                gd%icoh(ie, ik, :) = ic
-                gd%iinc(ie, ik, :) = ii
-            end if
         end subroutine one_point
 
         pure integer function ip_of(ik, ie)
@@ -1077,8 +1304,9 @@ contains
         end function ip_of
 
         !> Green de superfície do meio do material mm, no lado indicado.
-        subroutine lead_gf_impl(mm, side, hh, ss, z, gs, it, rr, lerr, lmsg)
+        subroutine lead_gf_impl(mm, shift, side, hh, ss, z, gs, it, rr, lerr, lmsg)
             integer, intent(in) :: mm, side
+            real(dp), intent(in) :: shift
             complex(dp), intent(in) :: hh(:, :, -1:), ss(:, :, -1:)
             complex(dp), intent(in) :: z
             complex(dp), allocatable, intent(out) :: gs(:, :)
@@ -1088,96 +1316,130 @@ contains
             complex(dp), allocatable :: k00(:, :), k01(:, :), k10(:, :)
             integer :: n
             n = mats(mm)%pl%norb
-            k00 = (z - mats(mm)%shift) * ss(1:n, 1:n, 0) - hh(1:n, 1:n, 0)
-            k01 = (z - mats(mm)%shift) * ss(1:n, 1:n, 1) - hh(1:n, 1:n, 1)
-            k10 = (z - mats(mm)%shift) * ss(1:n, 1:n, -1) - hh(1:n, 1:n, -1)
+            k00 = (z - shift) * ss(1:n, 1:n, 0) - hh(1:n, 1:n, 0)
+            k01 = (z - shift) * ss(1:n, 1:n, 1) - hh(1:n, 1:n, 1)
+            k10 = (z - shift) * ss(1:n, 1:n, -1) - hh(1:n, 1:n, -1)
             allocate(gs(n, n))
             call surface_gf(k00, k01, k10, side, inp%decim_tol, inp%decim_maxit, gs, it, rr, lerr, lmsg)
         end subroutine lead_gf_impl
 
-        subroutine fill_meta()
+        subroutine fill_meta(gx, is)
+            type(green_data_t), intent(inout) :: gx
+            integer, intent(in) :: is
             character(len=64) :: buf
-            call meta_add(gd, 'program', 'surfgreen')
-            call meta_add(gd, 'format', 'green.bin v1')
-            call meta_add(gd, 'mode', trim(inp%mode))
-            call meta_add(gd, 'side', trim(inp%side))
+            type(green_input_t) :: ins
+            ins = scan_input(inp, is, mats(1)%pl%normal)
+            call meta_add(gx, 'program', 'surfgreen')
+            call meta_add(gx, 'format', 'green.bin v1')
+            call meta_add(gx, 'mode', trim(inp%mode))
+            call meta_add(gx, 'side', trim(inp%side))
             write(buf, '(ES16.8)') inp%eta_ev
-            call meta_add(gd, 'eta_ev', adjustl(buf))
+            call meta_add(gx, 'eta_ev', adjustl(buf))
             write(buf, '(ES12.4)') inp%decim_tol
-            call meta_add(gd, 'decim_tol', adjustl(buf))
+            call meta_add(gx, 'decim_tol', adjustl(buf))
             write(buf, '(I0)') inp%decim_maxit
-            call meta_add(gd, 'decim_maxit', adjustl(buf))
-            call meta_add(gd, 'projection', trim(inp%projection))
-            call meta_add(gd, 'map_gauge', 'lattice (region DOS is gauge invariant)')
+            call meta_add(gx, 'decim_maxit', adjustl(buf))
+            call meta_add(gx, 'projection', trim(inp%projection))
+            call meta_add(gx, 'map_gauge', 'lattice (region DOS is gauge invariant)')
             if (nq > 0) then
-                call meta_add(gd, 'coherent_gauge', 'atomic: w_i = a_i exp(i q_z d_i) exp(-d_i/2L) exp(i k.r_i)')
+                call meta_add(gx, 'coherent_gauge', 'atomic: w_i = a_i exp(i q_z d_i) exp(-d_i/2L) exp(i k.r_i)')
                 write(buf, '(ES16.8)') inp%escape_length_ang
-                call meta_add(gd, 'escape_length_ang', adjustl(buf))
-                call meta_add(gd, 'coherent_region', trim(inp%coherent_region))
+                call meta_add(gx, 'escape_length_ang', adjustl(buf))
+                call meta_add(gx, 'coherent_region', trim(inp%coherent_region))
             end if
-            call meta_add(gd, 'substrate_h', trim(inp%sub_h))
-            call meta_add(gd, 'substrate_s', trim(inp%sub_s))
-            call meta_add(gd, 'substrate_structure_fingerprint', structure_fingerprint(mats(1)%st))
+            call meta_add(gx, 'substrate_h', trim(inp%sub_h))
+            call meta_add(gx, 'substrate_s', trim(inp%sub_s))
+            call meta_add(gx, 'substrate_structure_fingerprint', structure_fingerprint(mats(1)%st))
             write(buf, '(ES16.8)') inp%sub_shift_ev
-            call meta_add(gd, 'substrate_shift_ev', adjustl(buf))
+            call meta_add(gx, 'substrate_shift_ev', adjustl(buf))
             write(buf, '(I0,A,I0)') mats(1)%pl%ncell, ' x ', mats(1)%pl%nbasis
-            call meta_add(gd, 'substrate_pl', trim(buf) // ' (cells x orbitals)')
+            call meta_add(gx, 'substrate_pl', trim(buf) // ' (cells x orbitals)')
             if (nmat == 2) then
-                call meta_add(gd, 'film_h', trim(inp%film_h))
-                call meta_add(gd, 'film_s', trim(inp%film_s))
-                call meta_add(gd, 'film_structure_fingerprint', structure_fingerprint(mats(2)%st))
-                write(buf, '(ES16.8)') inp%film_shift_ev
-                call meta_add(gd, 'film_shift_ev', adjustl(buf))
+                call meta_add(gx, 'film_h', trim(inp%film_h))
+                call meta_add(gx, 'film_s', trim(inp%film_s))
+                call meta_add(gx, 'film_structure_fingerprint', structure_fingerprint(mats(2)%st))
+                write(buf, '(ES16.8)') ins%film_shift_ev
+                call meta_add(gx, 'film_shift_ev', adjustl(buf))
+                write(buf, '(3F12.6)') ins%interface_offset
+                call meta_add(gx, 'interface_offset_ang', adjustl(buf))
                 write(buf, '(I0,A,I0)') mats(2)%pl%ncell, ' x ', mats(2)%pl%nbasis
-                call meta_add(gd, 'film_pl', trim(buf) // ' (cells x orbitals)')
-                call meta_add(gd, 'contact_model', trim(inp%contact_model))
-                call meta_add(gd, 'contact_reference', trim(inp%contact_reference))
-                write(buf, '(2ES16.8)') inp%lambda_h, inp%lambda_s
-                call meta_add(gd, 'lambda_h_s', adjustl(buf))
-                if (any(inp%layer_potential_ev(1:inp%nlayers) /= 0.0_dp)) &
-                    call meta_add(gd, 'layer_potential', 'H_mn + (V_m+V_n)/2 S_mn')
+                call meta_add(gx, 'film_pl', trim(buf) // ' (cells x orbitals)')
+                write(buf, '(I0)') sum(stk%ncell, mask=stk%mat == 2)
+                call meta_add(gx, 'film_cells', adjustl(buf))
+                call meta_add(gx, 'contact_model', trim(inp%contact_model))
+                call meta_add(gx, 'contact_reference', trim(inp%contact_reference))
+                write(buf, '(2ES16.8)') ins%lambda_h, ins%lambda_s
+                call meta_add(gx, 'lambda_h_s', adjustl(buf))
+                if (contact%model == CONTACT_SK) then
+                    call meta_add(gx, 'sk_file', trim(inp%sk_file))
+                    write(buf, '(F10.4)') inp%sk_cutoff_ang
+                    call meta_add(gx, 'sk_cutoff_ang', adjustl(buf))
+                    write(buf, '(3ES14.6)') ins%sk_scale
+                    call meta_add(gx, 'sk_scale_sigma_pi_delta', adjustl(buf))
+                    if (ins%sk_beta >= 0.0_dp) then
+                        write(buf, '(ES14.6)') ins%sk_beta
+                        call meta_add(gx, 'sk_beta_override', adjustl(buf))
+                    end if
+                    write(buf, '(I0,A,I0)') pab(is)%npair, ' / ', pba(is)%npair
+                    call meta_add(gx, 'sk_pairs_ab_ba', adjustl(buf))
+                    if (pab(is)%npair > 0) then
+                        write(buf, '(F10.4)') pab(is)%dmin
+                        call meta_add(gx, 'sk_min_distance_ang', adjustl(buf))
+                    end if
+                    call meta_add(gx, 'contact_overlap', 'S_AB = 0')
+                end if
+                if (any(inp%layer_potential_ev(1:count(stk%mat == 2)) /= 0.0_dp)) &
+                    call meta_add(gx, 'layer_potential', 'H_mn + (V_m+V_n)/2 S_mn')
             end if
             write(buf, '(I0)') stk%nlayer
-            call meta_add(gd, 'central_layers', adjustl(buf))
+            call meta_add(gx, 'central_layers', adjustl(buf))
             buf = ''
             do l = 1, min(stk%nlayer, 64)
                 buf(l:l) = merge('A', 'B', stk%mat(l) == 1)
             end do
-            call meta_add(gd, 'central_stack_bottom_to_top', trim(buf))
-            call meta_add(gd, 'leads_bottom_top', merge('A', merge('B', '-', stk%bot_lead == 2), &
+            call meta_add(gx, 'central_stack_bottom_to_top', trim(buf))
+            call meta_add(gx, 'leads_bottom_top', merge('A', merge('B', '-', stk%bot_lead == 2), &
                           stk%bot_lead == 1) // ' ' // merge('A', merge('B', '-', stk%top_lead == 2), &
                           stk%top_lead == 1))
-            call meta_add(gd, 'central_structure', trim(central_file))
-            call meta_add(gd, 'central_structure_fingerprint', structure_fingerprint(stc))
+            call meta_add(gx, 'central_structure', trim(central_file))
+            call meta_add(gx, 'central_structure_fingerprint', structure_fingerprint(stc))
             if (len_trim(inp%regions_file) > 0) then
-                call meta_add(gd, 'regions_file', trim(inp%regions_file))
+                call meta_add(gx, 'regions_file', trim(inp%regions_file))
             else
-                call meta_add(gd, 'regions_file', '(default: one region per principal layer)')
+                call meta_add(gx, 'regions_file', '(default: one region per principal layer)')
             end if
-            call energy_reference_meta()
+            call energy_reference_meta(gx)
+            if (inp%nscan > 0) then
+                call meta_add(gx, 'scan_parameter', trim(inp%scan_parameter))
+                write(buf, '(ES20.12)') inp%scan_values(is)
+                call meta_add(gx, 'scan_value', adjustl(buf))
+                write(buf, '(I0,A,I0)') is, ' / ', inp%nscan
+                call meta_add(gx, 'scan_index', adjustl(buf))
+            end if
             ! (o número de threads não entra: o arquivo é idêntico bit a bit para qualquer contagem)
         end subroutine fill_meta
 
-        subroutine energy_reference_meta()
+        subroutine energy_reference_meta(gx)
+            type(green_data_t), intent(inout) :: gx
             character(len=64) :: buf
             if (mats(1)%hh%has_meta) then
                 if (mats(1)%hh%fermi_shift_applied) then
-                    call meta_add(gd, 'energy_reference', 'E-E_F')
+                    call meta_add(gx, 'energy_reference', 'E-E_F')
                 else
-                    call meta_add(gd, 'energy_reference', 'absolute')
+                    call meta_add(gx, 'energy_reference', 'absolute')
                 end if
                 write(buf, '(ES20.12)') mats(1)%hh%fermi_ev
-                call meta_add(gd, 'substrate_fermi_ev', adjustl(buf))
+                call meta_add(gx, 'substrate_fermi_ev', adjustl(buf))
             else
-                call meta_add(gd, 'energy_reference', 'unknown')
+                call meta_add(gx, 'energy_reference', 'unknown')
             end if
             if (nmat == 2) then
                 if (mats(2)%hh%has_meta) then
                     write(buf, '(ES20.12)') mats(2)%hh%fermi_ev
-                    call meta_add(gd, 'film_fermi_ev', adjustl(buf))
+                    call meta_add(gx, 'film_fermi_ev', adjustl(buf))
                     if (mats(1)%hh%has_meta .and. (mats(1)%hh%fermi_shift_applied .or. &
                         mats(2)%hh%fermi_shift_applied)) then
-                        call meta_add(gd, 'warning', 'Fermi-shifted .hsio in a heterostructure: ' // &
+                        call meta_add(gx, 'warning', 'Fermi-shifted .hsio in a heterostructure: ' // &
                                       'align with shift_ev from a junction calculation, not by equal E_F')
                     end if
                 end if
@@ -1185,5 +1447,32 @@ contains
         end subroutine energy_reference_meta
 
     end subroutine run_green
+
+    !> Entrada com o valor is de &SCAN aplicado (is = 1 sem &SCAN: a própria entrada).
+    function scan_input(inp, is, normal) result(o)
+        type(green_input_t), intent(in) :: inp
+        integer,             intent(in) :: is
+        real(dp),            intent(in) :: normal(3)   !< normal unitária do substrato (sentido de a_s)
+        type(green_input_t) :: o
+        real(dp) :: v
+        o = inp
+        if (inp%nscan < 1) return
+        v = inp%scan_values(is)
+        select case (trim(inp%scan_parameter))
+        case ('lambda_h');       o%lambda_h = v
+        case ('lambda_s');       o%lambda_s = v
+        case ('sk_scale_sigma'); o%sk_scale(1) = v
+        case ('sk_scale_pi');    o%sk_scale(2) = v
+        case ('sk_scale_delta'); o%sk_scale(3) = v
+        case ('sk_beta');        o%sk_beta = v
+        case ('film_shift_ev');  o%film_shift_ev = v
+        case ('offset_x');       o%interface_offset(1) = v
+        case ('offset_y');       o%interface_offset(2) = v
+        case ('offset_z');       o%interface_offset(3) = v
+        case ('offset_normal')
+            ! deslocamento extra ao longo da normal do substrato (afasta o filme)
+            o%interface_offset = inp%interface_offset + v * normal
+        end select
+    end function scan_input
 
 end module green_engine

@@ -72,8 +72,10 @@ contains
         logical,          intent(in) :: structure_only
         type(green_input_t) :: inp
         type(green_data_t) :: gd
+        type(green_data_t), allocatable :: gs(:)
         character(len=:), allocatable :: errmsg
-        integer :: ierr, nbad, nthr
+        integer :: ierr, nbad, nthr, is, u
+        character(len=16) :: tag
         integer(int64) :: c0, c1, crate
         character(len=:), allocatable :: out
 
@@ -85,17 +87,40 @@ contains
             print '(A,A)', '  Input file       : ', nml
             print '(A,A)', '  Mode             : ', trim(inp%mode)
             print '(A,A)', '  Projection       : ', trim(inp%projection)
+            if (inp%have_film) print '(A,A)', '  Contact          : ', trim(inp%contact_model)
+            if (inp%nscan > 0) print '(A,A,A,I0,A)', '  Scan             : ', trim(inp%scan_parameter), ' (', &
+                inp%nscan, ' values)'
             call print_box_close()
         end if
-        call run_green(inp, gd, ierr, errmsg, structure_only=structure_only, nonconverged=nbad, nthreads=nthr)
+        if (inp%nscan > 0 .and. .not. structure_only) then
+            call run_green(inp, gd, ierr, errmsg, nonconverged=nbad, nthreads=nthr, gscan=gs)
+        else
+            call run_green(inp, gd, ierr, errmsg, structure_only=structure_only, nonconverged=nbad, nthreads=nthr)
+        end if
         if (ierr /= 0) call die(errmsg)
         if (structure_only) then
             print '(A,A)', 'Central structure written: ', trim(inp%output_prefix) // '_central.nml'
             return
         end if
-        out = trim(inp%output_prefix) // '.green.bin'
-        call write_green_file(out, gd, ierr, errmsg)
-        if (ierr /= 0) call die(errmsg)
+        if (inp%nscan > 0) then
+            ! um arquivo por valor: PREFIX_sNNN.green.bin, e o índice PREFIX.scan.txt
+            open(newunit=u, file=trim(inp%output_prefix) // '.scan.txt', status='replace', action='write')
+            write(u, '(A)') '# surfgreen scan of ' // trim(inp%scan_parameter)
+            write(u, '(A)') '# index  value  file'
+            do is = 1, size(gs)
+                write(tag, '(A,I3.3)') '_s', is
+                out = trim(inp%output_prefix) // trim(tag) // '.green.bin'
+                call write_green_file(out, gs(is), ierr, errmsg)
+                if (ierr /= 0) call die(errmsg)
+                write(u, '(I5,ES20.10,2X,A)') is, inp%scan_values(is), out
+            end do
+            close(u)
+            out = trim(inp%output_prefix) // '_sNNN.green.bin (' // trim(inp%output_prefix) // '.scan.txt)'
+        else
+            out = trim(inp%output_prefix) // '.green.bin'
+            call write_green_file(out, gd, ierr, errmsg)
+            if (ierr /= 0) call die(errmsg)
+        end if
         call system_clock(c1)
         print '(A,I0,A,I0,A,I0,A)', '  Points           : ', gd%nk, ' k x ', gd%ne, ' E (', gd%nreg, ' regions)'
         print '(A,I0)',  '  OpenMP threads   : ', nthr

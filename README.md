@@ -36,7 +36,8 @@ O LowFoldIn é composto por nove programas de linha de comando e por uma bibliot
 | `spectral` | [`tools/spectral.f90`](tools/spectral.f90) | Energias e pesos de projeção por região, num caminho k ou numa grade 2D |
 | `specmap` | [`tools/specmap.f90`](tools/specmap.f90) | Mapas espectrais alargados, combinações de regiões (`top-bottom`) e mapas de energia constante |
 | `surface_dos` | [`tools/surface_dos.f90`](tools/surface_dos.f90) | Green retartada e DOS de uma superfície semi-infinita em base ortonormal |
-| `surfgreen` | [`tools/surfgreen.f90`](tools/surfgreen.f90) | Funções de Green de superfícies, filmes e junções em base não ortogonal: DOS por camada e região, mapas coerentes em `q_z` |
+| `surfgreen` | [`tools/surfgreen.f90`](tools/surfgreen.f90) | Funções de Green de superfícies, filmes e junções em base não ortogonal: DOS por camada e região, mapas coerentes em `q_z`, contato de Slater–Koster e varredura de parâmetros (`&SCAN`) |
+| `skfit` | [`tools/skfit.f90`](tools/skfit.f90) | Ajuste de parâmetros de Slater–Koster ao acoplamento entre camadas de um bulk e regra de combinação para o contato A/B do `surfgreen` ([docs/sk_contact.md](docs/sk_contact.md)) |
 
 ```text
 OpenMX .scfout ──► openmx2hsio ──► H.hsio, S.hsio (+ estrutura)
@@ -75,7 +76,10 @@ Os módulos ficam em [`src/`](src). As rotinas de biblioteca não interrompem a 
 | `zlinalg` | [`mod_zlinalg.f90`](src/mod_zlinalg.f90) | LU e soluções com vários lados direitos, `zgemm`, raiz quadrada hermitiana, com status |
 | `layer_blocks` | [`mod_layer_blocks.f90`](src/mod_layer_blocks.f90) | Blocos de camada principal `H_{m,m+p}(k∥)`, `S_{m,m+p}(k∥)`, verificação de `|n_s|` e fases do gauge atômico |
 | `central_green` | [`mod_central_green.f90`](src/mod_central_green.f90) | Região central bloco-tridiagonal, autoenergias, RGF e solução `K x = w` |
-| `interface_model` | [`mod_interface_model.f90`](src/mod_interface_model.f90) | Blocos de contato (`none`, `scaled`) e potencial `(V_m+V_n)/2 S_mn` |
+| `interface_model` | [`mod_interface_model.f90`](src/mod_interface_model.f90) | Blocos de contato (`none`, `scaled`, `sk`) e potencial `(V_m+V_n)/2 S_mn` |
+| `sk_table` | [`mod_sk_table.f90`](src/mod_sk_table.f90) | Tabela de Slater–Koster (s, p, d) na ordem de orbitais do OpenMX e bases do tipo `s3p2d2` |
+| `sk_contact` | [`mod_sk_contact.f90`](src/mod_sk_contact.f90) | Arquivo `.sk`, pares de átomos entre camadas e bloco de contato `H_AB(k∥)` |
+| `sk_fit` | [`mod_sk_fit.f90`](src/mod_sk_fit.f90) | Ajuste de Slater–Koster ao acoplamento entre camadas de um bulk, teste de bandas e regra de combinação |
 | `green_projection` | [`mod_green_projection.f90`](src/mod_green_projection.f90) | DOS de Mulliken com termos cruzados, Löwdin, mapas coerente e incoerente |
 | `green_data` | [`mod_green_data.f90`](src/mod_green_data.f90) | Formato versionado `.green.bin` |
 | `green_engine` | [`mod_green_engine.f90`](src/mod_green_engine.f90) | Entrada, empilhamento e laço sobre `(k∥, E)` do programa `surfgreen` |
@@ -98,7 +102,8 @@ Dependências dos programas:
 | `spectral` | `spectral_engine`, `spectral_data` |
 | `specmap` | `spectral_data`, `spectral_broadening`, `spectral_map` |
 | `surface_dos` | `HS_io`, `surface_green` |
-| `surfgreen` | `green_engine` → `layer_blocks`, `surface_green`, `central_green`, `interface_model`, `green_projection`, `green_data`, `atomic_regions`, `kpath` |
+| `surfgreen` | `green_engine` → `layer_blocks`, `surface_green`, `central_green`, `interface_model`, `sk_contact`, `green_projection`, `green_data`, `atomic_regions`, `kpath` |
+| `skfit` | `layer_blocks`, `sk_table`, `sk_contact`, `sk_fit` |
 
 Os testes unitários de cada módulo estão em [`test/`](test), e os contratos de interface entre as etapas estão descritos em [`docs/design/contracts.md`](docs/design/contracts.md).
 
@@ -284,6 +289,7 @@ O mapeamento de pontos k para `M` não diagonal e demais detalhes estão em [Met
 | Diretório | Conteúdo |
 |---|---|
 | [`surface_spectral`](examples/surface_spectral) | Fluxo `atomselect → spectral → specmap` num slab sintético com estados de superfície |
+| [`sk_contact`](examples/sk_contact) | Contato de Slater–Koster entre dois materiais sintéticos com camadas de tamanhos diferentes: `skfit`, combinação e varredura de `lambda_h` no `surfgreen` |
 | [`UnfoldChain1D`](examples/UnfoldChain1D) | Unfolding de uma cadeia 1D |
 | [`UnfoldChain1D_Auto`](examples/UnfoldChain1D_Auto) | Cadeia 1D com mapeamento automático de átomos |
 | [`UnfoldChain1DShearedM`](examples/UnfoldChain1DShearedM) | Matriz `M` não diagonal (supercélula cisalhada) |
@@ -301,7 +307,7 @@ A documentação completa, em português, está na [wiki do projeto](https://git
 | [Guia rápido](https://github.com/nnardoto/LowFoldIn/wiki/Guia-Rapido) | [Unfolding](https://github.com/nnardoto/LowFoldIn/wiki/Metodologia-do-Unfolding) | [Solução de problemas](https://github.com/nnardoto/LowFoldIn/wiki/Solucao-de-Problemas) |
 | [Modelos sintéticos](https://github.com/nnardoto/LowFoldIn/wiki/Modelos-Sinteticos) | [Análise espectral](https://github.com/nnardoto/LowFoldIn/wiki/Metodologia-da-Analise-Espectral) | [Desempenho e paralelismo](https://github.com/nnardoto/LowFoldIn/wiki/Desempenho-e-Paralelismo) |
 
-A referência das ferramentas de superfície, em inglês, está em [`docs/`](docs): [`atomselect`](docs/atomselect.md), [`spectral`](docs/spectral.md), [`specmap`](docs/specmap.md), [`surfgreen`](docs/surfgreen.md) e [`performance`](docs/performance.md).
+A referência das ferramentas de superfície, em inglês, está em [`docs/`](docs): [`atomselect`](docs/atomselect.md), [`spectral`](docs/spectral.md), [`specmap`](docs/specmap.md), [`surfgreen`](docs/surfgreen.md), [`sk_contact`](docs/sk_contact.md) e [`performance`](docs/performance.md).
 
 ## Referência
 

@@ -8,8 +8,10 @@ layer/region-resolved spectral functions `A_r(k_par, E)` and coherent
 
 It implements phases 0–3 of the LowFoldIn-Green plan (v4, Nov. 2026):
 PL blocks, semi-infinite decimation, central region (RGF), projections,
-contact models `none` and `scaled`. The `extracted` contact (blocks taken
-from a junction DFT, phase 4) is not implemented yet.
+contact models `none` and `scaled`, plus the hand-made Slater–Koster contact
+`sk` and parameter scans (`&SCAN`), described in [sk_contact.md](sk_contact.md).
+The `extracted` contact (blocks taken from a junction DFT, phase 4) is not
+implemented yet.
 
 ```text
 OpenMX .scfout ─ openmx2hsio --no-fermi-shift --write-structure ─> A_H/S.hsio, A.nml, B_H/S.hsio, B.nml
@@ -133,6 +135,7 @@ between A and B it is the contact block:
 |---|---|
 | `none` | 0 (decoupled) |
 | `scaled` | `λ_H H_{m,m+1}`, `λ_S S_{m,m+1}` of the `reference` material (`'substrate'` or `'film'`); PL sizes must match |
+| `sk` | Slater–Koster two-centre coupling between the atoms facing each other, from a `.sk` file, `S_AB = 0`; any PL sizes ([sk_contact.md](sk_contact.md)) |
 | `extracted` | phase 4 — not implemented |
 
 The film structure must be strained to the substrate's in-plane lattice
@@ -171,9 +174,16 @@ substrate's reciprocal lattice.
     interface_offset = 0.0, 0.0, 0.0     ! Å, geometry only (regions, depths)
 /
 &INTERFACE
-    model = 'scaled'           ! 'none' | 'scaled' | 'extracted' (phase 4)
+    model = 'scaled'           ! 'none' | 'scaled' | 'sk' | 'extracted' (phase 4)
     reference = 'substrate'
     lambda_h = 1.0, lambda_s = 1.0
+    ! model = 'sk' (see sk_contact.md):
+    ! sk_file = 'contact.sk', sk_cutoff_ang = 6.0, sk_basis = 'Te s3p2d2', 'Sb s3p2d2'
+    ! sk_scale_sigma = 1.0, sk_scale_pi = 1.0, sk_scale_delta = 1.0, sk_beta = -1.0
+/
+&SCAN                          ! optional: one output per value (see sk_contact.md)
+    parameter = 'lambda_h'     ! lambda_h lambda_s sk_scale_* sk_beta film_shift_ev offset_x/y/z offset_normal
+    values = 0.0, 0.5, 1.0     ! or n = 11, vmin = 0.0, vmax = 2.0
 /
 &COHERENT                      ! optional
     nqz = 21, qz_min = 0.0, qz_max = 2.0   ! 1/Å
@@ -208,6 +218,10 @@ slab calculation, core levels, …). `openmx2hsio` now stores the absolute
 copies them to the output metadata (`energy_reference`,
 `substrate_fermi_ev`, `film_fermi_ev`) and warns when a Fermi-shifted file is
 used in a heterostructure.
+
+With `&SCAN` the output is `PREFIX_s001.green.bin … PREFIX_sNNN.green.bin` plus
+the index `PREFIX.scan.txt`; the substrate decimation is done once per `(k, E)`
+and reused for every value.
 
 ## Output: `.green.bin` (v1)
 

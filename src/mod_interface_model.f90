@@ -10,6 +10,9 @@
 !>                  bloco entre PLs vizinhas (H_{m,m+1}) de um material de
 !>                  referência ('substrate' ou 'film'); exige que as dimensões
 !>                  das PLs sejam compatíveis;
+!>   - 'sk':        acoplamento de Slater–Koster posto à mão entre os átomos
+!>                  vizinhos dos dois lados (módulo sk_contact), S_AB = 0;
+!>                  montado em green_engine a partir da geometria;
 !>   - 'extracted': blocos lidos de um DFT da junção (fase 4, ainda não
 !>                  implementado; devolve erro).
 !>
@@ -24,7 +27,7 @@ module interface_model
 
     public :: contact_t, contact_validate, build_contact, apply_potential
 
-    integer, parameter, public :: CONTACT_NONE = 0, CONTACT_SCALED = 1, CONTACT_EXTRACTED = 2
+    integer, parameter, public :: CONTACT_NONE = 0, CONTACT_SCALED = 1, CONTACT_EXTRACTED = 2, CONTACT_SK = 3
     integer, parameter, public :: REF_SUBSTRATE = 1, REF_FILM = 2
 
     type :: contact_t
@@ -50,14 +53,16 @@ contains
             c%model = CONTACT_NONE
         case ('scaled')
             c%model = CONTACT_SCALED
+        case ('sk')
+            c%model = CONTACT_SK
         case ('extracted')
             c%model = CONTACT_EXTRACTED
             ierr = 2
             errmsg = "interface model 'extracted' (blocks from a junction DFT) is phase 4 " // &
-                     "and is not implemented yet; use 'none' or 'scaled'"
+                     "and is not implemented yet; use 'none', 'scaled' or 'sk'"
             return
         case default
-            ierr = 1; errmsg = "&INTERFACE model must be 'none', 'scaled' or 'extracted'"; return
+            ierr = 1; errmsg = "&INTERFACE model must be 'none', 'scaled', 'sk' or 'extracted'"; return
         end select
         select case (trim(adjustl(reference)))
         case ('substrate')

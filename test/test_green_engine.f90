@@ -18,7 +18,7 @@ program test_green_engine
     use structure_io, only: structure_t
     use green_engine, only: green_input_t, read_green_input, run_green
     use green_data, only: green_data_t, write_green_file, read_green_file, meta_get
-    use green_models, only: make_model, make_structure
+    use green_models, only: make_model, make_structure, slab_eigen
     use testing, only: check, check_close, test_summary
     implicit none
 
@@ -158,10 +158,113 @@ program test_green_engine
     call run('tge_err3.nml', g1)
     call check(ierr /= 0 .and. index(errmsg, 'strained') > 0, 'in-plane lattice mismatch is an error')
 
+    ! --- 7. filme com número de células que não é múltiplo da PL (&FILM ncells) ---
+    call odd_film_tests()
+
     call cleanup()
     call test_summary('test_green_engine')
 
 contains
+
+    !> Filme D com segundo vizinho ao longo de a_3 (PL = 2 células) sobre A:
+    !>  - ncells = 4 é idêntico a nlayers = 2;
+    !>  - ncells = 3 com contato 'none': a DOS do filme em Γ é a soma de
+    !>    lorentzianas nos autovalores do slab finito de 3 células, montado
+    !>    diretamente de H(R), S(R);
+    !>  - ncells fora do modo film / side top é rejeitado.
+    subroutine odd_film_tests()
+        type(HSDataFormat) :: dh, ds
+        type(structure_t) :: dst
+        type(green_data_t) :: ga, gb
+        complex(dp), allocatable :: hsl(:, :), ssl(:, :), c(:, :)
+        real(dp), allocatable :: ev(:)
+        real(dp) :: dev, ref, e, eta
+        integer :: nb, ir, a, b, ie, ig, j
+        call make_model([1, 1], [1, 1, 2], 0.25_dp, 0.02_dp, .true., 404, dh, ds)
+        call dh%WriteFile('tge_D_H.hsio')
+        call ds%WriteFile('tge_D_S.hsio')
+        call make_structure(lat, 2, 'Dd', 12, dst)
+        call write_structure('tge_D.nml', dst)
+        call write_odd('tge_odd_pl.nml', 'nlayers = 2', 'none')
+        call run('tge_odd_pl.nml', ga)
+        call check(ierr == 0, 'film nlayers = 2 with P = 2: ' // errmsg)
+        call write_odd('tge_odd_c4.nml', 'ncells = 4', 'none')
+        call run('tge_odd_c4.nml', gb)
+        call check(ierr == 0, 'film ncells = 4: ' // errmsg)
+        if (ierr == 0) then
+            call check(all(gb%total == ga%total) .and. all(gb%amap == ga%amap), 'ncells = 4 == nlayers = 2 (P = 2)')
+            call check(meta_get(gb, 'film_cells') == '4', 'film_cells metadata')
+        end if
+        call write_odd('tge_odd_c3.nml', 'ncells = 3', 'none')
+        call run('tge_odd_c3.nml', gb)
+        call check(ierr == 0, 'film ncells = 3: ' // errmsg)
+        if (ierr == 0) then
+            call check(gb%nreg == 3 .and. meta_get(gb, 'film_cells') == '3', 'ncells = 3: one full PL + one partial block')
+            ! slab finito de 3 células em Γ
+            nb = dh%NOrbs
+            allocate(hsl(3 * nb, 3 * nb), ssl(3 * nb, 3 * nb), c(3 * nb, 3 * nb), ev(3 * nb))
+            hsl = (0.0_dp, 0.0_dp); ssl = (0.0_dp, 0.0_dp)
+            do ir = 1, dh%Neighbors
+                do a = 0, 2
+                    b = a + dh%IndexList(3, ir)
+                    if (b < 0 .or. b > 2) cycle
+                    hsl(a * nb + 1:(a + 1) * nb, b * nb + 1:(b + 1) * nb) = &
+                        hsl(a * nb + 1:(a + 1) * nb, b * nb + 1:(b + 1) * nb) + dh%Data(:, :, ir)
+                    ssl(a * nb + 1:(a + 1) * nb, b * nb + 1:(b + 1) * nb) = &
+                        ssl(a * nb + 1:(a + 1) * nb, b * nb + 1:(b + 1) * nb) + ds%Data(:, :, ir)
+                end do
+            end do
+            call slab_eigen(hsl, ssl, ev, c)
+            ig = minloc(norm2(gb%kcart, dim=1), 1)
+            eta = 0.05_dp
+            dev = 0.0_dp
+            do ie = 1, gb%ne
+                e = gb%energy(ie)
+                ref = 0.0_dp
+                do j = 1, 3 * nb
+                    ref = ref + (eta / 3.1415926535897932384626433832795_dp) / ((e - ev(j))**2 + eta**2)
+                end do
+                dev = max(dev, abs(gb%amap(ie, ig, 2) + gb%amap(ie, ig, 3) - ref) / ref)
+            end do
+            call check_close(dev, 0.0_dp, 1.0e-9_dp, 'ncells = 3, decoupled: film DOS = 3-cell slab eigenvalues')
+        end if
+        call write_odd('tge_odd_bad.nml', 'ncells = 3', 'none', mode='junction')
+        call run('tge_odd_bad.nml', gb)
+        call check(ierr /= 0 .and. index(errmsg, 'ncells') > 0, "ncells outside mode 'film' is rejected")
+    end subroutine odd_film_tests
+
+    subroutine write_odd(fname, thick, model, mode)
+        character(len=*), intent(in) :: fname, thick, model
+        character(len=*), intent(in), optional :: mode
+        integer :: u
+        character(len=16) :: md
+        md = 'film'
+        if (present(mode)) md = mode
+        open(newunit=u, file=fname, status='replace', action='write')
+        write(u, '(A)') '&GREEN'
+        write(u, '(A,A,A)') "  mode = '", trim(md), "', eta_ev = 0.05, emin = -1.2, emax = 1.2, ne = 9"
+        write(u, '(A,A,A)') "  decim_tol = 1e-12, decim_maxit = 300, output_prefix = '", fname(1:len(fname) - 4), "'"
+        write(u, '(A)') '/'
+        write(u, '(A)') '&SUBSTRATE'
+        write(u, '(A)') "  h_file = 'tge_A_H.hsio', s_file = 'tge_A_S.hsio', structure_file = 'tge_A.nml'"
+        write(u, '(A)') "  stacking_axis = 3, central_layers = 1, side = 'top'"
+        write(u, '(A)') '/'
+        write(u, '(A)') '&FILM'
+        write(u, '(A)') "  h_file = 'tge_D_H.hsio', s_file = 'tge_D_S.hsio', structure_file = 'tge_D.nml'"
+        write(u, '(A,A)') '  ', thick
+        write(u, '(A)') '/'
+        write(u, '(A)') '&INTERFACE'
+        write(u, '(A,A,A)') "  model = '", model, "'"
+        write(u, '(A)') '/'
+        write(u, '(A)') '&KPATH'
+        write(u, '(A)') '  nvertex = 2'
+        write(u, '(A)') '  vertex(:,1) = 0.0, 0.0, 0.0'
+        write(u, '(A)') '  vertex(:,2) = 0.2, 0.0, 0.0'
+        write(u, '(A)') "  label = 'G', 'X'"
+        write(u, '(A)') '  npoints = 2'
+        write(u, '(A)') '/'
+        close(u)
+    end subroutine write_odd
 
     subroutine run(nml, gd)
         character(len=*), intent(in) :: nml

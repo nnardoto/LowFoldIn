@@ -39,3 +39,15 @@ examples/surfgreen_model/*.cemap.dat
 examples/surfgreen_model/*.cegrid.gp
 examples/surfgreen_model/*.png
 examples/surfgreen_model/*.pdf
+
+# examples/sk_contact: generated outputs (only inputs, generator and script are committed)
+examples/sk_contact/*.hsio
+examples/sk_contact/A.nml
+examples/sk_contact/B.nml
+examples/sk_contact/*.sk
+examples/sk_contact/*_central.nml
+examples/sk_contact/*.scan.txt
+examples/sk_contact/*.map.dat
+examples/sk_contact/*.kticks.gp
+examples/sk_contact/*.png
+examples/sk_contact/*.pdf

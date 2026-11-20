@@ -75,6 +75,11 @@ name       = "surfgreen"
 source-dir = "tools"
 main       = "surfgreen.f90"
 
+[[executable]]
+name       = "skfit"
+source-dir = "tools"
+main       = "skfit.f90"
+
 # ==============================================================================
 # FEATURES DE COMPILAÇÃO — fpm 0.13+
 #
@@ -328,3 +333,18 @@ main       = "gen_model.f90"
 name       = "surfgreen_model"
 source-dir = "examples/surfgreen_model"
 main       = "gen_model.f90"
+
+[[test]]
+name       = "test_sk_table"
+source-dir = "test"
+main       = "test_sk_table.f90"
+
+[[test]]
+name       = "test_sk_contact"
+source-dir = "test"
+main       = "test_sk_contact.f90"
+
+[[example]]
+name       = "sk_materials"
+source-dir = "examples/sk_contact"
+main       = "gen_materials.f90"
