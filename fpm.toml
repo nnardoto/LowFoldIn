@@ -1,0 +1,410 @@
+name        = "LowFoldIn"
+version     = "0.1.0"
+author      = "Nathanael Nardoto Batista"
+description = "LCAO band unfolding and OpenMX data conversion tools"
+license     = "GPL-3.0-or-later"
+
+# Requisitos recomendados:
+# - fpm >= 0.13
+# - GCC/GFortran >= 14
+# - BLAS e LAPACK
+#
+# O fpm ainda não valida diretamente uma versão mínima do compilador.
+
+# ==============================================================================
+# CONFIGURAÇÃO GERAL
+# ==============================================================================
+
+[build]
+auto-executables = false
+auto-tests       = false
+auto-examples    = false
+link = ["lapack", "blas"]
+
+[fortran]
+implicit-typing   = false
+implicit-external = false
+source-form       = "free"
+
+# ==============================================================================
+# EXECUTÁVEIS
+# ==============================================================================
+
+[[executable]]
+name       = "LowFoldIn"
+source-dir = "app"
+main       = "main.f90"
+
+[[executable]]
+name       = "openmx2hsio"
+source-dir = "tools"
+main       = "openmx2hsio.f90"
+
+[[executable]]
+name       = "wannier902hsio"
+source-dir = "tools"
+main       = "wannier902hsio.f90"
+
+[[executable]]
+name       = "unfold"
+source-dir = "tools"
+main       = "unfold.f90"
+
+[[executable]]
+name       = "atomselect"
+source-dir = "tools"
+main       = "atomselect.f90"
+
+[[executable]]
+name       = "specmap"
+source-dir = "tools"
+main       = "specmap.f90"
+
+[[executable]]
+name       = "spectral"
+source-dir = "tools"
+main       = "spectral.f90"
+
+[[executable]]
+name       = "surface_dos"
+source-dir = "tools"
+main       = "surface_dos.f90"
+
+[[executable]]
+name       = "surfgreen"
+source-dir = "tools"
+main       = "surfgreen.f90"
+
+[[executable]]
+name       = "skfit"
+source-dir = "tools"
+main       = "skfit.f90"
+
+[[executable]]
+name       = "skgen"
+source-dir = "tools"
+main       = "skgen.f90"
+
+[[executable]]
+name       = "sktrench"
+source-dir = "tools"
+main       = "sktrench.f90"
+
+[[executable]]
+name       = "hsiocell"
+source-dir = "tools"
+main       = "hsiocell.f90"
+
+[[executable]]
+name       = "rhomap"
+source-dir = "tools"
+main       = "rhomap.f90"
+
+[[executable]]
+name       = "hscontract"
+source-dir = "tools"
+main       = "hscontract.f90"
+
+# ==============================================================================
+# FEATURES DE COMPILAÇÃO — fpm 0.13+
+#
+# As flags ficam deliberadamente em uma única linha. Strings TOML multilinhas
+# preservam quebras de linha e podem fazer o shell interpretar cada flag como
+# um comando separado.
+#
+# Estas configurações são destinadas ao GNU Fortran.
+# ==============================================================================
+
+[features]
+
+# Linguagem e paralelização
+standard.gfortran.flags = "-std=f2023"
+openmp.gfortran.flags   = "-fopenmp"
+openmp.gfortran.link-time-flags = "-fopenmp"
+
+# Diagnósticos
+warnings.gfortran.flags = "-Wall -Wextra -Wpedantic -Wconversion-extra -Wimplicit-interface -Wsurprising"
+strict-warnings.gfortran.flags = "-Warray-temporaries -Wcharacter-truncation -Wdo-subscript -Wrealloc-lhs-all -Wuse-without-only"
+
+# Níveis de otimização
+optimization-0.gfortran.flags = "-O0"
+optimization-1.gfortran.flags = "-O1"
+optimization-2.gfortran.flags = "-O2"
+optimization-3.gfortran.flags = "-O3"
+
+# Depuração
+debug-symbols.gfortran.flags = "-g3 -fbacktrace -fno-omit-frame-pointer"
+runtime-checks.gfortran.flags = "-fcheck=all"
+floating-point-traps.gfortran.flags = "-ffpe-trap=invalid,zero,overflow"
+debug-initialization.gfortran.flags = "-finit-real=snan -finit-integer=-999999"
+
+# Sanitizadores
+sanitizers.gfortran.flags = "-fsanitize=address,undefined"
+sanitizers.gfortran.link-time-flags = "-fsanitize=address,undefined"
+
+# CPUs e portabilidade
+portable-x86-64.gfortran.flags = "-march=x86-64-v3 -mtune=generic"
+native-cpu.gfortran.flags = "-march=native -mtune=native"
+ryzen-7950x.gfortran.flags = "-march=znver4 -mtune=znver4"
+
+# Otimizações opcionais
+link-time-optimization.gfortran.flags = "-flto"
+link-time-optimization.gfortran.link-time-flags = "-flto"
+loop-unrolling.gfortran.flags = "-funroll-loops"
+fast-math.gfortran.flags = "-ffast-math"
+
+# ==============================================================================
+# PERFIS
+# ==============================================================================
+
+[profiles]
+
+# Depuração completa e conservadora
+# fpm build --profile debug --compiler gfortran-14
+debug = [
+    "standard",
+    "openmp",
+    "warnings",
+    "strict-warnings",
+    "optimization-0",
+    "debug-symbols",
+    "runtime-checks",
+    "floating-point-traps",
+    "debug-initialization",
+]
+
+# Depuração com AddressSanitizer e UndefinedBehaviorSanitizer
+# fpm build --profile debug-sanitize --compiler gfortran-14
+debug-sanitize = [
+    "standard",
+    "openmp",
+    "warnings",
+    "strict-warnings",
+    "optimization-0",
+    "debug-symbols",
+    "runtime-checks",
+    "floating-point-traps",
+    "debug-initialization",
+    "sanitizers",
+]
+
+# Desenvolvimento com otimização leve
+# fpm build --profile development --compiler gfortran-14
+development = [
+    "standard",
+    "openmp",
+    "warnings",
+    "optimization-1",
+    "debug-symbols",
+]
+
+# Otimização equilibrada
+# fpm build --profile balanced --compiler gfortran-14
+balanced = [
+    "standard",
+    "openmp",
+    "warnings",
+    "optimization-2",
+]
+
+# Produção portátil, sem alvo específico de CPU
+# fpm build --profile release --compiler gfortran-14
+release = [
+    "standard",
+    "openmp",
+    "warnings",
+    "optimization-3",
+]
+
+# Produção para CPUs compatíveis com x86-64-v3
+# fpm build --profile portable --compiler gfortran-14
+portable = [
+    "standard",
+    "openmp",
+    "warnings",
+    "optimization-3",
+    "portable-x86-64",
+]
+
+# Produção para a CPU usada durante a compilação
+# fpm build --profile native --compiler gfortran-14
+native = [
+    "standard",
+    "openmp",
+    "warnings",
+    "optimization-3",
+    "native-cpu",
+]
+
+# AMD Ryzen 9 7950X / Zen 4, preservando semântica numérica conservadora
+# fpm build --profile ryzen7950x --compiler gfortran-14
+ryzen7950x = [
+    "standard",
+    "openmp",
+    "warnings",
+    "optimization-3",
+    "ryzen-7950x",
+    "link-time-optimization",
+]
+
+# AMD Ryzen 9 7950X / Zen 4, modo agressivo
+# Pode alterar resultados de ponto flutuante e deve ser validado numericamente.
+# fpm build --profile ryzen7950x-fast --compiler gfortran-14
+ryzen7950x-fast = [
+    "standard",
+    "openmp",
+    "warnings",
+    "optimization-3",
+    "ryzen-7950x",
+    "link-time-optimization",
+    "loop-unrolling",
+    "fast-math",
+]
+
+# ==============================================================================
+# TESTES (fpm test)
+# ==============================================================================
+
+[[test]]
+name       = "test_hs_io"
+source-dir = "test"
+main       = "test_hs_io.f90"
+
+[[test]]
+name       = "test_unfold_core"
+source-dir = "test"
+main       = "test_unfold_core.f90"
+
+[[test]]
+name       = "test_unfold_nonsym"
+source-dir = "test"
+main       = "test_unfold_nonsym.f90"
+
+[[test]]
+name       = "test_structure_io"
+source-dir = "test"
+main       = "test_structure_io.f90"
+
+[[test]]
+name       = "test_scfout_io"
+source-dir = "test"
+main       = "test_scfout_io.f90"
+
+[[test]]
+name       = "test_regions"
+source-dir = "test"
+main       = "test_regions.f90"
+
+[[test]]
+name       = "test_selection_geom"
+source-dir = "test"
+main       = "test_selection_geom.f90"
+
+[[test]]
+name       = "test_spectral_data"
+source-dir = "test"
+main       = "test_spectral_data.f90"
+
+[[test]]
+name       = "test_projection"
+source-dir = "test"
+main       = "test_projection.f90"
+
+[[test]]
+name       = "test_kpath"
+source-dir = "test"
+main       = "test_kpath.f90"
+
+[[test]]
+name       = "test_spectral_engine"
+source-dir = "test"
+main       = "test_spectral_engine.f90"
+
+[[test]]
+name       = "test_specmap"
+source-dir = "test"
+main       = "test_specmap.f90"
+
+[[test]]
+name       = "test_layer_blocks"
+source-dir = "test"
+main       = "test_layer_blocks.f90"
+
+[[test]]
+name       = "test_surface_gf"
+source-dir = "test"
+main       = "test_surface_gf.f90"
+
+[[test]]
+name       = "test_central_green"
+source-dir = "test"
+main       = "test_central_green.f90"
+
+[[test]]
+name       = "test_green_engine"
+source-dir = "test"
+main       = "test_green_engine.f90"
+
+[[test]]
+name       = "test_arpes_conversion"
+source-dir = "test"
+main       = "test_arpes_conversion.f90"
+
+# ==============================================================================
+# EXEMPLOS (fpm run --example)
+# ==============================================================================
+
+[[example]]
+name       = "surface_model"
+source-dir = "examples/surface_spectral"
+main       = "gen_model.f90"
+
+[[example]]
+name       = "surfgreen_model"
+source-dir = "examples/surfgreen_model"
+main       = "gen_model.f90"
+
+[[test]]
+name       = "test_sk_table"
+source-dir = "test"
+main       = "test_sk_table.f90"
+
+[[test]]
+name       = "test_sk_contact"
+source-dir = "test"
+main       = "test_sk_contact.f90"
+
+[[test]]
+name       = "test_basis_contract"
+source-dir = "test"
+main       = "test_basis_contract.f90"
+
+[[example]]
+name       = "sk_materials"
+source-dir = "examples/sk_contact"
+main       = "gen_materials.f90"
+
+[[test]]
+name       = "test_extracted_green"
+source-dir = "test"
+main       = "test_extracted_green.f90"
+
+[[test]]
+name       = "test_sk_model"
+source-dir = "test"
+main       = "test_sk_model.f90"
+
+[[test]]
+name       = "test_hs_supercell"
+source-dir = "test"
+main       = "test_hs_supercell.f90"
+
+[[test]]
+name       = "test_density_grid"
+source-dir = "test"
+main       = "test_density_grid.f90"
+
+[[test]]
+name       = "test_scc"
+source-dir = "test"
+main       = "test_scc.f90"

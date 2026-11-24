@@ -1,0 +1,4 @@
+&RHOMAP source = 'pairs', pairs_file = 'occ_scc.rho_pairs.dat', pairs_window = 'occ', spin_factor = 2.0, output_prefix = 'tr_occ' /
+&SPECIES nspec = 1, label = 'Te', pao_file = '/home/wendel/work/nathanael/lowfoldin-builds/a8/test/data/pao/Te7.0.pao', basis = 's3p3d2f1', rcut_bohr = 7.0 /
+&GRID mode = 'integrate', units = 'ang', origin = -9.546673, 22.010838, 0.0, du = 0.05, 0.0, 0.0, dv = 0.0, 0.05, 0.0,
+  dw = 0.0, 0.0, 0.0988932915, nu = 701, nv = 301, nw = 60 /

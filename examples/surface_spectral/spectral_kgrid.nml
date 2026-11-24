@@ -1,0 +1,20 @@
+! spectral input for constant-energy (kx x ky) maps of the SYNTHETIC model slab
+! (NOT DFT). Same model as spectral.nml, but on a 2D k-grid covering the first
+! Brillouin zone of the square surface lattice (Gamma at the centre).
+&SPECTRAL
+    h_file           = 'model_H.hsio'
+    s_file           = 'model_S.hsio'
+    structure_file   = 'model.nml'
+    regions_file     = 'regions.nml'
+    spin_mode        = 'none'
+    method           = 'mulliken'
+    energy_reference = 'fermi'
+    output_prefix    = 'model_kgrid'
+/
+&KGRID
+    origin = -0.5, -0.5, 0.0
+    span1  =  1.0,  0.0, 0.0
+    span2  =  0.0,  1.0, 0.0
+    n1     = 81
+    n2     = 81
+/

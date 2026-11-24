@@ -1,0 +1,48 @@
+! ----------------------------------------------------------------------------
+! Reproducao do exemplo da Fig. 1 do proprio artigo (Quan, Rybin, Scheffler,
+! Carbogno, PRB 113, 085112 (2026)): PC cubica de H (a = 1.5 Angstrom, 1
+! atomo, 1 orbital) tiled numa SC "rodada" de 8 atomos via
+!
+!   M = [[2, 2, 0], [2, -2, 0], [0, 0, 1]]     (Eq. 9 do artigo, det = -8)
+!
+! Como M e' SIMETRICA aqui, nao ha' ambiguidade linha/coluna na convencao
+! (M = M^T) -- este e' o motivo de ser um bom primeiro teste com dados
+! DFT de verdade para o motor de M nao-diagonal, antes de ir para casos
+! genuinamente assimetricos.
+!
+! Gere os .hsio a partir de pc_H.dat/sc_H.dat (pasta openmx/) via OpenMX +
+! openmx2hsio, e aponte HDataFile/SDataFile abaixo para os arquivos gerados
+! (por padrao, o proprio nome do System.Name + sufixo _H.hsio/_S.hsio, ver
+! tools/openmx2hsio.f90).
+!
+! Como e' uma SC perfeita (8 replicas identicas da PC), os pesos devem sair
+! EXATAMENTE 0 ou 1 (regra de soma sum_N W = p = 1), e a banda recuperada
+! deve coincidir com a banda da PC calculada separadamente a partir de
+! pc_H.dat (compare com LowFoldIn no modo "bands" de pc_H.hsio).
+!
+! Rode com:
+!   fpm run unfold -- examples/UnfoldGaNPaperH/unfold.nml
+! ----------------------------------------------------------------------------
+&UNFOLD
+    ProjectName = "GaNPaperH"
+    HDataFile   = "examples/UnfoldGaNPaperH/openmx/sc_H_H.hsio"
+    SDataFile   = "examples/UnfoldGaNPaperH/openmx/sc_H_S.hsio"
+    OutputDir   = "./"
+    M(1,:)      =  2,  2, 0
+    M(2,:)      =  2, -2, 0
+    M(3,:)      =  0,  0, 1
+    Broadening  = 0.5
+    Emin        = -10.0
+    Emax        =  80.0
+    nE          =  300
+    WriteSpectralFunction = .true.
+
+    PCStructureFile = "examples/UnfoldGaNPaperH/UnityCell.nml"
+    SCStructureFile = "examples/UnfoldGaNPaperH/SuperCell.nml"
+/
+
+&PCPATH
+2
+ 0.000000   0.000000   0.000000   41   ! Gamma
+ 0.500000   0.000000   0.000000   41   ! X
+/

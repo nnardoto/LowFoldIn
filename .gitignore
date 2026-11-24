@@ -1,0 +1,57 @@
+# Ignore build files
+./build
+*.o
+*.mod
+*.bin
+
+# Project archives
+*.zip
+
+# fpm build tree
+build/
+
+# Claude Code agent worktrees
+.claude/worktrees/
+
+# examples/surface_spectral: generated outputs (only inputs, scripts, README
+# and the reference regions.nml are committed)
+examples/surface_spectral/*.hsio
+examples/pdsb2_surface_dos/*.hsio
+examples/pdsb2_surface_dos/*.dat
+examples/surface_spectral/model.nml
+examples/surface_spectral/*.spectral.bin
+examples/surface_spectral/*.spectral.txt
+examples/surface_spectral/*.map.dat
+examples/surface_spectral/*.kticks.gp
+examples/surface_spectral/*.cemap.dat
+examples/surface_spectral/*.cegrid.gp
+examples/surface_spectral/*.png
+examples/surface_spectral/*.pdf
+
+# examples/surfgreen_model: generated outputs (only inputs, generator and script are committed)
+examples/surfgreen_model/*.hsio
+examples/surfgreen_model/*_struct.nml
+examples/surfgreen_model/*_central.nml
+examples/surfgreen_model/regions.nml
+examples/surfgreen_model/*.map.dat
+examples/surfgreen_model/*.kticks.gp
+examples/surfgreen_model/*.cemap.dat
+examples/surfgreen_model/*.cegrid.gp
+examples/surfgreen_model/*.png
+examples/surfgreen_model/*.pdf
+
+# examples/sk_contact: generated outputs (only inputs, generator and script are committed)
+examples/sk_contact/*.hsio
+examples/sk_contact/A.nml
+examples/sk_contact/B.nml
+examples/sk_contact/*.sk
+examples/sk_contact/*_central.nml
+examples/sk_contact/*.scan.txt
+examples/sk_contact/*.map.dat
+examples/sk_contact/*.kticks.gp
+examples/sk_contact/*.png
+examples/sk_contact/*.pdf
+
+# Python
+__pycache__/
+*.pyc

@@ -1,0 +1,15 @@
+&STRUCTURE
+    LatticeVectors(1,:) = 1.0,0.0,0.0
+    LatticeVectors(2,:) = 0.0,10.0,0.0
+    LatticeVectors(3,:) = 0.0,0.0,10.0
+/
+
+&SPECIES
+1
+A   1
+/
+
+&ATOMS
+1
+A   0.0  0.0  0.0
+/

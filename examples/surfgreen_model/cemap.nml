@@ -1,0 +1,29 @@
+! Constant-energy map and coherent q_z scan of the film system at E = -0.5 eV.
+&GREEN
+    mode = 'film'
+    eta_ev = 0.02
+    emin = -0.5, ne = 1
+    output_prefix = 'film_cemap'
+    regions_file = 'regions.nml'
+/
+&SUBSTRATE
+    h_file = 'sub_H.hsio', s_file = 'sub_S.hsio', structure_file = 'sub_struct.nml'
+    stacking_axis = 3, side = 'top', central_layers = 1
+/
+&FILM
+    h_file = 'film_H.hsio', s_file = 'film_S.hsio', structure_file = 'film_struct.nml'
+    nlayers = 4
+    shift_ev = -0.15
+/
+&INTERFACE
+    model = 'scaled', reference = 'substrate', lambda_h = 0.6, lambda_s = 0.6
+/
+&COHERENT
+    nqz = 3, qz_min = 0.0, qz_max = 2.0, escape_length_ang = 6.0, region = 'film_top'
+/
+&KGRID
+    origin = -0.5, -0.5, 0.0
+    span1 = 1.0, 0.0, 0.0
+    span2 = 0.0, 1.0, 0.0
+    n1 = 41, n2 = 41
+/

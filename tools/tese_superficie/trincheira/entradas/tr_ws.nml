@@ -1,0 +1,8 @@
+&GREEN mode = 'extracted', eta_ev = 0.01, emin = -1.0, emax = 1.0, ne = 201, output_prefix = 'tr', allow_no_fingerprint = .true. /
+&EXTRACTED
+  h_file = '../hs/TeFilm_x11_L8_tr_H.hsio', s_file = '../hs/TeFilm_x11_L8_tr_S.hsio', structure_file = '../hs/TeFilm_x11_L8_tr.structure.nml'
+  embed_axis = 2, vacuum_axes = 2, central_columns = 4, 7
+  left = 'lead', right = 'vacuum', delta_mode = 'given', delta_ev = 0.0, energy_origin = 'lead_fermi', region_mode = 'atoms'
+/
+&LEAD h_file = '../hs/TeBulk_x11_H.hsio', s_file = '../hs/TeBulk_x11_S.hsio', structure_file = '../hs/TeBulk_x11.structure.nml' /
+&KPATH nvertex = 2, vertex(:,1) = 0.0,0.0,0.0, vertex(:,2) = 0.0,0.0,0.5, label = 'G','Z', npoints = 20 /

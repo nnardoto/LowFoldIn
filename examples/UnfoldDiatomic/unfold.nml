@@ -1,0 +1,41 @@
+! ----------------------------------------------------------------------------
+! Exemplo com atomos de MAIS DE UM ORBITAL: cadeia 1D DIATOMICA tight-binding
+! (celula primitiva com 2 atomos -- "A" com 2 orbitais tipo s,p e "B" com 1
+! orbital tipo s, total p=3 orbitais/celula), tiled m=3 vezes para formar uma
+! supercelula "perfeita" (sem nenhuma perturbacao) de 6 atomos / 9 orbitais.
+!
+! Demonstra o modo de mapeamento automatico via arquivos de ESTRUTURA (pc.nml/
+! sc.nml -- vetores de rede + lista "Especie X Y Z" da celula, no mesmo
+! estilo .nml usado no resto do pacote).
+!
+! Como a SC e' perfeita, a regra de soma sum_N W^k_KN = p = 3 deve valer a
+! precisao numerica, e as 3 energias com peso ~1 em cada k devem coincidir
+! com os autovalores diretos do Hamiltoniano 3x3 da PC (validado
+! externamente com erro maximo de ~5e-7 eV).
+!
+! Rode com:
+!   fpm run unfold -- examples/UnfoldDiatomic/unfold.nml
+! ----------------------------------------------------------------------------
+&UNFOLD
+    ProjectName = "Diatomic"
+    HDataFile   = "examples/UnfoldDiatomic/Diatomic_H.hsio"
+    SDataFile   = "examples/UnfoldDiatomic/Diatomic_S.hsio"
+    OutputDir   = "./"
+    M(1,:)      = 3, 0, 0   ! SC 3x na direcao a1
+    M(2,:)      = 0, 1, 0
+    M(3,:)      = 0, 0, 1
+    Broadening  = 0.03
+    Emin        = -2.5
+    Emax        =  2.5
+    nE          = 300
+    WriteSpectralFunction = .true.
+
+    PCStructureFile = "examples/UnfoldDiatomic/pc.nml"
+    SCStructureFile = "examples/UnfoldDiatomic/sc.nml"
+/
+
+&PCPATH
+2
+-0.500000  0.00000  0.00000  41  !X-
+ 0.500000  0.00000  0.00000  41  !X+
+/

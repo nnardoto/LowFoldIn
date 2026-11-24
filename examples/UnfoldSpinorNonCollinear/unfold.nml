@@ -1,0 +1,49 @@
+! ----------------------------------------------------------------------------
+! Valida o unfolding no caso NAO-COLINEAR (spinor, SpinP_switch=3 no OpenMX):
+! mesma cadeia diatomica 1D (3 orbitais espaciais/celula-PC: A com s,p e B
+! com s), mas agora com 2 canais de spin desacoplados (sem acoplamento
+! spin-orbita) -- entao cada especie tem o DOBRO de orbitais na base
+! (A: 4 = 2 espaciais x 2 spins, B: 2 = 1 espacial x 2 spins), p = 6
+! orbitais-PC por celula (3 espaciais x 2 spins), SC perfeita m=3.
+!
+! Este .hsio ja' esta' na ordem "atomo-major" (up e down contiguos por
+! atomo) exigida pelo formato HSDataFormat -- a ordem que
+! tools/openmx2hsio.f90 agora produz para SpinP_switch=3 (ver
+! ReorderSpinorAtomMajor em src/mod_openmx_convert.f90). A ordem "spin-major"
+! bruta que o OpenMX/scfout usa internamente (todos os orbitais 'up'
+! primeiro, depois todos os 'down') e' INCOMPATIVEL com o mapeamento
+! atomo->orbital usado aqui e da' um resultado com os pesos completamente
+! fragmentados; por isso o conversor reordena antes de escrever o .hsio.
+!
+! Como a SC e' perfeita, a regra de soma sum_N W^k_KN = p = 6 deve valer a
+! precisao numerica, e as 6 energias com peso ~1 em cada k (as 3 bandas
+! espaciais, cada uma duplicada pela degenerescencia de spin) devem coincidir
+! com os autovalores diretos do Hamiltoniano espacial 3x3 da PC (validado
+! externamente com erro maximo de ~5e-7 eV).
+!
+! Rode com:
+!   fpm run unfold -- examples/UnfoldSpinorNonCollinear/unfold.nml
+! ----------------------------------------------------------------------------
+&UNFOLD
+    ProjectName = "Spinor"
+    HDataFile   = "examples/UnfoldSpinorNonCollinear/Spinor_H.hsio"
+    SDataFile   = "examples/UnfoldSpinorNonCollinear/Spinor_S.hsio"
+    OutputDir   = "./"
+    M(1,:)      = 3, 0, 0   ! SC 3x na direcao a1
+    M(2,:)      = 0, 1, 0
+    M(3,:)      = 0, 0, 1
+    Broadening  = 0.03
+    Emin        = -2.5
+    Emax        =  2.5
+    nE          = 300
+    WriteSpectralFunction = .true.
+
+    PCStructureFile = "examples/UnfoldSpinorNonCollinear/pc.nml"
+    SCStructureFile = "examples/UnfoldSpinorNonCollinear/sc.nml"
+/
+
+&PCPATH
+2
+-0.500000  0.00000  0.00000  41  !X-
+ 0.500000  0.00000  0.00000  41  !X+
+/

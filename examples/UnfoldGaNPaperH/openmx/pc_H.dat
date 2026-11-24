@@ -1,0 +1,42 @@
+#
+# PC de H cubico, a = 3.5 Angstrom -- reproduz o sistema-brinquedo da
+# Fig. 1 do artigo (Quan, Rybin, Scheffler, Carbogno, PRB 113, 085112
+# (2026)). Leve de proposito (1 atomo, base s-only): serve so' para
+# validar o pipeline de unfolding com M nao-diagonal, nao para fisica
+# realista.
+#
+System.CurrentDirectory        ./
+System.Name                    pc_H
+level.of.stdout                 1
+level.of.fileout                 1
+HS.fileout                     on
+
+Species.Number       1
+<Definition.of.Atomic.Species
+  H   H5.0-s1     H_CA19
+Definition.of.Atomic.Species>
+
+Atoms.Number         1
+Atoms.SpeciesAndCoordinates.Unit  Ang
+<Atoms.SpeciesAndCoordinates
+  1  H   0.000000   0.000000   0.000000   0.5  0.5
+Atoms.SpeciesAndCoordinates>
+
+Atoms.UnitVectors.Unit             Ang
+<Atoms.UnitVectors
+  3.500000   0.000000   0.000000
+  0.000000   3.500000   0.000000
+  0.000000   0.000000   3.500000
+Atoms.UnitVectors>
+
+scf.EigenvalueSolver         Band
+scf.XcType                  LDA
+scf.SpinPolarization        off
+scf.ElectronicTemperature   300.0
+scf.energycutoff            100.0
+scf.Kgrid                   8 8 8
+scf.Mixing.Type              rmm-diis
+scf.criterion                1.0e-7
+scf.maxIter                  100
+
+Band.dispersion              off

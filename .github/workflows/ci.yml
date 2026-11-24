@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-24.04
+    env:
+      # O projeto exige GNU Fortran >= 14 (-std=f2023) e fpm >= 0.13 ([features]/[profiles]).
+      FPM_FC: gfortran-14
+      FPM_VERSION: "0.13.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gfortran-14, BLAS/LAPACK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran-14 liblapack-dev libblas-dev
+          gfortran-14 --version | head -1
+
+      - name: Install fpm (binário oficial; PyPI só tem até 0.12)
+        run: |
+          base=https://github.com/fortran-lang/fpm/releases/download/v${FPM_VERSION}
+          name=fpm-${FPM_VERSION}-linux-x86_64-gcc-12
+          curl -fsSLO "$base/$name"
+          curl -fsSLO "$base/$name.sha256"
+          sha256sum -c "$name.sha256"
+          sudo install -m 755 "$name" /usr/local/bin/fpm
+          rm -f "$name" "$name.sha256"
+          fpm --version | head -1
+
+      - name: Build (default profile, serial)
+        run: fpm build
+
+      - name: Unit tests (serial)
+        run: fpm test
+
+      - name: Unit tests (OpenMP, release profile)
+        env:
+          OMP_NUM_THREADS: "2"
+          OPENBLAS_NUM_THREADS: "1"
+        run: fpm test --profile release
+
+      - name: atomselect CLI tests
+        run: bash test/test_atomselect_cli.sh
+
+      - name: surfgreen CLI tests (OpenMP determinism 1/2/4 threads)
+        run: bash test/test_surfgreen_cli.sh
+
+      - name: surfgreen example (no plotting)
+        run: NO_PLOT=1 bash examples/surfgreen_model/run_example.sh
+
+      - name: Slater-Koster contact example (skfit + surfgreen scan, no plotting)
+        run: NO_PLOT=1 bash examples/sk_contact/run_example.sh
+
+      - name: Regression - existing unfold example
+        run: |
+          fpm run unfold -- examples/UnfoldDiatomic/unfold.nml
+          test -s Diatomic.unfold.dat
+
+      - name: Surface spectral example (no plotting)
+        run: |
+          if [ -x examples/surface_spectral/run_example.sh ]; then
+            NO_PLOT=1 bash examples/surface_spectral/run_example.sh
+          fi

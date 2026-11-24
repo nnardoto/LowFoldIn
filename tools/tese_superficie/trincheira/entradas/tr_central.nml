@@ -1,0 +1,111 @@
+! Central region written by surfgreen (mode extracted): columns 5..7 of /home/wendel/work/nathanael/Tellurium/green_surface/lfi_tese/trincheira_vol/hs/TeFilm_x11_L8_tr.structure.nml
+&STRUCTURE
+    LatticeVectors(1,:) =      52.43970629,      0.00000000,      0.00000000
+    LatticeVectors(2,:) =     -17.15088563,     29.70616699,      0.00000000
+    LatticeVectors(3,:) =       0.00000000,      0.00000000,      5.93359749
+/
+
+&SPECIES
+1
+Te 29
+/
+
+&ATOMS
+96
+Te           -12.28179790      23.24381678       2.90087465   ! column 5, supercell atom 166
+Te           -10.53257947      22.23390490       4.87874365   ! column 5, supercell atom 167
+Te           -10.53257947      24.25372866       0.92300564   ! column 5, supercell atom 168
+Te            -7.51455187      23.24381678       2.90087465   ! column 5, supercell atom 169
+Te            -5.76533344      22.23390490       4.87874365   ! column 5, supercell atom 170
+Te            -5.76533344      24.25372866       0.92300564   ! column 5, supercell atom 171
+Te            -2.74730585      23.24381678       2.90087465   ! column 5, supercell atom 172
+Te            -0.99808741      22.23390490       4.87874365   ! column 5, supercell atom 173
+Te            -0.99808742      24.25372866       0.92300564   ! column 5, supercell atom 174
+Te             2.01994018      23.24381678       2.90087465   ! column 5, supercell atom 175
+Te             3.76915861      22.23390490       4.87874365   ! column 5, supercell atom 176
+Te             3.76915861      24.25372866       0.92300564   ! column 5, supercell atom 177
+Te             6.78718621      23.24381678       2.90087465   ! column 5, supercell atom 178
+Te             8.53640464      22.23390490       4.87874365   ! column 5, supercell atom 179
+Te             8.53640464      24.25372866       0.92300564   ! column 5, supercell atom 180
+Te            11.55443224      23.24381678       2.90087465   ! column 5, supercell atom 181
+Te            13.30365067      22.23390490       4.87874365   ! column 5, supercell atom 182
+Te            13.30365066      24.25372866       0.92300564   ! column 5, supercell atom 183
+Te            16.32167826      23.24381678       2.90087465   ! column 5, supercell atom 184
+Te            18.07089669      22.23390490       4.87874365   ! column 5, supercell atom 185
+Te            18.07089669      24.25372866       0.92300564   ! column 5, supercell atom 186
+Te            21.08892429      23.24381678       2.90087465   ! column 5, supercell atom 187
+Te            22.83814272      22.23390490       4.87874365   ! column 5, supercell atom 188
+Te            22.83814272      24.25372866       0.92300564   ! column 5, supercell atom 189
+Te            25.85617032      23.24381678       2.90087465   ! column 5, supercell atom 190
+Te            27.60538875      22.23390490       4.87874365   ! column 5, supercell atom 191
+Te            27.60538874      24.25372866       0.92300564   ! column 5, supercell atom 192
+Te            30.62341634      23.24381678       2.90087465   ! column 5, supercell atom 193
+Te            32.37263477      22.23390490       4.87874365   ! column 5, supercell atom 194
+Te            32.37263477      24.25372866       0.92300564   ! column 5, supercell atom 195
+Te            35.39066237      23.24381678       2.90087465   ! column 5, supercell atom 196
+Te            37.13988080      22.23390490       4.87874365   ! column 5, supercell atom 197
+Te            37.13988080      24.25372866       0.92300564   ! column 5, supercell atom 198
+Te           -14.66542322      27.37237161       2.90087465   ! column 6, supercell atom 199
+Te           -12.91620479      26.36245973       4.87874365   ! column 6, supercell atom 200
+Te           -12.91620479      28.38228349       0.92300564   ! column 6, supercell atom 201
+Te            -9.89817719      27.37237161       2.90087465   ! column 6, supercell atom 202
+Te            -8.14895876      26.36245973       4.87874365   ! column 6, supercell atom 203
+Te            -8.14895876      28.38228349       0.92300564   ! column 6, supercell atom 204
+Te            -5.13093116      27.37237161       2.90087465   ! column 6, supercell atom 205
+Te            -3.38171273      26.36245973       4.87874365   ! column 6, supercell atom 206
+Te            -3.38171273      28.38228349       0.92300564   ! column 6, supercell atom 207
+Te            -0.36368514      27.37237161       2.90087465   ! column 6, supercell atom 208
+Te             1.38553329      26.36245973       4.87874365   ! column 6, supercell atom 209
+Te             1.38553329      28.38228349       0.92300564   ! column 6, supercell atom 210
+Te             4.40356089      27.37237161       2.90087465   ! column 6, supercell atom 211
+Te             6.15277932      26.36245973       4.87874365   ! column 6, supercell atom 212
+Te             6.15277932      28.38228349       0.92300564   ! column 6, supercell atom 213
+Te             9.17080692      27.37237161       2.90087465   ! column 6, supercell atom 214
+Te            10.92002535      26.36245973       4.87874365   ! column 6, supercell atom 215
+Te            10.92002535      28.38228349       0.92300564   ! column 6, supercell atom 216
+Te            13.93805294      27.37237161       2.90087465   ! column 6, supercell atom 217
+Te            15.68727137      26.36245973       4.87874365   ! column 6, supercell atom 218
+Te            15.68727137      28.38228349       0.92300564   ! column 6, supercell atom 219
+Te            18.70529897      27.37237161       2.90087465   ! column 6, supercell atom 220
+Te            20.45451740      26.36245973       4.87874365   ! column 6, supercell atom 221
+Te            20.45451740      28.38228349       0.92300564   ! column 6, supercell atom 222
+Te            23.47254500      27.37237161       2.90087465   ! column 6, supercell atom 223
+Te            25.22176343      26.36245973       4.87874365   ! column 6, supercell atom 224
+Te            25.22176343      28.38228349       0.92300564   ! column 6, supercell atom 225
+Te            28.23979102      27.37237161       2.90087465   ! column 6, supercell atom 226
+Te            29.98900946      26.36245973       4.87874365   ! column 6, supercell atom 227
+Te            29.98900945      28.38228349       0.92300564   ! column 6, supercell atom 228
+Te            33.00703705      27.37237161       2.90087465   ! column 6, supercell atom 229
+Te            34.75625548      26.36245973       4.87874365   ! column 6, supercell atom 230
+Te            34.75625548      28.38228349       0.92300564   ! column 6, supercell atom 231
+Te           -17.04904854      31.50092645       2.90087465   ! column 7, supercell atom 232
+Te           -15.29983010      30.49101456       4.87874365   ! column 7, supercell atom 233
+Te           -15.29983011      32.51083833       0.92300564   ! column 7, supercell atom 234
+Te           -12.28180251      31.50092645       2.90087465   ! column 7, supercell atom 235
+Te           -10.53258408      30.49101456       4.87874365   ! column 7, supercell atom 236
+Te           -10.53258408      32.51083833       0.92300564   ! column 7, supercell atom 237
+Te            -7.51455648      31.50092645       2.90087465   ! column 7, supercell atom 238
+Te            -5.76533805      30.49101456       4.87874365   ! column 7, supercell atom 239
+Te            -5.76533805      32.51083833       0.92300564   ! column 7, supercell atom 240
+Te            -2.74731046      31.50092645       2.90087465   ! column 7, supercell atom 241
+Te            -0.99809202      30.49101456       4.87874365   ! column 7, supercell atom 242
+Te            -0.99809203      32.51083833       0.92300564   ! column 7, supercell atom 243
+Te             2.01993557      31.50092645       2.90087465   ! column 7, supercell atom 244
+Te             3.76915400      30.49101456       4.87874365   ! column 7, supercell atom 245
+Te             3.76915400      32.51083833       0.92300564   ! column 7, supercell atom 246
+Te            11.55442763      31.50092645       2.90087465   ! column 7, supercell atom 247
+Te            13.30364606      30.49101456       4.87874365   ! column 7, supercell atom 248
+Te            13.30364605      32.51083833       0.92300564   ! column 7, supercell atom 249
+Te            16.32167365      31.50092645       2.90087465   ! column 7, supercell atom 250
+Te            18.07089208      30.49101456       4.87874365   ! column 7, supercell atom 251
+Te            18.07089208      32.51083833       0.92300564   ! column 7, supercell atom 252
+Te            21.08891968      31.50092645       2.90087465   ! column 7, supercell atom 253
+Te            22.83813811      30.49101456       4.87874365   ! column 7, supercell atom 254
+Te            22.83813811      32.51083833       0.92300564   ! column 7, supercell atom 255
+Te            25.85616571      31.50092645       2.90087465   ! column 7, supercell atom 256
+Te            27.60538414      30.49101456       4.87874365   ! column 7, supercell atom 257
+Te            27.60538413      32.51083833       0.92300564   ! column 7, supercell atom 258
+Te            30.62341173      31.50092645       2.90087465   ! column 7, supercell atom 259
+Te            32.37263016      30.49101456       4.87874365   ! column 7, supercell atom 260
+Te            32.37263016      32.51083833       0.92300564   ! column 7, supercell atom 261
+/

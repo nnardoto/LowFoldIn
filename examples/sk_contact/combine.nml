@@ -1,0 +1,7 @@
+! skfit: contact A-B by the geometric-mean rule (Ax-Bz and Ay-Bz lines)
+&SKCOMBINE
+    file_a = 'A.sk', file_b = 'B.sk'
+    species_a = 'Ax', 'Ay'
+    species_b = 'Bz'
+    output = 'contact.sk'
+/

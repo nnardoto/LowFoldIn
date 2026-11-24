@@ -1,0 +1,13 @@
+&GREEN mode = 'extracted', eta_ev = 0.015, emin = -1.0, emax = 1.0, ne = 101, output_prefix = 'tr', allow_no_fingerprint = .true. /
+&EXTRACTED
+  h_file = '/home/wendel/work/nathanael/Tellurium/green_surface/lfi_tese/trincheira_vol/hs/TeFilm_x11_L8_tr_H.hsio', s_file = '/home/wendel/work/nathanael/Tellurium/green_surface/lfi_tese/trincheira_vol/hs/TeFilm_x11_L8_tr_S.hsio', structure_file = '/home/wendel/work/nathanael/Tellurium/green_surface/lfi_tese/trincheira_vol/hs/TeFilm_x11_L8_tr.structure.nml'
+  embed_axis = 2, vacuum_axes = 2, central_columns = 5, 7
+  left = 'lead', right = 'vacuum', delta_mode = 'given', delta_ev = 0.0, energy_origin = 'lead_fermi', region_mode = 'atoms'
+/
+&SITEPOT file = 'a25_tr.sitepot' /
+&LEAD h_file = '/home/wendel/work/nathanael/Tellurium/green_surface/lfi_tese/trincheira_vol/hs/TeBulk_x11_H.hsio', s_file = '/home/wendel/work/nathanael/Tellurium/green_surface/lfi_tese/trincheira_vol/hs/TeBulk_x11_S.hsio', structure_file = '/home/wendel/work/nathanael/Tellurium/green_surface/lfi_tese/trincheira_vol/hs/TeBulk_x11.structure.nml' /
+&KPATH nvertex = 2, vertex(:,1) = 0.0,0.0,0.0, vertex(:,2) = 0.0,0.0,0.5, label = 'G','Z', npoints = 10 /
+&SCC pao_file = '/home/wendel/work/nathanael/lowfoldin-builds/a8/test/data/pao/Te7.0.pao', basis = 's3p3d2f1', rcut_bohr = 7.0,
+  e_lo = -25.0, e_fermi = 0.0, npoints = 32, rmax = 7.6, spin_factor = 2.0, qref_mode = 'file', qref_file = '../qref/qref_x11_np32.dat', multipole = 'dipole', qref_nbasis = 3,
+  k_avg_axis = 0, k_navg = 1, k_list_axis = 3, k_nlist = 2, k_list = -0.5, 0.0, k_w = 1, 1,
+  v_init_file = 'vinit_tr.dat', maxiter = 25, mix_beta = 0.1, mix_hist = 6, tol_ev = 1.0e-3, final_map = .true. /
